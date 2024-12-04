@@ -1,0 +1,9 @@
+[
+    {
+        "source_table": "products",
+        "target_table": "listprice",
+        "frequency": "5m",
+        "keys": ["id"], 
+        "observer": true
+    }
+]

@@ -1,0 +1,103 @@
+[
+  {
+    "auth": "username",
+    "authentication": "password",
+    "encryption": "sha256",
+    "allowRead": ["id", "username", "password", "role_id"],
+    "route": "/api/login",
+    "dbTable": "users"
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "articles",
+    "route": "/api/articles",
+    "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+    "allowRead": ["id", "title", "content", "image_url", "author_id"],
+    "allowWrite": ["title", "content", "image_url"],
+    "keys": ["id"],
+    "acl": "publicAccess",
+    "cache" : 0,
+    "mlmodel": ["sentiment","recommendation","anomaly","rag"],
+    "openGraphMapping": {
+      "og:title": "title",
+      "og:description": "content",
+      "og:image": "image_url",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "title": "VARCHAR(255)",
+      "content": "TEXT",
+      "image_url": "VARCHAR(255)",
+      "author_id": "INT"
+    },
+    "relationships": [
+      {
+        "type": "one-to-one",
+        "relatedTable": "authors",
+        "foreignKey": "author_id",
+        "relatedKey": "id",
+        "joinType": "LEFT JOIN",
+        "fields": ["name", "bio", "profile_image"]
+      }
+    ]
+  }
+  ,
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "products",
+    "route": "/api/products",
+    "allowRead": ["id", "product_name", "description", "image", "price", "category_id"],
+    "allowWrite": ["product_name", "description", "image", "price"],
+    "mlmodel": ["rag"],
+    "keys": ["id"],
+    "acl": "publicAccess",
+    "openGraphMapping": {
+      "og:title": "product_name",
+      "og:description": "description",
+      "og:image": "image",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "product_name": "VARCHAR(255)",
+      "description": "TEXT",
+      "image": "VARCHAR(255)",
+      "price": "DECIMAL(10, 2)",
+      "category_id": "INT"
+    },
+    "relationships": [
+      {
+        "type": "one-to-many",
+        "relatedTable": "categories",
+        "foreignKey": "category_id",
+        "relatedKey": "id",
+        "joinType": "LEFT JOIN"
+      }
+    ]
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "authors",
+    "route": "/api/authors",
+    "allowRead": ["id", "name", "bio", "profile_image"],
+    "allowWrite": ["name", "bio", "profile_image"],
+    "keys": ["id"],
+    "acl": "publicAccess",
+    "openGraphMapping": {
+      "og:title": "name",
+      "og:description": "bio",
+      "og:image": "profile_image",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "name": "VARCHAR(255)",
+      "bio": "TEXT",
+      "profile_image": "VARCHAR(255)"
+    }
+  }
+]

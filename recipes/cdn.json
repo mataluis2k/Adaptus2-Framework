@@ -1,0 +1,78 @@
+[
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_1",
+      "dbTable": "cdn_files",
+      "route": "/api/cdn/files",
+      "allowMethods": ["GET", "POST", "DELETE"],
+      "allowRead": ["id", "file_name", "file_url", "file_type", "size", "uploaded_by", "created_at"],
+      "allowWrite": ["file_name", "file_url", "file_type", "size", "uploaded_by"],
+      "keys": ["id"],
+      "acl": "publicAccess",
+      "cache": 3600,
+      "mlmodel": ["anomaly"],
+      "openGraphMapping": {
+        "og:title": "file_name",
+        "og:description": "file_type",
+        "og:image": "file_url",
+        "og:url": "file_url"
+      },
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "file_name": "VARCHAR(255)",
+        "file_url": "TEXT",
+        "file_type": "VARCHAR(50)",
+        "size": "BIGINT",
+        "uploaded_by": "VARCHAR(255)",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      },
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "uploaded_by",
+          "relatedKey": "username",
+          "joinType": "LEFT JOIN",
+          "fields": ["username", "email"]
+        }
+      ]
+    },
+    {
+      "route": "/api/cdn/upload",
+      "allowMethods": ["POST"],
+      "auth": "api_key",
+      "authentication": "secret_key",
+      "dbTable": "cdn_files",
+      "encryption": "sha256",
+      "allowWrite": ["file_name", "file_url", "file_type", "size", "uploaded_by"],
+      "keys": ["id"],
+      "acl": "privateAccess",
+      "cache": 0,
+      "mlmodel": [],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "file_name": "VARCHAR(255)",
+        "file_url": "TEXT",
+        "file_type": "VARCHAR(50)",
+        "size": "BIGINT",
+        "uploaded_by": "VARCHAR(255)",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "route": "/cdn/:file_id",
+      "allowMethods": ["GET"],
+      "dbTable": "cdn_files",
+      "keys": ["id"],
+      "allowRead": ["id", "file_name", "file_url", "file_type", "size"],
+      "acl": "publicAccess",
+      "cache": 86400,
+      "openGraphMapping": {
+        "og:title": "file_name",
+        "og:description": "file_type",
+        "og:image": "file_url",
+        "og:url": "file_url"
+      }
+    }
+]
+  

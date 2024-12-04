@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Server Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+        }
+        video {
+            display: block;
+            margin: 20px auto;
+            max-width: 100%;
+            border: 2px solid #ccc;
+            border-radius: 5px;
+        }
+        h1, h2 {
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <h1>Streaming Server Test</h1>
+
+    <h2>Local Video Test</h2>
+    <video id="local-video" controls>
+        <source src="http://localhost:3000/stream/local/sample.mp4" type="video/mp4">
+        Your browser does not support the video tag.
+    </video>
+
+    <h2>HLS Streaming Test</h2>
+    <video id="hls-video" controls></video>
+
+    <script>
+        const hlsVideoElement = document.getElementById('hls-video');
+        const hlsSourceUrl = 'http://localhost:3000/stream/sample.m3u8'; // Replace with your HLS URL
+
+        if (Hls.isSupported()) {
+            const hls = new Hls();
+            hls.loadSource(hlsSourceUrl);
+            hls.attachMedia(hlsVideoElement);
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                console.log('HLS manifest loaded successfully');
+            });
+            hls.on(Hls.Events.ERROR, function (event, data) {
+                console.error('HLS error:', data);
+            });
+        } else if (hlsVideoElement.canPlayType('application/vnd.apple.mpegurl')) {
+            hlsVideoElement.src = hlsSourceUrl;
+            hlsVideoElement.addEventListener('loadedmetadata', function () {
+                console.log('HLS metadata loaded');
+            });
+        } else {
+            console.error('HLS not supported on this browser');
+            hlsVideoElement.innerHTML = 'Your browser does not support HLS streaming.';
+        }
+    </script>
+</body>
+</html>

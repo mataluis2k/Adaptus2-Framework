@@ -1,0 +1,197 @@
+[
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "users",
+      "route": "/api/users",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "username", "email", "role", "created_at"],
+      "allowWrite": ["username", "email", "password", "role"],
+      "keys": ["id"],
+      "acl": "adminOnly",
+      "encryption": "sha256",
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "username": "VARCHAR(255)",
+        "email": "VARCHAR(255) UNIQUE",
+        "password": "VARCHAR(255)",
+        "role": "ENUM('admin', 'sales', 'support') DEFAULT 'sales'",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "contacts",
+      "route": "/api/contacts",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "first_name", "last_name", "email", "phone", "company", "created_by", "created_at"],
+      "allowWrite": ["first_name", "last_name", "email", "phone", "company", "created_by"],
+      "keys": ["id"],
+      "acl": "publicAccess",
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "created_by",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["username"]
+        }
+      ],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "first_name": "VARCHAR(255)",
+        "last_name": "VARCHAR(255)",
+        "email": "VARCHAR(255) UNIQUE",
+        "phone": "VARCHAR(15)",
+        "company": "VARCHAR(255)",
+        "created_by": "INT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "leads",
+      "route": "/api/leads",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "contact_id", "status", "source", "assigned_to", "created_at"],
+      "allowWrite": ["contact_id", "status", "source", "assigned_to"],
+      "keys": ["id"],
+      "acl": "salesAccess",
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "contacts",
+          "foreignKey": "contact_id",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["first_name", "last_name", "email"]
+        },
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "assigned_to",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["username"]
+        }
+      ],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "contact_id": "INT",
+        "status": "ENUM('new', 'qualified', 'converted', 'closed') DEFAULT 'new'",
+        "source": "VARCHAR(255)",
+        "assigned_to": "INT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "opportunities",
+      "route": "/api/opportunities",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "lead_id", "stage", "value", "close_date", "assigned_to", "created_at"],
+      "allowWrite": ["lead_id", "stage", "value", "close_date", "assigned_to"],
+      "keys": ["id"],
+      "acl": "salesAccess",
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "leads",
+          "foreignKey": "lead_id",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["status", "source"]
+        },
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "assigned_to",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["username"]
+        }
+      ],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "lead_id": "INT",
+        "stage": "ENUM('prospecting', 'negotiation', 'closed-won', 'closed-lost') DEFAULT 'prospecting'",
+        "value": "DECIMAL(10, 2)",
+        "close_date": "DATE",
+        "assigned_to": "INT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "tasks",
+      "route": "/api/tasks",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "title", "description", "due_date", "assigned_to", "status", "created_at"],
+      "allowWrite": ["title", "description", "due_date", "assigned_to", "status"],
+      "keys": ["id"],
+      "acl": "publicAccess",
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "assigned_to",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["username"]
+        }
+      ],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "title": "VARCHAR(255)",
+        "description": "TEXT",
+        "due_date": "DATE",
+        "assigned_to": "INT",
+        "status": "ENUM('pending', 'in-progress', 'completed') DEFAULT 'pending'",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    },
+    {
+      "dbType": "mysql",
+      "dbConnection": "MYSQL_CRM",
+      "dbTable": "tickets",
+      "route": "/api/tickets",
+      "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+      "allowRead": ["id", "contact_id", "title", "status", "priority", "assigned_to", "created_at"],
+      "allowWrite": ["contact_id", "title", "status", "priority", "assigned_to"],
+      "keys": ["id"],
+      "acl": "supportAccess",
+      "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "contacts",
+          "foreignKey": "contact_id",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["first_name", "last_name", "email"]
+        },
+        {
+          "type": "one-to-one",
+          "relatedTable": "users",
+          "foreignKey": "assigned_to",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["username"]
+        }
+      ],
+      "columnDefinitions": {
+        "id": "INT PRIMARY KEY AUTO_INCREMENT",
+        "contact_id": "INT",
+        "title": "VARCHAR(255)",
+        "status": "ENUM('open', 'in-progress', 'resolved', 'closed') DEFAULT 'open'",
+        "priority": "ENUM('low', 'medium', 'high') DEFAULT 'medium'",
+        "assigned_to": "INT",
+        "created_at": "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+      }
+    }
+  ]
+  

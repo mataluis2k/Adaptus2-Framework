@@ -1,0 +1,14 @@
+{
+    "default": {
+        "batchSize": 1000,
+        "samplingRate": 1,
+        "parallelProcessing": false,
+        "incrementalTraining": false
+    },
+    "endpoints": {
+        "products": {
+            "batchSize": 2000,
+            "incrementalTraining": true
+        }
+    }
+}

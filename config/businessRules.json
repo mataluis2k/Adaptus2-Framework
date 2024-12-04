@@ -1,0 +1,16 @@
+[
+    {
+      "endpoint": "/api/articles",
+      "rules": [
+        "IF title = 'How to Start Coding' THEN title='How to Start Coding PHP'"        
+      ]
+    },
+    {
+        "endpoint": "/api/products",
+        "events" : ["GET" , "POST"],
+        "rules": [
+          "IF price > 20 THEN discount = price * 0.1",
+          "tax = price * 0.07"
+        ]
+    }
+]
