@@ -2,7 +2,7 @@
   "name": "flexapi-server",
   "version": "1.0.0",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
-  "main": "index.js",
+  "main": "src/index.js",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/mataluis2k/flexapi-server.git"
