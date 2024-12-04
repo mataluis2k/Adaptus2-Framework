@@ -1,15 +1,23 @@
 {
-  "name": "opengraphapiserver",
+  "name": "flexapi-server",
   "version": "1.0.0",
-  "description": "",
+  "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mataluis2k/flexapi-server.git"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "keywords": ["nodejs", "flexapi", "server"],
+  "author": "Luis B. Mata <headmaster@theleadershub.net>",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mataluis2k/flexapi-server/issues"
+  },
+  "homepage": "https://github.com/mataluis2k/flexapi-server#readme",
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
