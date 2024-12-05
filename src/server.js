@@ -27,8 +27,12 @@ require('dotenv').config({ path: process.cwd() + '/.env' });
 const { passport, authenticateOAuth } = require('./middleware/oauth');
 const { exit } = require('process');
 
+const redisServer = process.env.REDIS_URL +":"+ process.env.REDIS_PORT || 'redis://localhost:6379';
+if(!process.env.REDIS_URL) {
+    console.log('No Redis URL provided. Using default URL:', redisServer);
+}
+const redis = new Redis(redisServer);
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 
 console.log('Current directory:', process.cwd());
@@ -392,7 +396,8 @@ class FlexAPIServer {
         this.port = port;
         this.configPath = configPath;
         this.app = express();
-        this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+        // Need to come up and clean this up! As we already have a redis instance
+        this.redis = redis;
         this.apiConfig = [];
         this.businessRules = new BusinessRules();
 

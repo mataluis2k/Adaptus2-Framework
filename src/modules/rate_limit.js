@@ -5,9 +5,9 @@ class RateLimit {
      * @param {Array} apiConfig - The API configuration array
      * @param {String} redisUrl - The Redis connection string
      */
-    constructor(apiConfig, redisUrl = 'redis://localhost:6379') {
+    constructor(apiConfig, redis) {
         this.apiConfig = apiConfig;
-        this.redis = new Redis(redisUrl);
+        this.redis = redis;
     }
 
     /**
