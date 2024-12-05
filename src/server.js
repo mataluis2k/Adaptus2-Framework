@@ -383,8 +383,7 @@ function registerRoutes(app, apiConfig) {
 function setupRag(apiConfig) {
     // Initialize RAG during server startup
     initializeRAG(apiConfig).catch((error) => {
-        console.error("Failed to initialize RAG:", error.message);
-        process.exit(1); // Exit if initialization fails
+        console.error("Failed to initialize RAG:", error.message);       
     });
 }
 
