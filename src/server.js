@@ -7,7 +7,7 @@ require('dotenv').config();
 const jwt = require('jsonwebtoken');
 
 // Import other modules
-const { getDbConnection } = require(path.join(__dirname, '/modules/db'));
+const { getDbConnection } = require('./modules/db');
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
@@ -21,7 +21,7 @@ const configFile = path.join(process.cwd(), 'config/apiConfig.json');
     
 
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1.js");
-require('dotenv').config({ path: __dirname + '/.env' });
+require('dotenv').config({ path: process.cwd() + '/.env' });
 
 const { passport, authenticateOAuth } = require('./middleware/oauth');
 const { exit } = require('process');
@@ -30,7 +30,7 @@ const { exit } = require('process');
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 
-console.log('Current directory:', __dirname);
+console.log('Current directory:', process.cwd());
 
 const graphqlDbType = process.env.GRAPHQL_DBTYPE;
 const graphqlDbConnection = process.env.GRAPHQL_DBCONNECTION;
@@ -405,7 +405,7 @@ class FlexAPIServer {
         
     async loadConfig() {
         try {
-            const configData = fs.readFileSync(path.resolve(__dirname, this.configPath), 'utf-8');
+            const configData = fs.readFileSync(path.resolve(process.cwd(), this.configPath), 'utf-8');
             this.apiConfig = JSON.parse(configData);
             console.log('Configuration loaded successfully.');
         } catch (error) {

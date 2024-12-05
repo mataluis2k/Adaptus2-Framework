@@ -11,8 +11,8 @@ require('dotenv').config();
 class MLAnalytics {
     constructor(mainConfigPath = 'config/apiConfig.json', mlConfigPath = 'config/mlConfig.json') {
         this.models = {};
-        this.mainConfigPath = path.resolve(__dirname, mainConfigPath);
-        this.mlConfigPath = path.resolve(__dirname, mlConfigPath);
+        this.mainConfigPath = path.resolve(process.cwd(), mainConfigPath);
+        this.mlConfigPath = path.resolve(process.cwd(), mlConfigPath);
         this.mainConfig = [];
         this.mlConfig = {};
     }

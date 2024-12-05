@@ -2,7 +2,7 @@ const fs = require('fs');
 const path = require('path');
 
 class BusinessRules {
-    constructor(configFilePath = path.join(__dirname, '../../config/businessRules.json')) {
+    constructor(configFilePath = path.join(process.cwd(), 'config/businessRules.json')) {
         this.rules = {};
         this.configFilePath = path.resolve(configFilePath);
     }
