@@ -21,7 +21,7 @@ async function buildApiConfigFromDatabase() {
 
 
     // Paths and configurations
-    const configPath = path.resolve(__dirname, '../../config/apiConfig.json');
+    const configPath = path.join(process.cwd(), 'config/apiConfig.json');
 
     // Check if config file already exists and the overwrite flag is not provided
     if (fs.existsSync(configPath) && !overwrite) {

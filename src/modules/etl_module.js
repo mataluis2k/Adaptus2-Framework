@@ -4,9 +4,9 @@ const { getDbConnection } = require('./modules/db');
 const BusinessRules = require('./modules/business_rules');
 
 // Paths for additional configurations and state files
-const stateFilePath = path.join(__dirname, '../etl_state.json');
-const etlConfigPath = path.join(__dirname, '../../config/etlConfig.json');
-const apiConfigPath = path.join(__dirname, '../../config/apiConfig.json');
+const stateFilePath = path.join(process.cwd(), 'etl_state.json');
+const etlConfigPath = path.join(process.cwd(), 'config/etlConfig.json');
+const apiConfigPath = path.join(process.cwd(), 'config/apiConfig.json');
 
 // Load or initialize state file
 function loadState() {

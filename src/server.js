@@ -17,13 +17,14 @@ const { createHandler } = require('graphql-http/lib/use/express');
 const ChatModule = require('./modules/chatModule'); // Chat Module
 const PaymentModule = require('./modules/paymentModule'); // Payment Module
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
-const configFile = path.join(__dirname, '../config/apiConfig.json');
+const configFile = path.join(process.cwd(), 'config/apiConfig.json');
     
 
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1.js");
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const { passport, authenticateOAuth } = require('./middleware/oauth');
+const { exit } = require('process');
 
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
@@ -387,7 +388,7 @@ function setupRag(apiConfig) {
 }
 
 class FlexAPIServer {
-    constructor({ port = 3000, configPath = './config/apiConfig.json' }) {
+    constructor({ port = 3000, configPath = 'config/apiConfig.json' }) {
         this.port = port;
         this.configPath = configPath;
         this.app = express();
@@ -409,7 +410,8 @@ class FlexAPIServer {
             console.log('Configuration loaded successfully.');
         } catch (error) {
             console.error('Error loading configuration:', error);
-            throw error;
+            console.error("You must create a config folder and add an apiConfig.json file");
+            exit(1);            
         }
     }
 
@@ -589,7 +591,7 @@ module.exports = FlexAPIServer;
 if (require.main === module) {
     const server = new FlexAPIServer({
         port: process.env.PORT || 3000,
-        configPath: './config/apiConfig.json',
+        configPath: 'config/apiConfig.json',
     });
     server.start();
 }
