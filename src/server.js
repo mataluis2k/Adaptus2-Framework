@@ -11,6 +11,7 @@ const { getDbConnection } = require('./modules/db');
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
+const mlAnalytics = new MLAnalytics();
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
@@ -485,8 +486,8 @@ class FlexAPIServer {
     initializeOptionalModules(app) {
         // Initialize Chat Module
         try {
-            const httpServer = require('http').createServer(this.app); // Reuse server
-            this.chatModule = new ChatModule(httpServer, this.app);
+            const httpServer = require('http').createServer(app); // Reuse server
+            this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig);
             this.chatModule.start();
             console.log('Chat module initialized.');
         } catch (error) {
@@ -518,6 +519,11 @@ class FlexAPIServer {
             console.error('Failed to initialize Streaming Server Module:', error.message);
         }
 
+        mlAnalytics.loadConfig();
+        mlAnalytics.trainModels();
+        mlAnalytics.scheduleTraining();
+
+        app.use('/ml', mlAnalytics.middleware());
 
         app.post("/api/rag", async (req, res) => {
         try {
