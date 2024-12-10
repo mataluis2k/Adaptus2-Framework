@@ -54,7 +54,6 @@ function flattenResolvers(resolvers) {
     if (resolvers.Mutation) {
         Object.assign(flatResolvers, resolvers.Mutation);
     }
-
     return flatResolvers;
 }
 
