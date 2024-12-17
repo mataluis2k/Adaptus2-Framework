@@ -1,9 +1,10 @@
 const fs = require('fs');
 const path = require('path');
-const { getDbConnection } = require(path.join(__dirname, 'db'));
+const { getDbConnection } = require('./db');
 
 // Function to build API config from a given database connection
-async function buildApiConfigFromDatabase() {
+
+async function buildApiConfigFromDatabase(configPath) {
     // Get command line arguments
     const args = process.argv.slice(2);
     let overwrite = false;
@@ -20,9 +21,7 @@ async function buildApiConfigFromDatabase() {
             selectedTables = arg.split('=')[1].split(',').map(table => table.trim());
         }
     });
-
-    // Paths and configurations
-    const configPath = path.resolve(__dirname, '../../config/apiConfig.json');
+    
 
     // Check if config file already exists and the overwrite flag is not provided
     if (fs.existsSync(configPath) && !overwrite) {

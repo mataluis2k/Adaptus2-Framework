@@ -605,7 +605,7 @@ class DependencyManager {
 
 
 class FlexAPIServer {
-    constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = '../plugins' }) {
+    constructor({ port = 3000, configPath = '../config/apiConfig.json', pluginDir = '../plugins' }) {
         this.port = port;
         this.configPath = configPath;
         this.pluginDir = pluginDir;
@@ -657,7 +657,7 @@ class FlexAPIServer {
         
     async loadConfig() {
         try {
-            const configData = fs.readFileSync(path.resolve(__dirname, this.configPath), 'utf-8');
+            const configData = fs.readFileSync(configFile, 'utf-8');
             this.apiConfig = JSON.parse(configData);
             consolelog.log('Configuration loaded successfully.');
         } catch (error) {
@@ -886,7 +886,7 @@ class FlexAPIServer {
             // Add support for building API config from database
             if (process.argv.includes('--build')) {
                 consolelog.log('Building API configuration from database...');
-                await buildApiConfigFromDatabase();
+                await buildApiConfigFromDatabase(configFile);
                 consolelog.log('API configuration build complete.');
                 process.exit(0);
             }
