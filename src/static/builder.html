@@ -1,0 +1,192 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Configuration Builder</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        #configForm {
+            border: 1px solid #dee2e6;
+            border-radius: 8px;
+            padding: 20px;
+            background-color: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+<div class="container mt-5">
+    <h2 class="text-center">API Configuration Builder</h2>
+    <form id="configForm" class="mt-4">
+        <input type="hidden" id="currentIndex" value="">
+        <div class="row">
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="dbType" class="form-label">Database Type</label>
+                    <select id="dbType" class="form-select" required>
+                        <option value="MySQL">MySQL</option>
+                        <option value="PostgreSQL">PostgreSQL</option>
+                        <option value="MongoDB">MongoDB</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="dbConnection" class="form-label">Database Connection</label>
+                    <input type="text" id="dbConnection" class="form-control" placeholder="e.g., MYSQL_1" required>
+                </div>
+                <div class="mb-3">
+                    <label for="dbTable" class="form-label">Table/Collection</label>
+                    <input type="text" id="dbTable" class="form-control" placeholder="e.g., articles" required>
+                </div>
+                <div class="mb-3">
+                    <label for="route" class="form-label">API Route</label>
+                    <input type="text" id="route" class="form-control" placeholder="e.g., /api/articles" required>
+                </div>
+                <div class="mb-3">
+                    <label for="allowRead" class="form-label">Readable Columns (comma-separated)</label>
+                    <input type="text" id="allowRead" class="form-control" placeholder="e.g., id,title,content">
+                </div>
+                <div class="mb-3">
+                    <label for="allowWrite" class="form-label">Writable Columns (comma-separated)</label>
+                    <input type="text" id="allowWrite" class="form-control" placeholder="e.g., title,content">
+                </div>
+            </div>
+            <div class="col-md-6">
+                <div class="mb-3">
+                    <label for="allowedMethods" class="form-label">Allowed HTTP Methods</label>
+                    <select id="allowedMethods" class="form-select" multiple>
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                        <option value="PUT">PUT</option>
+                        <option value="DELETE">DELETE</option>
+                    </select>
+                </div>
+                <div class="mb-3">
+                    <label for="acl" class="form-label">Access Control Level</label>
+                    <input type="text" id="acl" class="form-control" placeholder="e.g., publicAccess">
+                </div>
+                <div class="mb-3">
+                    <label for="cache" class="form-label">Caching (TTL in seconds)</label>
+                    <input type="number" id="cache" class="form-control" placeholder="e.g., 60">
+                </div>
+                <div class="mb-3">
+                    <label for="columnDefinitions" class="form-label">Column Definitions</label>
+                    <textarea id="columnDefinitions" class="form-control" rows="3" placeholder='e.g., {"id": "Int", "title": "String"}'></textarea>
+                </div>
+                <div class="d-flex justify-content-between">
+                    <button type="button" id="saveConfig" class="btn btn-primary">Save Configuration</button>
+                    <button type="button" id="clearForm" class="btn btn-secondary">Clear Form</button>
+                </div>
+            </div>
+        </div>
+    </form>
+    <div id="configList" class="mt-5">
+        <h3>Existing Configurations</h3>
+        <ul id="configs" class="list-group"></ul>
+    </div>
+</div>
+<script>
+    const API_URL = "/api/config";
+    let configs = []; // Store configurations
+
+    // Load configurations into the list
+    async function loadConfigs() {
+        try {
+            const response = await fetch(API_URL);
+            configs = await response.json();
+            const list = document.getElementById("configs");
+            list.innerHTML = "";
+            configs.forEach((config, index) => {
+                const li = document.createElement("li");
+                li.className = "list-group-item clickable";
+                li.textContent = `${config.dbTable} - ${config.route}`;
+                li.addEventListener("click", () => loadConfigIntoForm(index));
+                list.appendChild(li);
+            });
+        } catch (error) {
+            console.error("Error loading configs:", error);
+        }
+    }
+
+    // Load a configuration into the form
+    function loadConfigIntoForm(index) {
+        const config = configs[index];
+        document.getElementById("currentIndex").value = index;
+
+        // Populate form fields with configuration data
+        document.getElementById("dbType").value = config.dbType || "MySQL";
+        document.getElementById("dbConnection").value = config.dbConnection || "";
+        document.getElementById("dbTable").value = config.dbTable || "";
+        document.getElementById("route").value = config.route || "";
+        document.getElementById("allowRead").value = (config.allowRead || []).join(",");
+        document.getElementById("allowWrite").value = (config.allowWrite || []).join(",");
+
+        // Populate allowed HTTP methods
+        const allowedMethods = document.getElementById("allowedMethods");
+        Array.from(allowedMethods.options).forEach(opt => {
+            opt.selected = (config.allowedMethods || []).includes(opt.value);
+        });
+
+        // Populate other fields
+        document.getElementById("acl").value = config.acl || "";
+        document.getElementById("cache").value = config.cache || 0;
+
+        // Populate column definitions
+        document.getElementById("columnDefinitions").value = JSON.stringify(config.columnDefinitions || {}, null, 2);
+    }
+
+
+    // Save or update a configuration
+    document.getElementById("saveConfig").addEventListener("click", async () => {
+        const config = {
+            dbType: document.getElementById("dbType").value,
+            dbConnection: document.getElementById("dbConnection").value,
+            dbTable: document.getElementById("dbTable").value,
+            route: document.getElementById("route").value,
+            allowRead: document.getElementById("allowRead").value.split(","),
+            allowWrite: document.getElementById("allowWrite").value.split(","),
+            allowedMethods: Array.from(document.getElementById("allowedMethods").selectedOptions).map(opt => opt.value),
+            acl: document.getElementById("acl").value,
+            cache: parseInt(document.getElementById("cache").value, 10),
+            columnDefinitions: JSON.parse(document.getElementById("columnDefinitions").value || "{}"),
+        };
+
+        const index = document.getElementById("currentIndex").value;
+
+        try {
+            if (index) {
+                // Update existing config
+                configs[index] = { ...configs[index], ...config };
+            } else {
+                // Add new config
+                configs.push(config);
+            }
+
+            const response = await fetch(API_URL, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(configs),
+            });
+
+            if (response.ok) {
+                alert("Configuration saved!");
+                document.getElementById("configForm").reset();
+                loadConfigs();
+            } else {
+                alert("Failed to save configuration.");
+            }
+        } catch (error) {
+            console.error("Error:", error);
+        }
+    });
+
+    // Clear the form for new configuration
+    document.getElementById("clearForm").addEventListener("click", () => {
+        document.getElementById("configForm").reset();
+        document.getElementById("currentIndex").value = "";
+    });
+
+    // Load configs on page load
+    loadConfigs();
+</script>
+</body>
+</html>

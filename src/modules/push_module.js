@@ -22,6 +22,23 @@ class PushNotification {
         // Attach routes
         this.app = app;
         this.registerRoutes();
+        this.extendContext();
+    }
+
+    extendContext() {
+        if (!globalContext.actions) globalContext.actions = {};
+        globalContext.actions.saveDeviceToken = async (ctx, userId, token, type) => {
+            await this.saveDeviceToken(userId, token, type);
+        };
+        globalContext.actions.getDeviceTokens = async (ctx, userId) => {
+            return await this.getDeviceTokens(userId);
+        };
+        globalContext.actions.sendFcmNotification = async (ctx, token, notification) => {
+            return await this.sendFcmNotification(token, notification);
+        };
+        globalContext.actions.sendWebPushNotification = async (ctx, subscription, payload) => {
+            return await this.sendWebPushNotification(subscription, payload);
+        };
     }
 
     async saveDeviceToken(userId, token, type) {

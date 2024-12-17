@@ -220,10 +220,20 @@ class MLAnalytics {
             console.warn(`No suitable numeric fields for anomaly detection in ${endpoint.dbTable}`);
             return null;
         }
-
+    
         const dataset = rows.map((row) => numericFields.map((field) => row[field]));
         const dbscan = new DBSCAN();
         const clusters = dbscan.run(dataset, 0.5, 2); // Example: eps=0.5, minPts=2
+    
+        if (!clusters || clusters.length === 0) {
+            console.warn(`No clusters formed for ${endpoint.dbTable}. Check dataset and parameters.`);
+            return {
+                clusters: [],
+                numericFields,
+                message: "No clusters or anomalies detected. Ensure the dataset has meaningful numeric data.",
+            };
+        }
+    
         console.log(`Anomaly detection model trained for ${endpoint.dbTable}`);
         return { clusters, numericFields };
     }
@@ -233,27 +243,49 @@ class MLAnalytics {
      */
     middleware() {
         return (req, res, next) => {
-            // Extract the model key from the request path
+            // Extract the model key and optional key ID from the request path
             const pathParts = req.originalUrl.split('/').filter((part) => part !== ''); // Ignore empty parts
             if (pathParts.length < 3) {
                 // Not an ML-specific route; pass control to the next middleware or route handler
                 return next();
             }
     
-            // Extract table and model from the route
             const table = pathParts[1]; // e.g., "articles"
             const model = pathParts[2]; // e.g., "recommendation"
+            const keyId = pathParts[3] ? parseInt(pathParts[3], 10) : null; // e.g., "1"
     
-            // Build the model key
             const modelKey = `${table}_${model}`;
-            if (!this.models[modelKey]) {
+            const modelData = this.models[modelKey];
+            if (!modelData) {
                 return res.status(404).json({ error: `Model not found for ${model}` });
             }
     
-            // Return the ML model data
-            res.json({ data: this.models[modelKey] });
+            // For recommendations, process the request with the key ID
+            if (model === 'recommendation' && keyId !== null) {
+                const { clusters, numericFields } = modelData;
+    
+                // Find the cluster for the given key
+                const clusterIndex = clusters.clusters[keyId];
+                if (clusterIndex === undefined) {
+                    return res.status(404).json({ error: `Key ${keyId} not found in recommendations` });
+                }
+    
+                // Find all keys in the same cluster
+                const recommendedKeys = clusters.clusters
+                    .map((cluster, index) => (cluster === clusterIndex ? index : null))
+                    .filter((index) => index !== null && index !== keyId); // Exclude the original key
+    
+                return res.json({
+                    key: keyId,
+                    recommendations: recommendedKeys,
+                });
+            }
+    
+            // Default behavior: Return raw model data
+            res.json({ data: modelData });
         };
     }
+    
     
     /**
      * Schedule periodic model training.

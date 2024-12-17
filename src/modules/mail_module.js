@@ -1,129 +1,102 @@
 const nodemailer = require("nodemailer");
-const sgMail = require("@sendgrid/mail");
-const mailchimp = require("@mailchimp/mailchimp_transactional");
 
 class MailModule {
-    constructor(app, config, dbConfig) {
-        this.app = app;
+    constructor(config) {
         this.config = config;
+        this.transports = {};
 
-        // Configure Sendmail
-        this.sendmailTransport = nodemailer.createTransport({
-            sendmail: true,
-            newline: "unix",
-            path: "/usr/sbin/sendmail",
+        // Dynamically initialize transports
+        this.initializeTransports();
+
+        // Extend the global context
+        this.extendContext();
+    }
+
+    initializeTransports() {
+        const availableTransports = this.config.transports || [];
+
+        availableTransports.forEach((transportConfig) => {
+            const { name, module: modulePath, options } = transportConfig;
+
+            if (!name) {
+                console.error("Transport configuration must include a 'name'.");
+                return;
+            }
+
+            try {
+                // Dynamically load the module if specified
+                const mailModule = modulePath ? require(modulePath) : null;
+
+                // Dynamically create a transport class
+                const TransportClass = this.createTransportClass(name, mailModule, options);
+
+                // Instantiate and register the transport
+                this.transports[name] = new TransportClass(options);
+                console.log(`Loaded mail transport: ${name}`);
+            } catch (error) {
+                console.error(`Failed to initialize transport: ${name}`, error.message);
+            }
         });
-
-        // Configure SendGrid
-        if (config.sendgridApiKey) {
-            sgMail.setApiKey(config.sendgridApiKey);
-        }
-
-        // Configure Mailchimp
-        this.mailchimpClient = config.mailchimpApiKey
-            ? mailchimp(config.mailchimpApiKey)
-            : null;
-
-        this.dbConfig = dbConfig;
-
-        // Register manual processing route
-        this.registerRoutes();
     }
 
-    async getPendingEmails() {
-        const query = `SELECT * FROM email_queue WHERE status = 'pending' ORDER BY created_at LIMIT 10`;
+    createTransportClass(name, mailModule, options) {
+        return class {
+            constructor(opts) {
+                if (mailModule && opts.apiKey) {
+                    this.client = mailModule;
+                    this.client.setApiKey(opts.apiKey);
+                } else if (!mailModule && opts.path) {
+                    this.transport = nodemailer.createTransport({
+                        sendmail: true,
+                        newline: "unix",
+                        path: opts.path,
+                    });
+                } else {
+                    throw new Error(`${name}: Invalid or missing configuration.`);
+                }
+            }
 
-        const connection = await this.dbConfig.getConnection();
-        const [rows] = await connection.execute(query);
-        connection.release();
-        return rows;
-    }
-
-    async updateEmailStatus(emailId, status, error = null) {
-        const query = `UPDATE email_queue SET status = ?, error_message = ?, sent_at = NOW() WHERE id = ?`;
-
-        const connection = await this.dbConfig.getConnection();
-        await connection.execute(query, [status, error, emailId]);
-        connection.release();
-    }
-
-    async sendEmail(provider, options) {
-        switch (provider) {
-            case "sendmail":
-                return this.sendWithSendmail(options);
-            case "sendgrid":
-                return this.sendWithSendGrid(options);
-            case "mailchimp":
-                return this.sendWithMailchimp(options);
-            default:
-                throw new Error("Invalid email provider specified");
-        }
-    }
-
-    async sendWithSendmail({ from, to, subject, text, html }) {
-        const mailOptions = { from, to, subject, text, html };
-        return this.sendmailTransport.sendMail(mailOptions);
-    }
-
-    async sendWithSendGrid({ from, to, subject, text, html }) {
-        const msg = { from, to, subject, text, html };
-        return sgMail.send(msg);
-    }
-
-    async sendWithMailchimp({ from, to, subject, text, html }) {
-        if (!this.mailchimpClient) {
-            throw new Error("Mailchimp API key is not configured");
-        }
-
-        const message = {
-            from_email: from,
-            subject,
-            text,
-            html,
-            to: [{ email: to }],
+            async send({ from, to, subject, text, html }) {
+                if (this.client) {
+                    // Handle providers like SendGrid and Mailchimp
+                    const message = {
+                        from: from,
+                        to: Array.isArray(to) ? to : [to],
+                        subject,
+                        text,
+                        html,
+                    };
+                    if (name === "mailchimp") {
+                        // Adjust message structure for Mailchimp
+                        message.to = message.to.map((email) => ({ email }));
+                    }
+                    return await this.client.messages
+                        ? this.client.messages.send({ message }) // Mailchimp
+                        : this.client.send(message); // SendGrid
+                } else if (this.transport) {
+                    // Handle sendmail
+                    return await this.transport.sendMail({ from, to, subject, text, html });
+                } else {
+                    throw new Error(`${name}: No valid transport available.`);
+                }
+            }
         };
-
-        return this.mailchimpClient.messages.send({ message });
     }
 
-    async processEmails() {
-        const emails = await this.getPendingEmails();
-
-        for (const email of emails) {
-            const { id, provider, from_email, to_email, subject, body_text, body_html } = email;
-
-            try {
-                // Send the email using the appropriate provider
-                await this.sendEmail(provider, {
-                    from: from_email,
-                    to: to_email,
-                    subject,
-                    text: body_text,
-                    html: body_html,
-                });
-
-                // Update the email status to "sent"
-                await this.updateEmailStatus(id, "sent");
-                console.log(`Email ID ${id} sent successfully`);
-            } catch (error) {
-                // Update the email status to "failed" with the error message
-                await this.updateEmailStatus(id, "failed", error.message);
-                console.error(`Failed to send email ID ${id}:`, error.message);
-            }
+    async sendEmail({ provider, from, to, subject, text, html }) {
+        if (!this.transports[provider]) {
+            throw new Error(`Transport for provider "${provider}" is not available.`);
         }
+
+        return this.transports[provider].send({ from, to, subject, text, html });
     }
 
-    registerRoutes() {
-        // Manually trigger email processing
-        this.app.post("/mail/process", async (req, res) => {
-            try {
-                await this.processEmails();
-                res.json({ message: "Email processing complete" });
-            } catch (error) {
-                console.error("Error processing emails:", error.message);
-                res.status(500).json({ error: "Failed to process emails" });
-            }
-        });
+    extendContext() {
+        if (!globalContext.actions) globalContext.actions = {};
+
+        globalContext.actions.sendEmail = async (ctx, params) => {
+            return await this.sendEmail(params);
+        };
     }
 }
 

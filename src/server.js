@@ -7,7 +7,7 @@ require('dotenv').config();
 const jwt = require('jsonwebtoken');
 
 // Import other modules
-const { getDbConnection } = require('./modules/db');
+const { getDbConnection } = require(path.join(__dirname, '/modules/db'));
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
@@ -16,17 +16,24 @@ const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
 const ChatModule = require('./modules/chatModule'); // Chat Module
-const PaymentModule = require('./modules/paymentModule'); // Payment Module
+const generateSwaggerDoc = require('./modules/generateSwaggerDoc');
+
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
-const configFile = path.join(process.cwd(), 'config/apiConfig.json');
-const rulesConfigPath = path.join(__dirname, '../config/businessRules.dsl'); // Path to the rules file
-const DSLParser = require('./modules/dslparser');
+
 const RuleEngine = require('./modules/ruleEngine.js');  
 const crypto = require('crypto');
-ruleEngine = null; // Global variable to hold the rule engine
+const consolelog = require('./modules/logger');
 
+const PaymentModule = require('./modules/paymentModule'); // Payment Module
+const DSLParser = require('./modules/dslparser');
+
+const configFile = path.join(__dirname, '../config/apiConfig.json');
+const rulesConfigPath = path.join(__dirname, '../config/businessRules.dsl'); // Path to the rules file
+const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware.js');
+
+ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1.js");
-require('dotenv').config({ path: process.cwd() + '/.env' });
+require('dotenv').config({ path: __dirname + '/.env' });
 const winston = require('winston');
 
 const logger = winston.createLogger({
@@ -41,6 +48,7 @@ const logger = winston.createLogger({
     ],
 });
 
+var newRules = null;
 const { passport, authenticateOAuth } = require('./middleware/oauth');
 const { exit } = require('process');
 
@@ -50,6 +58,7 @@ if(!process.env.REDIS_URL) {
 }
 const redis = new Redis(redisServer);
 
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
 
@@ -59,6 +68,13 @@ const graphqlDbType = process.env.GRAPHQL_DBTYPE;
 const graphqlDbConnection = process.env.GRAPHQL_DBCONNECTION;
 
 let apiConfig = [];
+
+const globalContext = {
+    actions: {
+        log: (ctx, message) => consolelog.log(`[LOG]: ${message}`),
+        notify: (ctx, target) => consolelog.log(`[NOTIFY]: Notification to ${target}`),
+    },
+};
 
 function flattenResolvers(resolvers) {
     const flatResolvers = {};
@@ -90,7 +106,7 @@ function registerProxyEndpoints(apiConfig) {
                     if (cache?.enabled) {
                         const cachedData = await getFromCache(cacheKey);
                         if (cachedData) {
-                            console.log("Cache hit for:", cacheKey);
+                            consolelog.log("Cache hit for:", cacheKey);
                             return res.json(cachedData);
                         }
                     }
@@ -196,7 +212,7 @@ function registerRoutes(app, apiConfig) {
         };
 
         if (auth && authentication) {
-            console.log(`Adding authentication for route: ${route}`);
+            consolelog.log(`Adding authentication for route: ${route}`);
             app.post(route, async (req, res) => {
                 const username = req.body[auth];
                 const password = req.body[authentication];
@@ -277,7 +293,7 @@ function registerRoutes(app, apiConfig) {
                         // Check Redis cache
                         const cachedData = await redis.get(cacheKey);
                         if (cachedData) {
-                            console.log(`Cache hit for key: ${cacheKey}`);
+                            consolelog.log(`Cache hit for key: ${cacheKey}`);
                             return res.json({ data: JSON.parse(cachedData) });
                         }
                     }
@@ -320,7 +336,7 @@ function registerRoutes(app, apiConfig) {
 
                     // Execute query
                     const query = `SELECT ${queryFields} FROM ${dbTable} ${joinClause} ${whereClause ? `WHERE ${whereClause}` : ''}`;
-                    console.log(`Executing query: ${query} with params: ${params}`);
+                    consolelog.log(`Executing query: ${query} with params: ${params}`);
 
                     const [results] = await connection.execute(query, params);
 
@@ -331,7 +347,7 @@ function registerRoutes(app, apiConfig) {
 
                     // Cache the query results in Redis if caching is enabled
                     if (cacheTTL > 0) {
-                        console.log(`Caching response for key: ${cacheKey} with TTL: ${cacheTTL}`);
+                        consolelog.log(`Caching response for key: ${cacheKey} with TTL: ${cacheTTL}`);
                         await redis.setex(cacheKey, cacheTTL, JSON.stringify(results));
                     }
 
@@ -408,10 +424,19 @@ function registerRoutes(app, apiConfig) {
 function initializeRules() {
     try {
         const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
-        const parser = new DSLParser();
-        const rules = parser.parse(dslText); // Convert DSL into executable rules
-        ruleEngine = new RuleEngine(rules); // Initialize the rule engine
-        console.log('Business rules initialized successfully.');
+
+        // Use RuleEngine's fromDSL to initialize the engine properly
+        const ruleEngineInstance = RuleEngine.fromDSL(dslText);
+
+        if (ruleEngine) {
+            // Merge new rules with existing rules
+            ruleEngine.rules = [...ruleEngine.rules, ...ruleEngineInstance.rules];
+        } else {
+            // Initialize the rule engine with the parsed rules
+            ruleEngine = ruleEngineInstance;
+        }
+       
+        consolelog.log('Business rules initialized successfully.');
     } catch (error) {
         console.error('Failed to initialize business rules:', error.message);
         process.exit(1); // Exit server if rules can't be loaded
@@ -419,10 +444,12 @@ function initializeRules() {
 }
 
 
+
 function setupRag(apiConfig) {
     // Initialize RAG during server startup
     initializeRAG(apiConfig).catch((error) => {
-        console.error("Failed to initialize RAG:", error.message);       
+        console.error("Failed to initialize RAG:", error.message);
+        process.exit(1); // Exit if initialization fails
     });
 }
 
@@ -430,33 +457,116 @@ class PluginManager {
     constructor(pluginDir, server, dependencyManager) {
         this.pluginDir = pluginDir;
         this.server = server;
-        this.plugins = [];
+        this.plugins = new Map(); // Track plugins by name
         this.dependencyManager = dependencyManager;
     }
 
+    /**
+     * Load all plugins statically during server startup.
+     */
     loadPlugins() {
         const pluginFiles = fs.readdirSync(this.pluginDir).filter((file) => file.endsWith('.js'));
 
         pluginFiles.forEach((file) => {
-            const pluginPath = path.join(this.pluginDir, file);
-            try {
-                const plugin = require(pluginPath);
-
-                if (typeof plugin.initialize === 'function') {
-                    const dependencies = this.dependencyManager.getDependencies();
-                    plugin.initialize(dependencies);
-                }
-
-                this.plugins.push(plugin);
-                console.log(`Plugin loaded: ${plugin.name} v${plugin.version}`);
-            } catch (error) {
-                console.error(`Failed to load plugin at ${pluginPath}:`, error.message);
-            }
+            const pluginName = file.replace('.js', '');
+            this.loadPlugin(pluginName);
         });
     }
 
+    /**
+     * Load a single plugin dynamically by name.
+     * @param {string} pluginName - Name of the plugin to load (without `.js`).
+     */
+    async loadPlugin(pluginName) {
+        const pluginPath = path.join(this.pluginDir, `${pluginName}.js`);
+    
+        if (this.plugins.has(pluginName)) {
+            console.warn(`Plugin ${pluginName} is already loaded.`);
+            return;
+        }
+    
+        try {
+            const plugin = require(pluginPath);
+    
+            if (!this.validatePlugin(plugin)) {
+                throw new Error(`Plugin ${pluginName} failed validation.`);
+            }
+    
+            const dependencies = this.dependencyManager.getDependencies();
+            if (typeof plugin.initialize === 'function') {
+                plugin.initialize(dependencies);
+            }
+    
+            let registeredRoutes = [];
+            if (typeof plugin.registerRoutes === 'function') {
+                registeredRoutes = plugin.registerRoutes({ app: this.server.app });
+            }
+    
+            this.plugins.set(pluginName, { instance: plugin, routes: registeredRoutes });
+            consolelog.log(`Plugin loaded dynamically: ${plugin.name} v${plugin.version}`);
+        } catch (error) {
+            console.error(`Failed to load plugin ${pluginName}:`, error.message);
+        }
+    }
+    
+    
+
+    /**
+     * Unload a plugin safely.
+     * @param {string} pluginName - Name of the plugin to unload.
+     */
+    unloadPlugin(pluginName) {
+        if (!this.plugins.has(pluginName)) {
+            console.warn(`Plugin ${pluginName} is not loaded.`);
+            return;
+        }
+    
+        const { instance: plugin, routes } = this.plugins.get(pluginName);
+        try {
+            if (plugin.cleanup) {
+                plugin.cleanup();
+            }
+    
+            // Remove registered routes
+            routes.forEach(({ method, path }) => {
+                const stack = this.server.app._router.stack;
+                for (let i = 0; i < stack.length; i++) {
+                    const layer = stack[i];
+                    if (layer.route && layer.route.path === path && layer.route.methods[method]) {
+                        stack.splice(i, 1); // Remove the route
+                        consolelog.log(`Unregistered route ${method.toUpperCase()} ${path}`);
+                    }
+                }
+            });
+    
+            // Clean up module cache
+            delete require.cache[require.resolve(path.join(this.pluginDir, `${pluginName}.js`))];
+            this.plugins.delete(pluginName);
+    
+            consolelog.log(`Plugin ${pluginName} unloaded successfully.`);
+        } catch (error) {
+            console.error(`Error unloading plugin ${pluginName}:`, error.message);
+        }
+    }
+    
+    
+
+    /**
+     * Validate a plugin to ensure it conforms to the required structure.
+     * @param {object} plugin - The plugin module to validate.
+     * @returns {boolean} - True if valid, false otherwise.
+     */
+    validatePlugin(plugin) {
+        const requiredMethods = ['initialize', 'registerRoutes'];
+        return requiredMethods.every((method) => typeof plugin[method] === 'function');
+    }
+
+    /**
+     * Register routes or middleware for all active plugins.
+     * @param {object} app - Express application instance.
+     */
     registerPlugins(app) {
-        this.plugins.forEach((plugin) => {
+        this.plugins.forEach((plugin, pluginName) => {
             try {
                 const dependencies = this.dependencyManager.getDependencies();
                 if (typeof plugin.registerMiddleware === 'function') {
@@ -465,8 +575,9 @@ class PluginManager {
                 if (typeof plugin.registerRoutes === 'function') {
                     plugin.registerRoutes({ ...dependencies, app });
                 }
+                consolelog.log(`Routes registered for plugin: ${pluginName}`);
             } catch (error) {
-                console.error(`Error in plugin ${plugin.name}:`, error.message);
+                console.error(`Error in plugin ${pluginName}:`, error.message);
             }
         });
     }
@@ -475,6 +586,7 @@ class PluginManager {
 class DependencyManager {
     constructor() {
         this.dependencies = {};
+        this.context = globalContext; 
     }
 
     addDependency(name, instance) {
@@ -482,19 +594,22 @@ class DependencyManager {
     }
 
     getDependencies() {
-        return { ...this.dependencies };
+        return { ...this.dependencies, context: this.context };
+    }
+
+    extendContext(key, value) {
+        this.context[key] = value;
     }
 }
 
 
 class FlexAPIServer {
-    constructor({ port = 3000, configPath = 'config/apiConfig.json' , pluginDir = './plugins' }) {
+    constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = '../plugins' }) {
         this.port = port;
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
-        // Need to come up and clean this up! As we already have a redis instance
-        this.redis = redis;
+        this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
         this.apiConfig = [];
         this.businessRules = new BusinessRules();
         this.dependencyManager = new DependencyManager();
@@ -506,16 +621,47 @@ class FlexAPIServer {
         this.streamingServer = null;
     }
 
+    setupPluginLoader() {
+       // Signal to dynamically load a plugin
+        process.on('SIGUSR2', async () => {
+            consolelog.log('Received SIGUSR2. Enter command (load/unload) and plugin name:');
+            process.stdin.once('data', async (input) => {
+                const [command, pluginName] = input.toString().trim().split(' ');
+                this.pluginManager.server = { app: this.app }; // Provide the app instance
+                if (command === 'load') {
+                    this.pluginManager.loadPlugin(pluginName);
+                } else if (command === 'unload') {
+                    this.pluginManager.unloadPlugin(pluginName);
+                } else if (command === 'list') {
+                    consolelog.log('Loaded Plugins:', Array.from(this.pluginManager.plugins.keys()));
+                } else if (command === 'reload') {
+                    this.pluginManager.unloadPlugin(pluginName);
+                    this.pluginManager.loadPlugin(pluginName);
+                } else if (command === 'reloadall') {
+                    this.pluginManager.plugins.forEach((plugin, name) => {
+                        this.pluginManager.unloadPlugin(name);
+                        this.pluginManager.loadPlugin(name);
+                    });
+                } else if(command === 'routes') {
+                    const routes = this.app._router.stack
+                        .filter((layer) => layer.route)
+                        .map((layer) => ({ path: layer.route.path, methods: Object.keys(layer.route.methods) }));
+                        consolelog.log(routes);
+                } else {
+                    consolelog.log('Invalid command. Use "load <pluginName>" or "unload <pluginName>".');
+                }
+            });
+        });
+    }
         
     async loadConfig() {
         try {
-            const configData = fs.readFileSync(path.resolve(process.cwd(), this.configPath), 'utf-8');
+            const configData = fs.readFileSync(path.resolve(__dirname, this.configPath), 'utf-8');
             this.apiConfig = JSON.parse(configData);
-            console.log('Configuration loaded successfully.');
+            consolelog.log('Configuration loaded successfully.');
         } catch (error) {
             console.error('Error loading configuration:', error);
-            console.error("You must create a config folder and add an apiConfig.json file");
-            exit(1);            
+            throw error;
         }
     }
 
@@ -525,10 +671,10 @@ class FlexAPIServer {
         // Reload Configuration
     setupReloadHandler(configFile) {
         process.on('SIGHUP', async () => {
-            console.log('Reloading configuration...');
+            consolelog.log('Reloading configuration...');
             await loadConfig(configFile);
             registerRoutes();
-            console.log('Configuration reloaded.');
+            consolelog.log('Configuration reloaded.');
         });
     }
 
@@ -536,11 +682,13 @@ class FlexAPIServer {
     registerMiddleware() {
         this.app.use(express.json());
         this.app.use(morgan('combined'));
-        this.businessRules.loadRules();
-        this.app.use(this.businessRules.middleware());
+        // this.businessRules.loadRules();
+        // this.app.use(this.businessRules.middleware());
         const rateLimit = new RateLimit(this.apiConfig, this.redis);
         this.app.use(rateLimit.middleware());      
-        
+        consolelog.log('Rule Engine for Middleware',ruleEngine);
+        const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine);
+        this.app.use(ruleEngineMiddleware.middleware());
     }
 
     registerRoutes() {
@@ -549,6 +697,36 @@ class FlexAPIServer {
 
     registerProxyEndpoints() {
         registerProxyEndpoints(this.apiConfig);
+    }
+
+    setupConfigBuilder(app,configFilePath){
+        app.get('/api/config', (req, res) => {
+            try {                
+                const configs = this.apiConfig;
+                res.json(configs);
+            } catch (err) {
+                res.status(500).json({ error: "Failed to load configurations" });
+            }
+        });
+        
+        // Add or update configuration
+        app.post('/api/config', (req, res) => {
+            try {
+                const newConfig = req.body;
+                const configs = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+                configs.push(newConfig);
+                fs.writeFileSync(configFilePath, JSON.stringify(configs, null, 2));
+                res.json({ message: "Configuration saved" });
+            } catch (err) {
+                res.status(500).json({ error: "Failed to save configuration" });
+            }
+        });
+        
+        
+        
+        app.get('/internal/builder', (req, res) => {
+            res.sendFile(path.join(__dirname, './static', 'builder.html'));
+        });
     }
 
     async setupGraphQL() {
@@ -592,7 +770,7 @@ class FlexAPIServer {
             const httpServer = require('http').createServer(app); // Reuse server
             this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig);
             this.chatModule.start();
-            console.log('Chat module initialized.');
+            consolelog.log('Chat module initialized.');
         } catch (error) {
             console.error('Failed to initialize Chat Module:', error.message);
         }
@@ -603,7 +781,7 @@ class FlexAPIServer {
         //         getConnection: async () => await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }),
         //     };
         //     this.paymentModule = new PaymentModule(this.app, dbConfig);
-        //     console.log('Payment module initialized.');
+        //     consolelog.log('Payment module initialized.');
         // } catch (error) {
         //     console.error('Failed to initialize Payment Module:', error.message);
         // }
@@ -617,7 +795,7 @@ class FlexAPIServer {
             };
             this.streamingServer = new StreamingServer(this.app, s3Config);
             this.streamingServer.registerRoutes();
-            console.log('Streaming server module initialized.');
+            consolelog.log('Streaming server module initialized.');
         } catch (error) {
             console.error('Failed to initialize Streaming Server Module:', error.message);
         }
@@ -627,6 +805,8 @@ class FlexAPIServer {
         mlAnalytics.scheduleTraining();
 
         app.use('/ml', mlAnalytics.middleware());
+
+
 
         app.post("/api/rag", async (req, res) => {
         try {
@@ -655,12 +835,58 @@ class FlexAPIServer {
     async start(callback) {
         try {
           
-            console.log(configFile);
+            consolelog.log(configFile);
+               // Validate required parameters
+             // Extract command-line arguments (excluding the first two default arguments)
+            const args = process.argv.slice(2);
+
+            const isSwaggerGeneration = args.includes('--generate-swagger');
+
+            // Default paths
+            let inputConfigPath = path.resolve(process.cwd(), './config/apiConfig.json');
+            let outputSwaggerPath = path.resolve(process.cwd(), './swagger.json');
+
+            // Allow users to provide custom input and output paths
+            args.forEach((arg, index) => {
+                if (arg === '--input' && args[index + 1]) {
+                    inputConfigPath = path.resolve(process.cwd(), args[index + 1]);
+                }
+                if (arg === '--output' && args[index + 1]) {
+                    outputSwaggerPath = path.resolve(process.cwd(), args[index + 1]);
+                }
+            });
+
+            // Handle Swagger generation
+            if (isSwaggerGeneration) {
+                try {
+                  
+                    console.log(`Saving Swagger file to: ${outputSwaggerPath}`);
+                    const apiConfig = JSON.parse(fs.readFileSync(inputConfigPath, 'utf-8'));
+                    console.log(apiConfig);
+                    generateSwaggerDoc(apiConfig, outputSwaggerPath);
+
+                    console.log('Swagger documentation generated successfully. Exiting...');
+                    process.exit(0);
+                } catch (error) {
+                    console.error(`Error generating Swagger: ${error.message}`);
+                    process.exit(1);
+                }
+            }
+            // Check if any parameters are passed
+            if (args.length > 0 && !args.includes('--build') && !args.includes('--init')) {
+                consolelog.log(
+                    'Error: Invalid parameters provided. Please use one of the following:\n' +
+                    '  --build   Build API configuration from the database.\n' +
+                    '  --init    Initialize database tables.\n' +
+                    'Or start the server without parameters to run normally.'
+                );
+                process.exit(1); // Exit with an error code
+            }
             // Add support for building API config from database
-            if (process.argv.includes('-build')) {
-                console.log('Building API configuration from database...');
+            if (process.argv.includes('--build')) {
+                consolelog.log('Building API configuration from database...');
                 await buildApiConfigFromDatabase();
-                console.log('API configuration build complete.');
+                consolelog.log('API configuration build complete.');
                 process.exit(0);
             }
 
@@ -670,12 +896,14 @@ class FlexAPIServer {
             this.setupDependencies(); // Initialize dependencies.
 
             // Check if -init parameter is provided
-            if (process.argv.includes('-init')) {
-                console.log('Initializing database tables...');
+            if (process.argv.includes('--init')) {
+                consolelog.log('Initializing database tables...');
                 await this.initializeTables();
-                console.log('Table initialization complete. Exiting...');
+                consolelog.log('Table initialization complete. Exiting...');
                 process.exit(0);
             }
+
+          
 
             setupRag(this.apiConfig);
             initializeRules();
@@ -686,11 +914,12 @@ class FlexAPIServer {
             this.initializeOptionalModules(this.app);
             await this.setupGraphQL();
 
-            
-           
+            this.setupConfigBuilder(this.app,this.apiConfig);
+           this.setupPluginLoader();
+           this.setupReloadHandler(this.configPath);
 
             this.app.listen(this.port, () => {
-                console.log(`API server running on port ${this.port}`);
+                consolelog.log(`API server running on port ${this.port}`);
                 if (callback) callback();
             });
             return this.app;
@@ -699,13 +928,17 @@ class FlexAPIServer {
             console.error('Failed to start server:', error);
         }
     }
-    
+   
+
     close() {
         if (this.server) {
             this.server.close();
         }
     }
 }
+
+
+
 
 // Export the FlexAPIServer class
 module.exports = FlexAPIServer;
@@ -714,7 +947,7 @@ module.exports = FlexAPIServer;
 if (require.main === module) {
     const server = new FlexAPIServer({
         port: process.env.PORT || 3000,
-        configPath: 'config/apiConfig.json',
+        configPath: './config/apiConfig.json',
     });
     server.start();
 }
