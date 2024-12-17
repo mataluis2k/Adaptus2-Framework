@@ -19,10 +19,27 @@ const ChatModule = require('./modules/chatModule'); // Chat Module
 const PaymentModule = require('./modules/paymentModule'); // Payment Module
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const configFile = path.join(process.cwd(), 'config/apiConfig.json');
-    
+const rulesConfigPath = path.join(__dirname, '../config/businessRules.dsl'); // Path to the rules file
+const DSLParser = require('./modules/dslparser');
+const RuleEngine = require('./modules/ruleEngine.js');  
+const crypto = require('crypto');
+ruleEngine = null; // Global variable to hold the rule engine
 
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1.js");
 require('dotenv').config({ path: process.cwd() + '/.env' });
+const winston = require('winston');
+
+const logger = winston.createLogger({
+    level: 'info',
+    format: winston.format.combine(
+        winston.format.timestamp(),
+        winston.format.json()
+    ),
+    transports: [
+        new winston.transports.Console(),
+        new winston.transports.File({ filename: 'error.log', level: 'error' })
+    ],
+});
 
 const { passport, authenticateOAuth } = require('./middleware/oauth');
 const { exit } = require('process');
@@ -34,6 +51,7 @@ if(!process.env.REDIS_URL) {
 const redis = new Redis(redisServer);
 
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
+const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
 
 console.log('Current directory:', process.cwd());
 
@@ -54,6 +72,7 @@ function flattenResolvers(resolvers) {
     if (resolvers.Mutation) {
         Object.assign(flatResolvers, resolvers.Mutation);
     }
+
     return flatResolvers;
 }
 
@@ -177,6 +196,7 @@ function registerRoutes(app, apiConfig) {
         };
 
         if (auth && authentication) {
+            console.log(`Adding authentication for route: ${route}`);
             app.post(route, async (req, res) => {
                 const username = req.body[auth];
                 const password = req.body[authentication];
@@ -221,10 +241,12 @@ function registerRoutes(app, apiConfig) {
                     // Generate JWT token
                     const tokenPayload = {};
                     allowRead.forEach((field) => {
-                        tokenPayload[field] = user[field];
+                        if(field !== authentication) {
+                            tokenPayload[field] = user[field];
+                        }
                     });
 
-                    const token = jwt.sign(tokenPayload, SECRET_KEY, { expiresIn: TOKEN_EXPIRATION });
+                    const token = jwt.sign(tokenPayload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
 
                     res.json({
                         message: "Authentication successful",
@@ -383,6 +405,20 @@ function registerRoutes(app, apiConfig) {
     });
 }
 
+function initializeRules() {
+    try {
+        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
+        const parser = new DSLParser();
+        const rules = parser.parse(dslText); // Convert DSL into executable rules
+        ruleEngine = new RuleEngine(rules); // Initialize the rule engine
+        console.log('Business rules initialized successfully.');
+    } catch (error) {
+        console.error('Failed to initialize business rules:', error.message);
+        process.exit(1); // Exit server if rules can't be loaded
+    }
+}
+
+
 function setupRag(apiConfig) {
     // Initialize RAG during server startup
     initializeRAG(apiConfig).catch((error) => {
@@ -390,15 +426,79 @@ function setupRag(apiConfig) {
     });
 }
 
+class PluginManager {
+    constructor(pluginDir, server, dependencyManager) {
+        this.pluginDir = pluginDir;
+        this.server = server;
+        this.plugins = [];
+        this.dependencyManager = dependencyManager;
+    }
+
+    loadPlugins() {
+        const pluginFiles = fs.readdirSync(this.pluginDir).filter((file) => file.endsWith('.js'));
+
+        pluginFiles.forEach((file) => {
+            const pluginPath = path.join(this.pluginDir, file);
+            try {
+                const plugin = require(pluginPath);
+
+                if (typeof plugin.initialize === 'function') {
+                    const dependencies = this.dependencyManager.getDependencies();
+                    plugin.initialize(dependencies);
+                }
+
+                this.plugins.push(plugin);
+                console.log(`Plugin loaded: ${plugin.name} v${plugin.version}`);
+            } catch (error) {
+                console.error(`Failed to load plugin at ${pluginPath}:`, error.message);
+            }
+        });
+    }
+
+    registerPlugins(app) {
+        this.plugins.forEach((plugin) => {
+            try {
+                const dependencies = this.dependencyManager.getDependencies();
+                if (typeof plugin.registerMiddleware === 'function') {
+                    plugin.registerMiddleware({ ...dependencies, app });
+                }
+                if (typeof plugin.registerRoutes === 'function') {
+                    plugin.registerRoutes({ ...dependencies, app });
+                }
+            } catch (error) {
+                console.error(`Error in plugin ${plugin.name}:`, error.message);
+            }
+        });
+    }
+}
+
+class DependencyManager {
+    constructor() {
+        this.dependencies = {};
+    }
+
+    addDependency(name, instance) {
+        this.dependencies[name] = instance;
+    }
+
+    getDependencies() {
+        return { ...this.dependencies };
+    }
+}
+
+
 class FlexAPIServer {
-    constructor({ port = 3000, configPath = 'config/apiConfig.json' }) {
+    constructor({ port = 3000, configPath = 'config/apiConfig.json' , pluginDir = './plugins' }) {
         this.port = port;
         this.configPath = configPath;
+        this.pluginDir = pluginDir;
         this.app = express();
         // Need to come up and clean this up! As we already have a redis instance
         this.redis = redis;
         this.apiConfig = [];
         this.businessRules = new BusinessRules();
+        this.dependencyManager = new DependencyManager();
+        this.pluginManager = new PluginManager(this.pluginDir, this, this.dependencyManager);
 
         // Optional modules
         this.chatModule = null;
@@ -545,6 +645,12 @@ class FlexAPIServer {
         });
           
     }
+    setupDependencies() {
+        // Add common dependencies to the manager.
+        this.dependencyManager.addDependency('app', this.app);
+        this.dependencyManager.addDependency('db', getDbConnection); // Add a database connection function.
+        this.dependencyManager.addDependency('logger', logger);
+    }
 
     async start(callback) {
         try {
@@ -561,8 +667,7 @@ class FlexAPIServer {
             // Load the API configuration
             await this.loadConfig(configFile);
 
-            // Setup configuration reload handler
-            //this.setupReloadHandler(configFile);
+            this.setupDependencies(); // Initialize dependencies.
 
             // Check if -init parameter is provided
             if (process.argv.includes('-init')) {
@@ -573,6 +678,7 @@ class FlexAPIServer {
             }
 
             setupRag(this.apiConfig);
+            initializeRules();
             
             this.registerMiddleware();
             this.registerRoutes();
@@ -587,8 +693,16 @@ class FlexAPIServer {
                 console.log(`API server running on port ${this.port}`);
                 if (callback) callback();
             });
+            return this.app;
+
         } catch (error) {
             console.error('Failed to start server:', error);
+        }
+    }
+    
+    close() {
+        if (this.server) {
+            this.server.close();
         }
     }
 }
