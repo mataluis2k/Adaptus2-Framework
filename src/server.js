@@ -7,7 +7,7 @@ require('dotenv').config();
 const jwt = require('jsonwebtoken');
 
 // Import other modules
-const { getDbConnection } = require(path.join(__dirname, '/modules/db'));
+const { getDbConnection } = require('./modules/db');
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
@@ -20,20 +20,22 @@ const generateSwaggerDoc = require('./modules/generateSwaggerDoc');
 
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 
+
+const DSLParser = require('./modules/dslparser');
 const RuleEngine = require('./modules/ruleEngine.js');  
 const crypto = require('crypto');
 const consolelog = require('./modules/logger');
 
 const PaymentModule = require('./modules/paymentModule'); // Payment Module
-const DSLParser = require('./modules/dslparser');
 
-const configFile = path.join(__dirname, '../config/apiConfig.json');
-const rulesConfigPath = path.join(__dirname, '../config/businessRules.dsl'); // Path to the rules file
+
+const configFile = path.join(process.cwd(), 'config/apiConfig.json');
+const rulesConfigPath = path.join(process.cwd(), 'config/businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware.js');
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1.js");
-require('dotenv').config({ path: __dirname + '/.env' });
+require('dotenv').config({ path: process.cwd() + '/.env' });
 const winston = require('winston');
 
 const logger = winston.createLogger({

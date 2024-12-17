@@ -158,7 +158,7 @@ Here are three complete JSON configuration examples that use `TRIGGER`, `INSERT`
   "endpoint": "/api/clicks",
   "events": ["GET"],
   "rules": [
-        "INSERT INTO click_tracking (user_id, url, timestamp, user_agent, ip_address) VALUES (req.user.id, req.url, NOW(), req.headers['user-agent'], req.ip)"
+    "INSERT INTO click_tracking (user_id, url, timestamp, user_agent, ip_address) VALUES (req.user.id, req.url, NOW(), req.headers['user-agent'], req.ip)"
   ]
 }
 ```
