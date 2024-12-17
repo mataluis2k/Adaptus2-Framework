@@ -56,7 +56,6 @@ const redisServer = process.env.REDIS_URL +":"+ process.env.REDIS_PORT || 'redis
 if(!process.env.REDIS_URL) {
     console.log('No Redis URL provided. Using default URL:', redisServer);
 }
-const redis = new Redis(redisServer);
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
