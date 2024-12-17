@@ -1,6 +1,6 @@
 {
   "name": "flexapi-server",
-  "version": "1.0.12",
+  "version": "1.1.0",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "main": "src/server.js",
   "repository": {
