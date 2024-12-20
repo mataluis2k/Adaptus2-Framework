@@ -44,7 +44,9 @@ const logger = winston.createLogger({
 const { passport, authenticateOAuth } = require('./middleware/oauth');
 const { exit } = require('process');
 
-const redisServer = process.env.REDIS_URL +":"+ process.env.REDIS_PORT || 'redis://localhost:6379';
+const redisServer = (process.env.REDIS_URL && process.env.REDIS_PORT)
+  ? `redis://${process.env.REDIS_URL}:${process.env.REDIS_PORT}`
+  : 'redis://localhost:6379';
 if(!process.env.REDIS_URL) {
     console.log('No Redis URL provided. Using default URL:', redisServer);
 }
@@ -87,7 +89,7 @@ function registerProxyEndpoints(apiConfig) {
                     const cacheKey = `${route}:${JSON.stringify(req.query)}`;
                     
                     // Check cache if enabled
-                    if (cache?.enabled) {
+                    if (cache.enabled) {
                         const cachedData = await getFromCache(cacheKey);
                         if (cachedData) {
                             console.log("Cache hit for:", cacheKey);
@@ -149,7 +151,7 @@ function registerProxyEndpoints(apiConfig) {
                     }
 
                     // Cache response if caching is enabled
-                    if (cache?.enabled) {
+                    if (cache.enabled) {
                         setToCache(cacheKey, responseData, cache.ttl);
                     }
 
