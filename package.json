@@ -8,6 +8,7 @@
     "url": "git+https://github.com/mataluis2k/flexapi-server.git"
   },
   "scripts": {
+    "postinstall": "node install.js",
     "start": "node server.js",
     "dev": "nodemon server.js"
   },
@@ -25,6 +26,7 @@
     "@langchain/openai": "^0.3.14",
     "@zilliz/milvus2-sdk-node": "^2.5.1",
     "aws-sdk": "^2.1692.0",
+    "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
     "body-parser": "^1.20.3",
     "braintree": "^3.26.0",
@@ -57,9 +59,14 @@
     "pg": "^8.13.1",
     "pinecone-client": "^2.0.0",
     "qdrant-client": "^0.0.1",
+    "snowflake-sdk": "^2.0.0",
     "socket.io": "^4.8.1",
     "stripe": "^17.4.0",
     "weaviate-client": "^3.2.5",
     "web-push": "^3.6.7"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
   }
 }

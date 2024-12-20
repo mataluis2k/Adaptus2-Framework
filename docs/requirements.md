@@ -341,3 +341,49 @@ CREATE TABLE payments (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (user_id) REFERENCES users(id)
 );
+
+
+## Apple payment verification
+npm install jsonwebtoken
+npm install node-apple-receipt-verify
+
+```
+CREATE TABLE apple_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,         -- Unique identifier for the transaction record
+    transaction_id VARCHAR(255) NOT NULL,     -- Unique transaction identifier from Apple
+    product_id VARCHAR(255) NOT NULL,         -- ID of the purchased product
+    user_id INT NOT NULL,                     -- User ID of the purchaser
+    purchase_date DATETIME NOT NULL,          -- Date and time of purchase
+    notification_type VARCHAR(50) NOT NULL,  -- Type of Apple notification (e.g., SUBSCRIBED, DID_RENEW)
+    subtype VARCHAR(50),                      -- Subtype of the notification (e.g., INITIAL_BUY, VOLUNTARY)
+    receipt TEXT NOT NULL,                    -- Base64-encoded receipt sent by Apple
+    status ENUM('pending', 'processed', 'failed') DEFAULT 'pending', 
+                                              -- Processing status of the transaction
+    error_message TEXT,                       -- Error message if processing fails
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                              -- Record creation timestamp
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                                              -- Last update timestamp for the record
+);
+```
+## Google payments schema
+npm install googleapis
+
+```
+CREATE TABLE google_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,         -- Unique identifier for the transaction record
+    purchase_token VARCHAR(255) NOT NULL,     -- Unique purchase token from Google
+    package_name VARCHAR(255) NOT NULL,       -- App's package name
+    product_id VARCHAR(255) NOT NULL,         -- ID of the purchased product
+    user_id INT NOT NULL,                     -- User ID of the purchaser
+    notification_type VARCHAR(50) NOT NULL,  -- Type of notification (e.g., PURCHASE, CANCEL)
+    purchase_state INT NOT NULL,              -- Purchase state from Google API (e.g., 0 for purchased)
+    status ENUM('pending', 'processed', 'failed') DEFAULT 'pending', 
+                                              -- Processing status of the transaction
+    error_message TEXT,                       -- Error message if processing fails
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                                              -- Record creation timestamp
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+                                              -- Last update timestamp for the record
+);
+```

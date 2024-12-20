@@ -1,0 +1,19 @@
+{
+    "transports": [
+        {
+            "name": "stripe",
+            "module": "./transports/stripe",
+            "options": { "apiKey": "YOUR_STRIPE_API_KEY" }
+        },
+        {
+            "name": "braintree",
+            "module": "./transports/braintree",
+            "options": {
+                "merchantId": "YOUR_MERCHANT_ID",
+                "publicKey": "YOUR_PUBLIC_KEY",
+                "privateKey": "YOUR_PRIVATE_KEY",
+                "environment": "Sandbox"
+            }
+        }
+    ]
+}
