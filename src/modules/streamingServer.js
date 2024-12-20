@@ -18,7 +18,13 @@ consolelog.log("hls_output: ",path.join(__dirname, "hls_output"));
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 
 const ffmpegConfigPath = path.join(configDir, 'ffmpeg_profiles.json');
-const ffmpegProfiles = JSON.parse(fs.readFileSync(ffmpegConfigPath, 'utf8'));
+// filestat to check if the file exists
+try {
+    fs.statSync(ffmpegConfigPath);
+} catch (err) {
+    console.error(`Error reading ffmpeg profiles: ${err.message}`);
+    return;
+}
 
 // Read desired profile from environment variable, default to "mediumBandwidth"
 const selectedProfileName = process.env.FFMPEG_PROFILE || "mediumBandwidth";
