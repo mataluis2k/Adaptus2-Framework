@@ -1,28 +1,23 @@
 [
   {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "users",
     "auth": "username",
+    "allowMethods": ["POST"],
     "authentication": "password",
     "encryption": "sha256",
-    "allowRead": [
-      "id",
-      "username",
-      "password",
-      "role_id"
-    ],
+    "allowRead": ["id", "username", "password", "acl"],
     "route": "/api/login",
-    "dbTable": "users"
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "cache" : 0    
   },
   {
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "dbTable": "articles",
     "route": "/api/articles",
-    "allowMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
     "allowRead": [
       "id",
       "title",
@@ -31,98 +26,26 @@
       "author_id"
     ],
     "allowWrite": [
+      "id",
       "title",
       "content",
-      "image_url"
-    ],
-    "keys": [
-      "id"
+      "image_url",
+      "author_id"
     ],
     "acl": "publicAccess",
-    "cache": 0,
-    "mlmodel": [
-      "sentiment",
-      "recommendation",
-      "anomaly",
-      "rag"
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
     ],
-    "openGraphMapping": {
-      "og:title": "title",
-      "og:description": "content",
-      "og:image": "image_url",
-      "og:url": "id"
-    },
     "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "title": "VARCHAR(255)",
-      "content": "TEXT",
-      "image_url": "VARCHAR(255)",
-      "author_id": "INT"
-    },
-    "relationships": [
-      {
-        "type": "one-to-one",
-        "relatedTable": "authors",
-        "foreignKey": "author_id",
-        "relatedKey": "id",
-        "joinType": "LEFT JOIN",
-        "fields": [
-          "name",
-          "bio",
-          "profile_image"
-        ]
-      }
-    ]
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "products",
-    "route": "/api/products",
-    "allowRead": [
-      "id",
-      "product_name",
-      "description",
-      "image",
-      "price",
-      "category_id"
-    ],
-    "allowWrite": [
-      "product_name",
-      "description",
-      "image",
-      "price"
-    ],
-    "mlmodel": [
-      "rag"
-    ],
-    "keys": [
-      "id"
-    ],
-    "acl": "publicAccess",
-    "openGraphMapping": {
-      "og:title": "product_name",
-      "og:description": "description",
-      "og:image": "image",
-      "og:url": "id"
-    },
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "product_name": "VARCHAR(255)",
-      "description": "TEXT",
-      "image": "VARCHAR(255)",
-      "price": "DECIMAL(10, 2)",
-      "category_id": "INT"
-    },
-    "relationships": [
-      {
-        "type": "one-to-many",
-        "relatedTable": "categories",
-        "foreignKey": "category_id",
-        "relatedKey": "id",
-        "joinType": "LEFT JOIN"
-      }
-    ]
+      "id": "Int",
+      "title": "String",
+      "content": "String",
+      "image_url": "String",
+      "author_id": "Int"
+    }
   },
   {
     "dbType": "mysql",
@@ -136,25 +59,23 @@
       "profile_image"
     ],
     "allowWrite": [
+      "id",
       "name",
       "bio",
       "profile_image"
     ],
-    "keys": [
-      "id"
-    ],
     "acl": "publicAccess",
-    "openGraphMapping": {
-      "og:title": "name",
-      "og:description": "bio",
-      "og:image": "profile_image",
-      "og:url": "id"
-    },
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
     "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "name": "VARCHAR(255)",
-      "bio": "TEXT",
-      "profile_image": "VARCHAR(255)"
+      "id": "Int",
+      "name": "String",
+      "bio": "String",
+      "profile_image": "String"
     }
   },
   {
@@ -271,6 +192,43 @@
   {
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
+    "dbTable": "products",
+    "route": "/api/products",
+    "allowRead": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id"
+    ],
+    "allowWrite": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "product_name": "String",
+      "description": "String",
+      "image": "String",
+      "price": "String",
+      "category_id": "Int"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "uploads",
     "route": "/api/uploads",
     "allowRead": [
@@ -303,6 +261,43 @@
       "filetype": "String",
       "uploaded_by": "String",
       "uploaded_at": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "users",
+    "route": "/api/users",
+    "allowRead": [
+      "id",
+      "username",
+      "password",
+      "acl",
+      "created_at",
+      "updated_at"
+    ],
+    "allowWrite": [
+      "id",
+      "username",
+      "password",
+      "acl",
+      "created_at",
+      "updated_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "username": "String",
+      "password": "String",
+      "acl": "String",
+      "created_at": "String",
+      "updated_at": "String"
     }
   },
   {

@@ -9,6 +9,12 @@ function printResolvers(resolvers) {
         });
     });
 }
+
+function getLastPartOfPath(fullPath) {
+    const parts = fullPath.split('/'); // Split by URL separator
+    return parts.pop() || fullPath; // Get the last part or empty string if no parts exist
+}
+
 // Utility to generate GraphQL schema and root resolvers from config
 function generateGraphQLSchema(config) {
     let schemaString = '';
@@ -23,7 +29,14 @@ function generateGraphQLSchema(config) {
 
     config.forEach((endpoint) => {
         const { dbTable, allowRead, allowWrite } = endpoint;
+        if (endpoint.dbType === "proxy") {
+            return; // Skip this iteration
+        }
+        if(endpoint.authentication){
+            return; 
+        }
     
+      
         // Generate type definition for the database table
         const typeName = dbTable.charAt(0).toUpperCase() + dbTable.slice(1);
         const fields = allowRead.map((field) => `${field}: String`).join('\n');
