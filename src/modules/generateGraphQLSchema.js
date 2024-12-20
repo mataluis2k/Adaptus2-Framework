@@ -39,6 +39,7 @@ function generateGraphQLSchema(config) {
       
         // Generate type definition for the database table
         const typeName = dbTable.charAt(0).toUpperCase() + dbTable.slice(1);
+        console.log(`Generating type definition for ${typeName}`);
         const fields = allowRead.map((field) => `${field}: String`).join('\n');
         schemaString += `
             type ${typeName} {
