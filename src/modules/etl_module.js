@@ -1,7 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { getDbConnection } = require('./modules/db');
-const BusinessRules = require('./modules/business_rules');
+const RuleEngine = require('./modules/ruleEngine');
+
 
 // Paths for additional configurations and state files
 const stateFilePath = path.join(process.cwd(), 'etl_state.json');
@@ -69,6 +70,22 @@ async function syncSchema(sourceConnection, targetConnection, sourceTable, targe
 }
 
 
+/**
+ * Load rules for a given entity (table).
+ * @param {string} entity - The name of the entity/table.
+ * @returns {Array} - An array of rules.
+ */
+function loadRulesForEntity(entity) {
+    const ruleFilePath = path.join(process.cwd(), `config/rules/${entity}_rules.dsl`);
+    if (fs.existsSync(ruleFilePath)) {
+        const dslText = fs.readFileSync(ruleFilePath, 'utf-8');
+        const ruleEngineInstance = RuleEngine.fromDSL(dslText);
+        return ruleEngineInstance.rules;
+    }
+    console.warn(`No rules found for entity: ${entity}`);
+    return [];
+}
+
 // Observer module to get modified records
 async function fetchModifiedRecords(connection, table, lastUpdatedAt) {
     if (!lastUpdatedAt) return `SELECT * FROM ${table}`;
@@ -100,7 +117,7 @@ async function processLargeTableInBatches(
     const hasUpdatedAt = Object.keys(sourceSchema).includes('updated_at');
 
     // Get business rules for the source table
-    const endpointRules = businessRulesInstance.rules[`/api/${sourceTable}`] || [];
+    const ruleEngineInstance = new RuleEngine(loadRulesForEntity(source_table));
 
     while (hasMoreData) {
         let query = '';
@@ -129,11 +146,8 @@ async function processLargeTableInBatches(
 
         for (const row of rows) {
             let transformedData = { ...row };
-
-            // Apply business rules to the row
-            endpointRules.forEach((rule) => {
-                transformedData = businessRulesInstance.executeRule(rule, transformedData);
-            });
+                      
+            ruleEngineInstance.processEvent('UPDATE', source_table, row);
 
             // Build upsert query for target table
             const fields = Object.keys(transformedData).join(', ');

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 // Use the secret from your .env file
-const JWT_SECRET = '';
+const JWT_SECRET = 'mysecret';
 
 // Payload for the token
 const payload = {

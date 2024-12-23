@@ -1,11 +1,13 @@
+const consolelog = require('./logger');
+
 var { buildSchema } = require('graphql');
 
 function printResolvers(resolvers) {
     Object.entries(resolvers).forEach(([type, resolverGroup]) => {
-        console.log(`Resolvers for ${type}:`);
+        consolelog.log(`Resolvers for ${type}:`);
         Object.entries(resolverGroup).forEach(([resolverName, resolverFn]) => {
-            console.log(`- ${resolverName}:`);
-            console.log(resolverFn.toString()); // Print the function definition
+            consolelog.log(`- ${resolverName}:`);
+            consolelog.log(resolverFn.toString()); // Print the function definition
         });
     });
 }
@@ -28,18 +30,14 @@ function generateGraphQLSchema(config) {
     const mutationFields = [];
 
     config.forEach((endpoint) => {
-        const { dbTable, allowRead, allowWrite } = endpoint;
-        if (endpoint.dbType === "proxy") {
+        if  (endpoint.dbType === "proxy" || endpoint.dbType === 'dynamic' || endpoint.cron === 'cron' || endpoint.authentication)  {
             return; // Skip this iteration
         }
-        if(endpoint.authentication){
-            return; 
-        }
+
+        const { dbTable, allowRead, allowWrite } = endpoint;
     
-      
         // Generate type definition for the database table
         const typeName = dbTable.charAt(0).toUpperCase() + dbTable.slice(1);
-        console.log(`Generating type definition for ${typeName}`);
         const fields = allowRead.map((field) => `${field}: String`).join('\n');
         schemaString += `
             type ${typeName} {
@@ -57,9 +55,9 @@ function generateGraphQLSchema(config) {
             getAllQuery = `SELECT ${selectFields} FROM ${dbTable}`;
             getByIdQuery = `SELECT ${selectFields} FROM ${dbTable} WHERE id = ?`;
         
-            console.log(`Allow read: ${allowRead}`);
-            console.log(`GetAll Query: ${getAllQuery}`);
-            console.log(`GetById Query: ${getByIdQuery}`);
+            consolelog.log(`Allow read: ${allowRead}`);
+            consolelog.log(`GetAll Query: ${getAllQuery}`);
+            consolelog.log(`GetById Query: ${getByIdQuery}`);
         
             // Bind resolvers with queries and ensure dynamic parameters are passed correctly
             rootResolvers.Query[`getAll${typeName}`] = createGetAllResolver(typeName, getAllQuery);
@@ -142,7 +140,7 @@ function createGetResolver(typeName, query) {
                 throw new Error('dbConnection is not defined in the context');
             }
 
-            console.log(`Database connection for get${typeName} acquired`);
+            consolelog.log(`Database connection for get${typeName} acquired`);
 
             // Assuming `id` is passed in the GraphQL query as an argument
             const { id } = req;
@@ -166,14 +164,14 @@ function createGetResolver(typeName, query) {
 function createMutationResolver(typeName, dbTable) {
     return async (_, { input }, { dbConnection }) => {
         try {
-            console.log(`Resolver called: create${typeName}`);
+            consolelog.log(`Resolver called: create${typeName}`);
             const connection = await dbConnection();
             const fields = Object.keys(input).join(', ');
             const placeholders = Object.keys(input).map(() => '?').join(', ');
             const query = `INSERT INTO ${dbTable} (${fields}) VALUES (${placeholders})`;
-            console.log(`SQL Query: ${query}`);
+            consolelog.log(`SQL Query: ${query}`);
             const [result] = await connection.execute(query, Object.values(input));
-            console.log(`Insert Results:`, result);
+            consolelog.log(`Insert Results:`, result);
             return { id: result.insertId, ...input };
         } catch (error) {
             console.error(`Error in create${typeName} resolver:`, error);

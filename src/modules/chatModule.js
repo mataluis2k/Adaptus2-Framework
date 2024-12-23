@@ -1,14 +1,14 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
-
+const { getDbConnection } = require("./db");
 class ChatModule {
-    constructor(httpServer, app, jwtSecret, dbConfig) {
+    constructor(httpServer, app, jwtSecret, dbConfig, corsOptions) {
         // Initialize Socket.IO
         this.io = new Server(httpServer, {
             cors: {
-                origin: "*", // Update based on your frontend origin
-                methods: ["GET", "POST"],
+                origin: corsOptions.origin, // Update based on your frontend origin
+                methods: corsOptions.methods,
             },
         });
 
@@ -23,23 +23,27 @@ class ChatModule {
     }
 
     async saveMessage({ senderId, recipientId, groupName, message, status }) {
-        const query = `
-            INSERT INTO messages (sender_id, recipient_id, group_name, message, status, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?)
-        `;
+        const dbType = process.env.STREAMING_DBTYPE || "mysql";
+        const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
+    
+        const config = { dbType, dbConnection };            
         const timestamp = new Date().toISOString();
-
+    
+        const sql = `
+            INSERT INTO messages (sender_id, recipient_id, group_name, message, status, timestamp)
+            VALUES (?, ?, ?, ?, ?, NOW())
+        `;
+    
+        const values = [senderId, recipientId, groupName, message, status];
+    
         try {
-            const connection = await this.dbPool.getConnection();
-            await connection.execute(query, [
-                senderId,
-                recipientId,
-                groupName,
-                message,
-                status,
-                timestamp,
-            ]);
-            connection.release();
+            // Get the database connection
+            const connection = await getDbConnection(config);
+    
+            // Execute the query
+            const [result] = await connection.execute(sql, values);
+    
+            console.log("Message saved successfully:", result);          
         } catch (error) {
             console.error("Error saving message:", error.message);
         }
@@ -59,18 +63,20 @@ class ChatModule {
         });
 
         this.io.on("connection", (socket) => {
-            console.log(`User connected: ${socket.id}, userId: ${socket.user.userId}`);
+            console.log(`User connected: ${socket.id}, username: ${socket.user.username}`);
 
             // Track connected user
-            this.connectedUsers.set(socket.user.userId, socket.id);
+            this.connectedUsers.set(socket.user.username, socket.id);
 
             // Event: One-to-one message
             socket.on("privateMessage", async ({ recipientId, message }) => {
+                console.log(`Private message from ${socket.user.username} to ${recipientId}: ${message}`);
+                try{
                 const recipientSocketId = this.connectedUsers.get(recipientId);
 
                 // Save message in the database
                 const messageData = {
-                    senderId: socket.user.userId,
+                    senderId: socket.user.username,
                     recipientId,
                     groupName: null,
                     message,
@@ -81,13 +87,18 @@ class ChatModule {
                 // Send the message if the recipient is online
                 if (recipientSocketId) {
                     this.io.to(recipientSocketId).emit("privateMessage", {
-                        senderId: socket.user.userId,
-                        message,
+                        from: socket.user.username,
+                        to: recipientId,
+                        text: message,
                         timestamp: new Date().toISOString(),
                     });
                 } else {
                     socket.emit("info", `User ${recipientId} is offline. Message saved.`);
                 }
+            } catch (error) {
+                console.error("Error handling privateMessage event:", error.message);
+                socket.emit("error", "An error occurred while sending your message.");
+            }
             });
 
             // Event: Create or join group
@@ -95,12 +106,12 @@ class ChatModule {
                 if (!this.rooms.has(groupName)) {
                     this.rooms.set(groupName, []);
                 }
-                this.rooms.get(groupName).push(socket.user.userId);
+                this.rooms.get(groupName).push(socket.user.username);
                 socket.join(groupName);
                 this.io.to(groupName).emit("groupNotification", {
-                    message: `User ${socket.user.userId} joined the group.`,
+                    message: `User ${socket.user.username} joined the group.`,
                 });
-                console.log(`User ${socket.user.userId} joined group: ${groupName}`);
+                console.log(`User ${socket.user.username} joined group: ${groupName}`);
             });
 
             // Event: Group message
@@ -108,7 +119,7 @@ class ChatModule {
                 if (this.rooms.has(groupName)) {
                     // Save message in the database
                     const messageData = {
-                        senderId: socket.user.userId,
+                        senderId: socket.user.username,
                         recipientId: null,
                         groupName,
                         message,
@@ -118,7 +129,7 @@ class ChatModule {
 
                     // Broadcast the message to group members
                     this.io.to(groupName).emit("groupMessage", {
-                        senderId: socket.user.userId,
+                        senderId: socket.user.username,
                         message,
                         timestamp: new Date().toISOString(),
                     });
@@ -141,8 +152,8 @@ class ChatModule {
 
             // Handle disconnection
             socket.on("disconnect", () => {
-                this.connectedUsers.delete(socket.user.userId);
-                console.log(`User ${socket.user.userId} disconnected.`);
+                this.connectedUsers.delete(socket.user.username);
+                console.log(`User ${socket.user.username} disconnected.`);
             });
         });
 

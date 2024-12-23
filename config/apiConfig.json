@@ -14,6 +14,43 @@
     "cache" : 0    
   },
   {
+    "dbType": "proxy",
+    "route": "/proxy/search",
+    "method": "GET",
+    "targetUrl": "https://www.google.com/search",
+    "acl": ["publicAccess"],
+    "queryMapping": {
+        "q": "q"
+    }
+  },
+  {
+    "dbType": "dynamic",
+    "dbConnection": "MYSQL_1",
+    "route": "/api/pending-messages",
+    "allowMethods": ["GET"],
+    "sqlQuery": "SELECT m.id, m.sender_id, m.message, m.timestamp FROM messages m INNER JOIN users u ON m.recipient_id = u.username WHERE u.username = ? AND m.status = 'pending'",
+    "validation": {
+      "username": {
+        "notEmpty": true,
+        "errorCodes": {
+          "httpCode": 400,
+          "code": [1001]  
+        }
+      }
+    },
+    "response": {
+      "fields": [
+        "id",
+        "sender_id",
+        "message",
+        "timestamp"
+      ]
+    },
+    "acl": ["publicAccess"],
+    "auth": "token",
+    "cache": 0
+  },
+  {
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "dbTable": "articles",
