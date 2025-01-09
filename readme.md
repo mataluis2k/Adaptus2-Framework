@@ -1,4 +1,4 @@
-# **FlexAPI Server**: The Highly Scalable and Configurable API Framework for Node.js  
+# **Adaptus2-Framework**: The Highly Scalable and Configurable API Framework for Node.js  
 *"Build robust, dynamic, and high-performance APIs with effortless OpenGraph metadata configuration."*
 
 ---
@@ -32,7 +32,7 @@
 
 ---
 
-## **4. Why FlexAPI Server?**
+## **4. Why Adaptus2-Framework?**
    - Flexible and configurable API server for dynamic use cases.
    - Built-in support for SEO-friendly OpenGraph metadata.
    - Robust middleware and caching solutions for performance and scalability.
@@ -57,7 +57,7 @@
      });
 
      app.start(() => {
-       console.log('FlexAPI Server is running on port 3000');
+       console.log('Adaptus2-Framework is running on port 3000');
      });
      ```
 
