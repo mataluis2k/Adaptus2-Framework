@@ -6,13 +6,14 @@ const morgan = require('morgan');
 const Redis = require('ioredis');
 const crypto = require('crypto');
 const multer = require('multer');
-
+const net = require("net");
 require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 // Import other modules
-const { getDbConnection } = require(path.join(__dirname, '/modules/db'));
-const buildApiConfigFromDatabase = require('./modules/buildConfig');
+const { loadConfig, apiConfig, categorizedConfig, categorizeApiConfig } = require('./modules/apiConfig');
+const { getDbConnection, extendContext } = require(path.join(__dirname, '/modules/db'));
+// const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
 
@@ -24,12 +25,24 @@ const generateSwaggerDoc = require('./modules/generateSwaggerDoc');
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');  
 const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
-const PaymentModule = require('./modules/paymentModule'); // Payment Module
-const DSLParser = require('./modules/dslparser');
+
+// Changes to enable clustering and plugin management
+const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
+const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
+const PLUGIN_UPDATE_CHANNEL = `${CLUSTER_NAME}:plugins:update`;
+const PLUGIN_FILE_PREFIX = `${CLUSTER_NAME}:plugin:file:`;
+const PLUGIN_EVENT_CHANNEL = `${process.env.CLUSTER_NAME || 'default'}:plugin:events`;
+const PLUGIN_CODE_KEY = `${process.env.CLUSTER_NAME || 'default'}:plugin:code:`;   
+// Plugn manager for cluster end here
+
+const CONFIG_UPDATE_CHANNEL = `${CLUSTER_NAME}:config:update`;
+const CONFIG_STORAGE_KEY = `${CLUSTER_NAME}:config:data`;
+const { broadcastConfigUpdate, subscribeToConfigUpdates } = require('./modules/configSync');
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 const configFile = path.join(configDir, 'apiConfig.json');
 const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
+const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -55,6 +68,9 @@ const logger = winston.createLogger({
     ],
 });
 
+// Initialize a global context for request storage
+global.requestContext = new Map();
+
 var newRules = null;
 const { passport, authenticateOAuth } = require('./middleware/oauth.js');
 const { config } = require('dotenv');
@@ -70,31 +86,40 @@ const graphqlDbType = process.env.GRAPHQL_DBTYPE;
 const graphqlDbConnection = process.env.GRAPHQL_DBCONNECTION;
 
 const mlAnalytics = new MLAnalytics();
-const dynaRoutes = new DynamicRouteHandler();
-
-let apiConfig = [];
-
-const globalContext = {
-    actions: {
-        log: (ctx, message) => consolelog.log(`[LOG]: ${message}`),
-        notify: (ctx, target) => consolelog.log(`[NOTIFY]: Notification to ${target}`),
-    },
-};
 
 
+const { globalContext, middleware } = require('./modules/context');
+const e = require('express');
 
-const aclMiddleware = (allowedRoles) => {
-    return (req, res, next) => {
-        if (allowedRoles) {
-            // Ensure `req.user.role` exists and matches one of the allowed roles
-            const userRole = req.user?.role;
-            if (!userRole || !allowedRoles.includes(userRole)) {
-                return res.status(403).json({ error: 'Access Denied' });
-            }
+globalContext.actions.log = (ctx, action) => {
+    let message = null; // Declare message in the outer scope
+
+    try {
+        console.log(action);
+
+        if (action.message) {
+            message = action.message; // Assign message here
+            // Dynamically evaluate the message string with access to `ctx.data`
+            const evaluatedMessage = new Function('data', `with(data) { return \`${message}\`; }`)(ctx.data || {});
+            console.log(`[LOG]: ${evaluatedMessage}`);
+        } else {
+            console.log(`[LOG]: ${action}`);
         }
-        next(); // Skip ACL check if not required
-    };
+    } catch (err) {
+        console.error(`[LOG]: Error evaluating message "${message}": ${err.message}`);
+    }
 };
+
+globalContext.actions.response = (ctx, action) => {
+    console.log(`[RESPONSE]: ${ctx.data}`);
+    return ctx.data;    
+};
+
+globalContext.actions.notify = (ctx, target) => {
+    console.log(`[NOTIFY]: Notification sent to ${target}`);
+};
+
+
 function flattenResolvers(resolvers) {
     const flatResolvers = {};
 
@@ -111,32 +136,6 @@ function flattenResolvers(resolvers) {
     return flatResolvers;
 }
 
-const authenticateToken = (req, res, next) => {
-    const authHeader = req.headers['authorization'];
-    const token = authHeader && authHeader.split(' ')[1];
-
-    if (!token) {
-        return res.status(401).json({ error: 'Unauthorized' }); // Stop execution
-    }
-
-    jwt.verify(token, JWT_SECRET, (err, user) => {
-        if (err) {
-            return res.status(403).json({ error: 'Forbidden' }); // Stop execution
-        }
-        req.user = user; // Attach user data to the request
-        next(); // Proceed to the next middleware or route handler
-    });
-};
-
-const authenticateMiddleware = (authType) => {
-    return (req, res, next) => {
-        if (authType) {
-            // Enforce token authentication (e.g., JWT)
-            return authenticateToken(req, res, next); // Replace with your existing token logic
-        }
-        next(); // Skip authentication if not required
-    };
-};
 
 function findArrayWithKeys(data, requiredKeys) {
     if (Array.isArray(data)) {
@@ -162,137 +161,201 @@ function findArrayWithKeys(data, requiredKeys) {
     return null;
 }
 
+// Plugin broadcaster for cluster
+async function loadAndBroadcastPluginNetwork(pluginName, pluginPath, pluginConfig) {
+    console.log(`Using network plugin manager to load and broadcast plugin: ${pluginName} in cluster: ${CLUSTER_NAME}`);
+    try {
+        const fs = require('fs');
+        const { promisify } = require('util');
+        const readFile = promisify(fs.readFile);
+
+        const pluginCode = await readFile(pluginPath, 'utf-8');
+
+        // Store plugin code and config in Redis with cluster isolation
+        await redis.hset(`${PLUGIN_FILE_PREFIX}${pluginName}`, {
+            code: Buffer.from(pluginCode).toString('base64'), // Encode the plugin code
+            config: JSON.stringify(pluginConfig),
+        });
+
+        // Publish an update message to the cluster-specific Redis Pub/Sub channel
+        await redis.publish(PLUGIN_UPDATE_CHANNEL, JSON.stringify({ name: pluginName }));
+
+        console.log(`Plugin "${pluginName}" broadcasted successfully in cluster "${CLUSTER_NAME}".`);
+    } catch (err) {
+        console.error(`Error broadcasting plugin "${pluginName}" in cluster "${CLUSTER_NAME}":`, err);
+    }
+}
+
 function registerProxyEndpoints(app, apiConfig) {
     apiConfig.forEach((config, index) => {
-        const { auth, acl, route, method, targetUrl, queryMapping, headers, cache, enrich, responseMapping } = config;
-        try {           
+        const {
+            auth,
+            acl,
+            route,
+            allowMethods,
+            targetUrl,
+            queryMapping,
+            headers,
+            cache,
+            enrich,
+            responseMapping,
+        } = config;
+
+        try {
             // Validate config structure
-            if (config.dbType !== "proxy") {
+            if (config.routeType !== "proxy") {
                 console.log(`Skipping non-proxy config at index ${index}`);
                 return;
             }
 
             // Validate critical fields
-            if (!route || !method || !targetUrl) {
+            if (!route || !allowMethods || !targetUrl || !Array.isArray(allowMethods)) {
                 console.error(`Invalid proxy configuration at index ${index}:`, config);
-                throw new Error("Missing required fields: route, method, or targetUrl.");
+                throw new Error("Missing required fields: route, allowMethods, or targetUrl.");
+            }
+            if (typeof auth === 'undefined') {
+                console.warn(`Missing 'auth' for route ${route} at index ${index}. Defaulting to no authentication.`);
             }
 
-            // Log proxy registration details
-            console.log(`Registering proxy for route: ${route}, method: ${method}, targetUrl: ${targetUrl}`);
-            // [method.toLowerCase()]
-            app.get(route, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {                                
-                console.log(`Proxy request received on route: ${route}`);
-                console.log(`Request query parameters:`, req.query);
+            if (typeof acl === 'undefined') {
+                console.warn(`Missing 'acl' for route ${route} at index ${index}. Defaulting to no ACL.`);
+            }
 
-                try {
-                    const cacheKey = `${route}:${JSON.stringify(req.query)}`;
+            // Register routes for each method in allowMethods
+            allowMethods.forEach((method) => {
+                console.log(`Registering proxy for route: ${route}, method: ${method}, targetUrl: ${targetUrl}`);
+                console.log(`Auth for route ${route}:`, auth); // 
+                app[method.toLowerCase()](
+                    route,
+                    authenticateMiddleware(auth),
+                    aclMiddleware(acl),
+                    async (req, res) => {
+                        console.log(`Proxy request received on route: ${route} [${method}]`);
+                        try {
+                            const cacheKey = `${route}:${method}:${JSON.stringify(req.query)}`;
 
-                    // Check cache if enabled
-                    if (cache?.enabled) {
-                        console.log(`Checking cache for key: ${cacheKey}`);
-                        const cachedData =  await redis.get(cacheKey);
-                        if (cachedData) {
-                            console.log("Cache hit:", cachedData);
-                            return res.json(JSON.parse(cachedData));
-                        }
-                        console.log("Cache miss for key:", cacheKey);
-                    }
+                            // Check cache if enabled
+                            if (cache?.enabled) {
+                                console.log(`Checking cache for key: ${cacheKey}`);
+                                const cachedData = await redis.get(cacheKey);
+                                if (cachedData) {
+                                    console.log("Cache hit:", cachedData);
+                                    return res.json(JSON.parse(cachedData));
+                                }
+                                console.log("Cache miss for key:", cacheKey);
+                            }
 
-                    // Map incoming query parameters to external API
-                    const externalParams = {};
-                    for (const [localKey, externalKey] of Object.entries(queryMapping || {})) {
-                        if (req.query[localKey] !== undefined) {
-                            externalParams[externalKey] = req.query[localKey];
-                        }
-                    }
-                    console.log(`Mapped query parameters:`, externalParams);
-
-                    // Make the external API request
-                    console.log(`Making external API request to: ${targetUrl}`);
-                    const externalResponse = await axios({
-                        url: targetUrl,
-                        method: method.toLowerCase(), // Ensure correct case
-                        params: externalParams,
-                        headers: headers || {},
-                    });
-
-                    console.log(`External API response status: ${externalResponse.status}`);
-                    console.log(`External API response data:`, externalResponse.data);
-
-                    let responseData = externalResponse.data;
-
-                    // Enrich response with internal endpoints
-                    if (enrich && Array.isArray(enrich)) {
-                        console.log("Enriching response with internal endpoints.");
-                        for (const enrichment of enrich) {
-                            const { route: enrichRoute, key, fields } = enrichment;
-
-                            for (const item of responseData) {
-                                const enrichKeyValue = item[key];
-                                if (enrichKeyValue) {
-                                    console.log(`Fetching enrichment data from: ${enrichRoute} for key: ${key} = ${enrichKeyValue}`);
-                                    const enrichmentResponse = await axios.get(enrichRoute, {
-                                        params: { [key]: enrichKeyValue },
-                                    });
-
-                                    const enrichmentData = enrichmentResponse.data;
-                                    fields.forEach((field) => {
-                                        if (enrichmentData[field] !== undefined) {
-                                            item[field] = enrichmentData[field];
-                                        }
-                                    });
+                            // Map incoming query parameters to external API
+                            const externalParams = {};
+                            for (const [localKey, externalKey] of Object.entries(queryMapping || {})) {
+                                if (req.query[localKey] !== undefined) {
+                                    externalParams[externalKey] = req.query[localKey];
                                 }
                             }
-                        }
-                    }
 
-                    // Map response fields if responseMapping is defined
-                    if (responseMapping) {
-                        // Extract the external keys we need from responseMapping.
-                        const requiredKeys = Object.keys(responseMapping);
-                    
-                        // Find the array in the nested response data
-                        let targetArray = findArrayWithKeys(responseData, requiredKeys);
-                    
-                        if (!targetArray) {
-                            console.error("No suitable array found in response data to map over.");
-                            // Handle this scenario gracefully - maybe return the data as is.
-                            return res.json(responseData);
-                        }
-                    
-                        console.log("Mapping response fields based on configuration.");
-                        targetArray = targetArray.map((item) => {
-                            const mappedItem = {};
-                            for (const [externalKey, localKey] of Object.entries(responseMapping)) {
-                                mappedItem[localKey] = item[externalKey];
+                            // Make the external API request
+                            const externalResponse = await axios({
+                                url: targetUrl,
+                                method: method.toLowerCase(),
+                                params: externalParams,
+                                headers: headers || {},
+                            });
+
+                            let responseData = externalResponse.data;
+
+                            // Enrich response with internal endpoints
+                            if (enrich && Array.isArray(enrich)) {
+                                for (const enrichment of enrich) {
+                                    const { route: enrichRoute, key, fields } = enrichment;
+
+                                    for (const item of responseData) {
+                                        const enrichKeyValue = item[key];
+                                        if (enrichKeyValue) {
+                                            const enrichmentResponse = await axios.get(enrichRoute, {
+                                                params: { [key]: enrichKeyValue },
+                                            });
+
+                                            const enrichmentData = enrichmentResponse.data;
+                                            fields.forEach((field) => {
+                                                if (enrichmentData[field] !== undefined) {
+                                                    item[field] = enrichmentData[field];
+                                                }
+                                            });
+                                        }
+                                    }
+                                }
                             }
-                            return mappedItem;
-                        });
-                    
-                        // If you need to reinsert this mapped array back into the original structure,
-                        // you might need to reconstruct the original data structure or just replace `responseData`
-                        // with the targetArray if that's what you'd like to return.
-                        responseData = targetArray;
-                        console.log(`Mapped response data:`, responseData);
-                    }
-                    // Cache response if caching is enabled
-                    if (cache?.enabled) {
-                        console.log(`Caching response for key: ${cacheKey} with TTL: ${cache.ttl}`);                       
-                        await redis.setex(cacheKey, cache.ttl, JSON.stringify(responseData));
-                    }
 
-                    res.json(responseData);
-                } catch (error) {
-                    console.error(`Error in proxy endpoint for route ${route}:`, error.message);
-                    res.status(500).json({ error: "Internal Server Error" });
-                }
+                            // Map response fields if responseMapping is defined
+                            if (responseMapping) {
+                                // Validate that responseData is an array
+                                if (!Array.isArray(responseData)) {
+                                    const foundArray = findArrayWithKeys(responseData, Object.keys(responseMapping));
+                                    if (foundArray) {
+                                        responseData = foundArray;
+                                    } else {
+                                        throw new Error(`Response data is not an array and does not contain keys: ${Object.keys(responseMapping)}`);
+                                    }
+                                }
+                                responseData = responseData.map((item) => {
+                                    const mappedItem = {};
+                                    for (const [externalKey, localKey] of Object.entries(responseMapping)) {
+                                        mappedItem[localKey] = item[externalKey];
+                                    }
+                                    return mappedItem;
+                                });
+                            }
+
+                            // Cache response if caching is enabled
+                            if (cache?.enabled) {
+                                console.log(`Caching response for key: ${cacheKey} with TTL: ${cache.ttl}`);
+                                await redis.setex(cacheKey, cache.ttl, JSON.stringify(responseData));
+                            }
+
+                            res.json(responseData);
+                        } catch (error) {
+                            console.error(`Error in proxy endpoint for route ${route}:`, error.message);
+                            res.status(500).json({ error: "Internal Server Error" });
+                        }
+                    }
+                );
             });
         } catch (err) {
             console.error(`Failed to register proxy at index ${index}:`, err.message);
         }
     });
 }
+
+function autoloadPlugins(pluginManager) {
+    const configFilePath = path.join(configDir, 'plugins.json'); // File containing plugins to load
+
+    try {
+        if (!fs.existsSync(configFilePath)) {
+            console.warn(`Plugin configuration file not found at ${configFilePath}. No plugins will be loaded.`);
+            return;
+        }
+
+        const pluginList = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
+
+        if (!Array.isArray(pluginList)) {
+            console.error(`Invalid plugin configuration format. Expected an array of plugin names.`);
+            return;
+        }
+
+        pluginList.forEach((pluginName) => {
+            try {
+                pluginManager.loadPlugin(pluginName);
+                console.log(`Plugin ${pluginName} loaded successfully.`);
+            } catch (error) {
+                console.error(`Failed to load plugin ${pluginName}: ${error.message}`);
+            }
+        });
+    } catch (error) {
+        console.error(`Error reading or parsing plugin configuration file: ${error.message}`);
+    }
+}
+
+
 // Dynamic multer storage based on the config
 function getMulterStorage(storagePath) {
     return multer.diskStorage({
@@ -306,9 +369,34 @@ function getMulterStorage(storagePath) {
     });
 }
 
+function registerStaticRoute(app, endpoint) {
+    const { route, folderPath, auth, acl } = endpoint;
+
+    if (!route || !folderPath) {
+        console.error(`Invalid or missing parameters for static route: ${JSON.stringify(endpoint)}`);
+        return; // Skip invalid configuration
+    }
+
+    const middlewares = [];
+    
+    // Add authentication middleware if specified
+    if (auth) {
+        middlewares.push(authenticateMiddleware(auth));
+    }
+
+    // Add access control middleware if specified
+    if (acl) {
+        middlewares.push(aclMiddleware(acl));
+    }
+
+    // Serve static files
+    console.log(`Registering static route: ${route} -> ${folderPath}`);
+    app.use(route, ...middlewares, express.static(folderPath));
+}
+
 const registerFileUploadEndpoint = (app, config) => {
     const { route, dbTable, allowWrite, fileUpload , acl, auth } = config;
-    const upload = multer({
+    const upload = multer({        
         storage: getMulterStorage(fileUpload.storagePath),
         fileFilter: (req, file, cb) => {
             if (fileUpload.allowedFileTypes.includes(file.mimetype)) {
@@ -320,10 +408,10 @@ const registerFileUploadEndpoint = (app, config) => {
     });
 
     const fieldName = fileUpload.fieldName || 'file'; // Default to 'file' if not specified
-
+    
     app.post(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), upload.single(fieldName), async (req, res) => {
         const dbConnectionConfig = { dbType: config.dbType, dbConnection: config.dbConnection };
-
+        console.log(req.body);
         // Extract file and metadata
         const { file } = req;
         // uploaded_by should come from the jwt token        
@@ -365,12 +453,12 @@ const registerFileUploadEndpoint = (app, config) => {
 function registerRoutes(app, apiConfig) {
     apiConfig.forEach((endpoint, index) => {
         const {  route, dbTable, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache , auth, authentication, encryption} = endpoint;
-
+        consolelog.log(endpoint);
         // Default to all methods if `allowMethods` is not specified
-        const allowedMethods = allowMethods || ["GET", "POST", "PUT", "DELETE"];
+        const allowedMethods = allowMethods || ["GET", "POST", "PUT", "DELETE", "PATCH"];
 
           // Validate config structure, this is already cleaned up in the config but leaving it here for reference
-        if (endpoint.dbType === "proxy" || endpoint.dbType === 'dynamic' || endpoint.cron === 'cron') {
+        if (endpoint.routeType !== "database") {
             console.log(`Skipping proxy/dyanmic/cron at index ${index}`);
             return;
         }
@@ -451,7 +539,7 @@ function registerRoutes(app, apiConfig) {
 
 
         // GET Endpoint with Redis Caching
-        app.get(route, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+        app.get(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
             try {
                 const connection = await getDbConnection(endpoint);
                 if (!connection) {
@@ -507,17 +595,16 @@ function registerRoutes(app, apiConfig) {
                 const countQuery = `SELECT COUNT(*) as totalCount FROM ${dbTable} ${whereClause ? `WHERE ${whereClause}` : ''}`;
                 const [countResult] = await connection.execute(countQuery, params);
                 const totalCount = countResult[0].totalCount;
-        
+                console.log(`Total records: ${totalCount}`);
                 // Query to fetch paginated data
                 const query = `
                     SELECT ${queryFields}
                     FROM ${dbTable}
                     ${joinClause}
                     ${whereClause ? `WHERE ${whereClause}` : ''}
-                    LIMIT ?
-                    OFFSET ?
-                `;
-                params.push(limit, offset);
+                    LIMIT ${limit}
+                    OFFSET ${offset}
+                `;             
                 const [results] = await connection.execute(query, params);
         
                 // Return paginated data along with metadata
@@ -532,7 +619,7 @@ function registerRoutes(app, apiConfig) {
                 });
             } catch (error) {
                 console.error(`Error in GET ${route}:`, error.message);
-                res.status(500).json({ error: 'Internal Server Error' });
+                res.status(500).json({ error: error.message });
             }
         });
         
@@ -558,28 +645,63 @@ function registerRoutes(app, apiConfig) {
                 }
             });
         }
-
         if (allowedMethods.includes("PUT")) {
-            app.put(`${route}/:id`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.put(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
                 }
-
+        
+                const recordKeys = keys; // The keys defined in the configuration
+                const keyValues = recordKeys.map((key) => req.body[key]);
+                if (keyValues.some((value) => value === undefined)) {
+                    return res.status(400).json({ error: 'Missing required key fields in request body' });
+                }
+        
                 const values = writableFields.map((key) => req.body[key]);
                 const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                const query = `UPDATE ${dbTable} SET ${setClause} WHERE id = ?`;
-
+                const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
+                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
+        
                 try {
                     const connection = await getDbConnection(endpoint);
-                    await connection.execute(query, [...values, req.params.id]);
-                    res.json({ message: 'Record updated' });
+                    await connection.execute(query, [...values, ...keyValues]);
+                    res.status(200).json({ message: 'Record updated' });
                 } catch (error) {
                     console.error(`Error in PUT ${route}:`, error);
                     res.status(500).json({ error: 'Internal Server Error' });
                 }
             });
         }
+        if (allowedMethods.includes("PATCH")) {
+            app.patch(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+                const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
+                if (writableFields.length === 0) {
+                    return res.status(400).json({ error: 'No writable fields provided' });
+                }
+        
+                const recordKeys = keys; // The keys defined in the configuration
+                const keyValues = recordKeys.map((key) => req.body[key]);
+                if (keyValues.some((value) => value === undefined)) {
+                    return res.status(400).json({ error: 'Missing required key fields in request body' });
+                }
+        
+                const values = writableFields.map((key) => req.body[key]);
+                const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
+                const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
+                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
+        
+                try {
+                    const connection = await getDbConnection(endpoint);
+                    await connection.execute(query, [...values, ...keyValues]);
+                    res.status(200).json({ message: 'Record partially updated' });
+                } catch (error) {
+                    console.error(`Error in PATCH ${route}:`, error);
+                    res.status(500).json({ error: 'Internal Server Error' });
+                }
+            });
+        }
+                
 
         if (allowedMethods.includes("DELETE")) {
             app.delete(`${route}/:id`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
@@ -588,7 +710,7 @@ function registerRoutes(app, apiConfig) {
                 try {
                     const connection = await getDbConnection(endpoint);
                     await connection.execute(query, [req.params.id]);
-                    res.json({ message: 'Record deleted' });
+                    res.status(200).json({ message: 'Record deleted' });
                 } catch (error) {
                     console.error(`Error in DELETE ${route}:`, error);
                     res.status(500).json({ error: 'Internal Server Error' });
@@ -600,10 +722,13 @@ function registerRoutes(app, apiConfig) {
 
 function initializeRules() {
     try {
-        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
 
+        //DSLParser.autoRegisterFromContext(globalContext);
+
+        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
+        
         // Use RuleEngine's fromDSL to initialize the engine properly
-        const ruleEngineInstance = RuleEngine.fromDSL(dslText);
+        const ruleEngineInstance = RuleEngine.fromDSL(dslText, globalContext);
 
         if (ruleEngine) {
             // Merge new rules with existing rules
@@ -637,29 +762,28 @@ function setupRag(apiConfig) {
 
 class PluginManager {
     constructor(pluginDir, server, dependencyManager) {
-        this.pluginDir = pluginDir;
+        this.pluginDir = path.resolve(pluginDir);
         this.server = server;
         this.plugins = new Map(); // Track plugins by name
         this.dependencyManager = dependencyManager;
+        
+        this.publisherRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+        this.subscriberRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+        if(process.env.PLUGIN_MANAGER === 'network') {
+            this.serverId = process.env.SERVER_ID;
+            if (!this.serverId) {
+                throw new Error('SERVER_ID environment variable is required.');
+            }
+
+            console.log(`Server ID: ${this.serverId}`);
+        }
+        this.subscribeToPluginEvents();
     }
 
     /**
-     * Load all plugins statically during server startup.
+     * Load a plugin and broadcast it (if in network mode).
      */
-    loadPlugins() {
-        const pluginFiles = fs.readdirSync(this.pluginDir).filter((file) => file.endsWith('.js'));
-
-        pluginFiles.forEach((file) => {
-            const pluginName = file.replace('.js', '');
-            this.loadPlugin(pluginName);
-        });
-    }
-
-    /**
-     * Load a single plugin dynamically by name.
-     * @param {string} pluginName - Name of the plugin to load (without `.js`).
-     */
-    async loadPlugin(pluginName) {
+    async loadPlugin(pluginName, broadcast = true) {
         const pluginPath = path.join(this.pluginDir, `${pluginName}.js`);
     
         if (this.plugins.has(pluginName)) {
@@ -668,6 +792,7 @@ class PluginManager {
         }
     
         try {
+            const pluginCode = fs.readFileSync(pluginPath, 'utf-8');
             const plugin = require(pluginPath);
     
             if (!this.validatePlugin(plugin)) {
@@ -684,20 +809,37 @@ class PluginManager {
                 registeredRoutes = plugin.registerRoutes({ app: this.server.app });
             }
     
-            this.plugins.set(pluginName, { instance: plugin, routes: registeredRoutes });
-            consolelog.log(`Plugin loaded dynamically: ${plugin.name} v${plugin.version}`);
+            const pluginHash = this.getHash(pluginCode);
+    
+            this.plugins.set(pluginName, { instance: plugin, routes: registeredRoutes, hash: pluginHash });
+            console.log(`Plugin ${pluginName} loaded successfully.`);
+    
+            if (process.env.PLUGIN_MANAGER === 'network' && broadcast) {
+                await this.publisherRedis.hset(`${PLUGIN_CODE_KEY}${pluginName}`, {
+                    code: Buffer.from(pluginCode).toString('base64'),
+                });
+    
+                await this.publisherRedis.publish(
+                    PLUGIN_EVENT_CHANNEL,
+                    JSON.stringify({ action: 'load', pluginName, serverId: this.serverId })
+                );
+                console.log(`Broadcasted load event for plugin: ${pluginName}`);
+            }
+    
+            return `Plugin ${pluginName} loaded successfully.`;
         } catch (error) {
             console.error(`Failed to load plugin ${pluginName}:`, error.message);
+            delete require.cache[require.resolve(pluginPath)];
+            this.plugins.delete(pluginName);
+            return `Failed to load plugin ${pluginName}: ${error.message}`;
         }
     }
     
-    
 
     /**
-     * Unload a plugin safely.
-     * @param {string} pluginName - Name of the plugin to unload.
+     * Unload a plugin and broadcast it (if in network mode).
      */
-    unloadPlugin(pluginName) {
+    async unloadPlugin(pluginName, broadcast = true) {
         if (!this.plugins.has(pluginName)) {
             console.warn(`Plugin ${pluginName} is not loaded.`);
             return;
@@ -706,62 +848,127 @@ class PluginManager {
         const { instance: plugin, routes } = this.plugins.get(pluginName);
         try {
             if (plugin.cleanup) {
+                console.log(`Cleaning up ${pluginName}...`);
                 plugin.cleanup();
             }
     
-            // Remove registered routes
             routes.forEach(({ method, path }) => {
                 const stack = this.server.app._router.stack;
                 for (let i = 0; i < stack.length; i++) {
                     const layer = stack[i];
                     if (layer.route && layer.route.path === path && layer.route.methods[method]) {
-                        stack.splice(i, 1); // Remove the route
-                        consolelog.log(`Unregistered route ${method.toUpperCase()} ${path}`);
+                        stack.splice(i, 1);
+                        console.log(`Unregistered route ${method.toUpperCase()} ${path}`);
                     }
                 }
             });
     
-            // Clean up module cache
             delete require.cache[require.resolve(path.join(this.pluginDir, `${pluginName}.js`))];
             this.plugins.delete(pluginName);
     
-            consolelog.log(`Plugin ${pluginName} unloaded successfully.`);
+            console.log(`Plugin ${pluginName} unloaded successfully.`);
+    
+            if (process.env.PLUGIN_MANAGER === 'network' && broadcast) {
+                await this.publisherRedis.publish(
+                    PLUGIN_EVENT_CHANNEL,
+                    JSON.stringify({ action: 'unload', pluginName, serverId: this.serverId })
+                );
+                console.log(`Broadcasted unload event for plugin: ${pluginName}`);
+            }
         } catch (error) {
             console.error(`Error unloading plugin ${pluginName}:`, error.message);
         }
     }
+
+    subscribeToPluginEvents() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
     
+        this.subscriberRedis.subscribe(PLUGIN_EVENT_CHANNEL, (err) => {
+            if (err) {
+                console.error(`Failed to subscribe to plugin events: ${err.message}`);
+            } else {
+                console.log(`Subscribed to plugin events on channel ${PLUGIN_EVENT_CHANNEL}.`);
+            }
+        });
+    
+        this.subscriberRedis.on('message', async (channel, message) => {
+            if (channel !== PLUGIN_EVENT_CHANNEL) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { action, pluginName, serverId } = JSON.parse(message);
+        
+                // Ignore messages originating from the current server
+                if (serverId === this.serverId) {
+                    console.log(`Ignoring message from self (Server ID: ${serverId}).`);
+                    return;
+                }
+        
+                if (action === 'load') {
+                    console.log(`Processing load event for plugin: ${pluginName}`);
+                    await this.loadPlugin(pluginName, false); // Do not rebroadcast
+                } else if (action === 'unload') {
+                    console.log(`Processing unload event for plugin: ${pluginName}`);
+                    await this.unloadPlugin(pluginName, false); // Do not rebroadcast
+                } else {
+                    console.warn(`Unknown action: ${action}`);
+                }
+            } catch (error) {
+                console.error(`Failed to process message: ${error.message}`);
+            }
+        });
+    }
     
 
-    /**
-     * Validate a plugin to ensure it conforms to the required structure.
-     * @param {object} plugin - The plugin module to validate.
-     * @returns {boolean} - True if valid, false otherwise.
-     */
+    async loadPluginFromRedisIfDifferent(pluginName) {
+        try {
+            const pluginData = await this.publisherRedis.hgetall(`${PLUGIN_CODE_KEY}${pluginName}`);
+            if (!pluginData.code) {
+                throw new Error(`No code found for plugin ${pluginName} in Redis.`);
+            }
+
+            const pluginCode = Buffer.from(pluginData.code, 'base64').toString('utf-8');
+            const pluginHash = this.getHash(pluginCode);
+
+            if (this.plugins.has(pluginName)) {
+                const currentPluginHash = this.plugins.get(pluginName).hash;
+                if (currentPluginHash === pluginHash) {
+                    console.log(`Plugin ${pluginName} is already loaded with the same code. Skipping load.`);
+                    return;
+                } else {
+                    console.log(`Plugin ${pluginName} code has changed. Reloading.`);
+                    this.unloadPlugin(pluginName);
+                }
+            }
+
+            const tempPath = path.join(this.pluginDir, `${pluginName}.js`);
+            fs.writeFileSync(tempPath, pluginCode, 'utf-8');
+
+            await this.loadPlugin(pluginName);
+
+            this.plugins.get(pluginName).hash = pluginHash;
+        } catch (error) {
+            console.error(`Failed to load plugin ${pluginName} from Redis:`, error.message);
+        }
+    }
+
     validatePlugin(plugin) {
-        const requiredMethods = ['initialize', 'registerRoutes'];
+        const requiredMethods = ['initialize'];
         return requiredMethods.every((method) => typeof plugin[method] === 'function');
     }
 
-    /**
-     * Register routes or middleware for all active plugins.
-     * @param {object} app - Express application instance.
-     */
-    registerPlugins(app) {
-        this.plugins.forEach((plugin, pluginName) => {
-            try {
-                const dependencies = this.dependencyManager.getDependencies();
-                if (typeof plugin.registerMiddleware === 'function') {
-                    plugin.registerMiddleware({ ...dependencies, app });
-                }
-                if (typeof plugin.registerRoutes === 'function') {
-                    plugin.registerRoutes({ ...dependencies, app });
-                }
-                consolelog.log(`Routes registered for plugin: ${pluginName}`);
-            } catch (error) {
-                console.error(`Error in plugin ${pluginName}:`, error.message);
-            }
-        });
+    getHash(code) {
+        return crypto.createHash('sha256').update(code, 'utf8').digest('hex');
+    }
+
+    close() {
+        this.publisherRedis.disconnect();
+        this.subscriberRedis.disconnect();
     }
 }
 
@@ -785,50 +992,114 @@ class DependencyManager {
 }
 
 
-function categorizeApiConfig(apiConfig) {
-    const categorized = {
-        dynamicRoutes: [],
-        proxyRoutes: [],
-        fileUploadRoutes: [],
-        cronJobs: [],
-        standardRoutes: [],
-    };
-
-    apiConfig.forEach((endpoint) => {
-        if (endpoint.dbType === 'dynamic') {
-            categorized.dynamicRoutes.push(endpoint);
-        } else if (endpoint.dbType === 'proxy') {
-            categorized.proxyRoutes.push(endpoint);
-        } else if (endpoint.fileUpload) {
-            categorized.fileUploadRoutes.push(endpoint);
-        } else if (endpoint.cron === 'cron') {
-            categorized.cronJobs.push(endpoint);
-        } else {
-            categorized.standardRoutes.push(endpoint);
-        }
-    });
-
-    return categorized;
-}
-
-
-class FlexAPIServer {
-    constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = '../plugins' }) {
+class Adaptus2Server {
+    constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
         this.port = port;
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
         this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-        this.apiConfig = [];
-        this.categorizedConfig = [];
+        this.apiConfig = apiConfig;
+        this.categorizedConfig = categorizedConfig;
         this.businessRules = new BusinessRules();
         this.dependencyManager = new DependencyManager();
         this.pluginManager = new PluginManager(this.pluginDir, this, this.dependencyManager);
-
+        this.socketServer = null;
         // Optional modules
         this.chatModule = null;
         this.paymentModule = null;
         this.streamingServer = null;
+        this.app.use(middleware);
+    }
+
+    setupSocketServer() {
+        this.socketServer = net.createServer((socket) => {
+            console.log("CLI client connected.");
+
+            socket.on("data", async (data) => {
+                const input = data.toString().trim();
+                const [command, ...args] = input.split(" ");
+
+                try {
+                    switch (command) {
+                        case "listActions":
+                            // Fetch and display all actions from globalContext.actions
+                            const actions = Object.keys(globalContext.actions);
+                            if (actions.length === 0) {
+                                socket.write("No actions available.\n");
+                            } else {
+                                socket.write(`Available actions:\n${actions.join("\n")}\n`);
+                            }
+                            break;
+                        case "load":
+                            if (args.length) {
+                                const response = await this.pluginManager.loadPlugin(args[0]);
+                                socket.write(`We got: ${response}\n`);
+                            } else {
+                                socket.write("Usage: load <pluginName>\n");
+                            }
+                            break;
+                        case "unload":
+                            if (args.length) {
+                                this.pluginManager.unloadPlugin(args[0]);
+                                socket.write(`Plugin ${args[0]} unloaded successfully.\n`);
+                            } else {
+                                socket.write("Usage: unload <pluginName>\n");
+                            }
+                            break;
+                        case "reload":
+                            if (args.length) {
+                                this.pluginManager.unloadPlugin(args[0]);
+                                this.pluginManager.loadPlugin(args[0]);
+                                socket.write(`Plugin ${args[0]} reloaded successfully.\n`);
+                            } else {
+                                socket.write("Usage: reload <pluginName>\n");
+                            }
+                            break;
+                        case "reloadall":
+                            this.pluginManager.plugins.forEach((_, pluginName) => {
+                                this.pluginManager.unloadPlugin(pluginName);
+                                this.pluginManager.loadPlugin(pluginName);
+                            });
+                            socket.write("All plugins reloaded successfully.\n");
+                            break;
+                        case "list":
+                            const plugins = Array.from(this.pluginManager.plugins.keys());
+                            socket.write(`Loaded plugins: ${plugins.join(", ")}\n`);
+                            break;
+                        case "routes":
+                            const routes = this.app._router.stack
+                                .filter((layer) => layer.route)
+                                .map((layer) => ({
+                                    path: layer.route.path,
+                                    methods: Object.keys(layer.route.methods).join(", "),
+                                }));
+                            socket.write(`Registered routes: ${JSON.stringify(routes, null, 2)}\n`);
+                            break;
+                        case "exit":
+                            socket.write("Goodbye!\n");
+                            socket.end();
+                            break;
+                        case "help":
+                            socket.write("Available commands: load, unload, reload, reloadall, list, routes, exit.\n");
+                            break;
+                        default:
+                            socket.write("Unknown command. Available commands: load, unload, reload, reloadall, list, routes, exit.\n");
+                    }
+                } catch (error) {
+                    socket.write(`Error: ${error.message}\n`);
+                }
+            });
+
+            socket.on("end", () => {
+                console.log("CLI client disconnected.");
+            });
+        });
+
+        const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
+        this.socketServer.listen(SOCKET_CLI_PORT, "localhost", () => {
+            console.log("Socket CLI server running on localhost"+SOCKET_CLI_PORT);
+        });
     }
 
     setupPluginLoader() {
@@ -865,18 +1136,7 @@ class FlexAPIServer {
         });
     }
         
-    async loadConfig() {
-        try {
-            console.log('Loading configuration...',configFile);
-            const configData = fs.readFileSync(configFile, 'utf-8');
-            this.apiConfig = JSON.parse(configData);
-            consolelog.log('Configuration loaded successfully.');
-            this.categorizedConfig = categorizeApiConfig(this.apiConfig);
-        } catch (error) {
-            console.error('Error loading configuration:', error);
-            throw error;
-        }
-    }
+    
 
     async initializeTables() {
         console.log('Initializing tables...');
@@ -962,20 +1222,21 @@ class FlexAPIServer {
         const rateLimit = new RateLimit(this.apiConfig, this.redis);
         this.app.use(rateLimit.middleware());      
         consolelog.log('Rule Engine for Middleware',ruleEngine);
-        const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine);
+        const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
         this.app.use(ruleEngineMiddleware.middleware());
     }
 
+    
     // to minimized reload time we splice the config before sending it to the different functions.
-    registerRoutes() {
-        registerRoutes(this.app, this.categorizedConfig.standardRoutes);
+    registerRoutes() {       
+        registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
     }
 
     registerProxyEndpoints() {
         registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
     }
 
-    registerDynamicEndpoints() {        
+    registerDynamicEndpoints() {                
         this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
     }
 
@@ -984,10 +1245,14 @@ class FlexAPIServer {
     }
 
 
+    registerStaticEndpoints() { 
+        this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
+    }
+
     async setupGraphQL() {
         if (!graphqlDbType || !graphqlDbConnection) return;
 
-        var { schema, rootResolvers } = generateGraphQLSchema(this.apiConfig);
+        var { schema, rootResolvers } = generateGraphQLSchema(this.categorizedConfig.databaseRoutes);
         rootResolvers = flattenResolvers(rootResolvers);
     
         const driver = {
@@ -1024,19 +1289,21 @@ class FlexAPIServer {
     // Initialize optional modules safely
     initializeOptionalModules(app) {
         // Initialize Chat Module
-        try {
-            const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
-            const httpServer = require('http').createServer(app); // Reuse server
-            this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
-            this.chatModule.start();
-            httpServer.listen(3007, () => {
-                console.log('Server running on http://localhost:3000');
-            });
-            consolelog.log('Chat module initialized.');
-        } catch (error) {
-            console.error('Failed to initialize Chat Module:', error.message);
+        if(process.env.CHAT_SERVER_PORT){
+            const chat_port = process.env.CHAT_SERVER_PORT;
+            try {
+                const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
+                const httpServer = require('http').createServer(app); // Reuse server
+                this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                this.chatModule.start();
+                httpServer.listen(chat_port, () => {
+                    console.log('Chat running on http://localhost:' + chat_port);
+                });
+                consolelog.log('Chat module initialized.');
+            } catch (error) {
+                console.error('Failed to initialize Chat Module:', error.message);
+            }
         }
-
         // // Initialize Payment Module
         // try {
         //     const dbConfig = {
@@ -1097,100 +1364,145 @@ class FlexAPIServer {
         this.dependencyManager.addDependency('logger', logger);
     }
 
+    async synchronizePluginsOnStartup() {
+        if (PLUGIN_MANAGER === 'network') {
+            console.log(`Synchronizing plugins for cluster "${CLUSTER_NAME}"...`);
+            try {
+                const keys = await redis.keys(`${PLUGIN_FILE_PREFIX}*`);
+                for (const key of keys) {
+                    const name = key.replace(PLUGIN_FILE_PREFIX, '');
+                    const pluginData = await redis.hgetall(key);
+    
+                    if (pluginData.code && pluginData.config) {
+                        const pluginCode = Buffer.from(pluginData.code, 'base64').toString('utf-8');
+                        const pluginConfig = JSON.parse(pluginData.config);
+    
+                        // Dynamically load the plugin
+                        loadPluginNetwork(name, pluginCode, pluginConfig);
+                        console.log(`Plugin "${name}" synchronized successfully in cluster "${CLUSTER_NAME}".`);
+                    }
+                }
+            } catch (err) {
+                console.error(`Error during plugin synchronization in cluster "${CLUSTER_NAME}":`, err);
+            }
+        }
+    }
+    subscribeToPluginUpdates() {
+        if (process.env.PLUGIN_MANAGER !== 'network') return;
+    
+        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
+        this.redis.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+            if (err) {
+                console.error(`Failed to subscribe to plugin updates: ${err.message}`);
+            } else {
+                console.log(`Subscribed to plugin updates for cluster "${process.env.CLUSTER_NAME}".`);
+            }
+        });
+    
+        this.redis.on('message', async (channel, message) => {
+            if (channel === `${process.env.CLUSTER_NAME}:plugins:update`) {
+                await this.handlePluginUpdate(message);
+            }
+        });
+    }
+    
+    
     async start(callback) {
         try {
-          
-            consolelog.log(configFile);
-               // Validate required parameters
-             // Extract command-line arguments (excluding the first two default arguments)
+            // Extract command-line arguments
             const args = process.argv.slice(2);
+    
+            // Check for valid parameters
+            if (args.length > 0 && !args.includes('--build') && !args.includes('--init') && !args.includes('--generate-swagger')) {
+                consolelog.log(
+                    'Error: Invalid parameters provided. Please use one of the following:\n' +
+                    '  --build   Build API configuration from the database.\n' +
+                    '  --init    Initialize database tables.\n' +
+                    '  --generate-swagger   Generate Swagger documentation.\n' +
+                    'Or start the server without parameters to run normally.'
+                );
+                process.exit(1); // Exit with an error code
+            }
+    
 
-            const isSwaggerGeneration = args.includes('--generate-swagger');
-
-            // Default paths
-            let inputConfigPath = path.resolve(process.cwd(), './config/apiConfig.json');
-            let outputSwaggerPath = path.resolve(process.cwd(), './swagger.json');
-
-            // Allow users to provide custom input and output paths
-            args.forEach((arg, index) => {
-                if (arg === '--input' && args[index + 1]) {
-                    inputConfigPath = path.resolve(process.cwd(), args[index + 1]);
-                }
-                if (arg === '--output' && args[index + 1]) {
-                    outputSwaggerPath = path.resolve(process.cwd(), args[index + 1]);
-                }
-            });
-
-            // Handle Swagger generation
-            if (isSwaggerGeneration) {
+    
+            // Handle the --generate-swagger flag
+            if (args.includes('--generate-swagger')) {
+                consolelog.log('Generating Swagger documentation...');
+                const inputConfigPath = path.resolve(process.cwd(), './config/apiConfig.json');
+                const outputSwaggerPath = path.resolve(process.cwd(), './swagger.json');
+    
                 try {
-                  
-                    console.log(`Saving Swagger file to: ${outputSwaggerPath}`);
                     const apiConfig = JSON.parse(fs.readFileSync(inputConfigPath, 'utf-8'));
-                    console.log(apiConfig);
                     generateSwaggerDoc(apiConfig, outputSwaggerPath);
-
-                    console.log('Swagger documentation generated successfully. Exiting...');
+                    consolelog.log('Swagger documentation generated successfully. Exiting...');
                     process.exit(0);
                 } catch (error) {
                     console.error(`Error generating Swagger: ${error.message}`);
                     process.exit(1);
                 }
             }
-            // Check if any parameters are passed
-            if (args.length > 0 && !args.includes('--build') && !args.includes('--init')) {
-                consolelog.log(
-                    'Error: Invalid parameters provided. Please use one of the following:\n' +
-                    '  --build   Build API configuration from the database.\n' +
-                    '  --init    Initialize database tables.\n' +
-                    'Or start the server without parameters to run normally.'
-                );
-                process.exit(1); // Exit with an error code
-            }
-            // Add support for building API config from database
-            if (process.argv.includes('--build')) {
-                consolelog.log('Building API configuration from database...');
-                await buildApiConfigFromDatabase();
-                consolelog.log('API configuration build complete.');
-                process.exit(0);
-            }
-
-            // Load the API configuration
-            await this.loadConfig(configFile);
-
-            this.setupDependencies(); // Initialize dependencies.
-
-            // Check if -init parameter is provided
-            if (process.argv.includes('--init')) {
+    
+            // Handle the --init flag
+            if (args.includes('--init')) {
                 consolelog.log('Initializing database tables...');
                 await this.initializeTables();
                 consolelog.log('Table initialization complete. Exiting...');
                 process.exit(0);
             }
-        
+    
+            // Load the API configuration
+            this.apiConfig = await loadConfig();
+            this.categorizedConfig = categorizeApiConfig(this.apiConfig);
+            consolelog.log("Categorized config initialized:", this.categorizedConfig);
+            // Broadcast initial configuration in network mode
+            if (PLUGIN_MANAGER === 'network') {
+                await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
+                subscribeToConfigUpdates((updatedConfig) => {
+                    this.apiConfig = updatedConfig.apiConfig;
+                    this.categorizedConfig = updatedConfig.categorizedConfig;
+                    globalContext.resources = updatedConfig.globalContext.resources || {};
+                    console.log('Configuration updated from cluster.');
+                });
+            }
+    
+            // Set up other parts of the server
+            this.setupDependencies();
             setupRag(this.apiConfig);
+            extendContext();
             initializeRules();
-            
             this.registerMiddleware();
             this.registerRoutes();
             this.registerProxyEndpoints();
             this.registerDynamicEndpoints();
-            this.registerFileUploadEndpoints();            
+            this.registerFileUploadEndpoints();
+            this.registerStaticEndpoints();
             this.initializeOptionalModules(this.app);
-            await this.setupGraphQL();         
+            await this.setupGraphQL();
             this.setupPluginLoader();
+            autoloadPlugins(this.pluginManager);
             this.setupReloadHandler(this.configPath);
+            if(process.env.SOCKET_CLI) {
+                this.setupSocketServer(); // Start the socket server
+            }
+  
+            // Synchronize plugins and subscribe to updates
+            await this.synchronizePluginsOnStartup();
+            this.subscribeToPluginUpdates();
 
+            
+            // Start the server
             this.app.listen(this.port, () => {
                 consolelog.log(`API server running on port ${this.port}`);
                 if (callback) callback();
             });
+    
             return this.app;
-
         } catch (error) {
             console.error('Failed to start server:', error);
         }
     }
+    
    
 
     close() {
@@ -1204,13 +1516,18 @@ class FlexAPIServer {
 
 
 // Export the FlexAPIServer class
-module.exports = FlexAPIServer;
+module.exports = { Adaptus2Server, authenticateMiddleware, aclMiddleware };
 
 // Example: Create a new server instance and start it
 if (require.main === module) {
-    const server = new FlexAPIServer({
+
+    // Proceed to initialize and start the server
+    const { Adaptus2Server } = require('./server');
+    const server = new Adaptus2Server({
         port: process.env.PORT || 3000,
         configPath: './config/apiConfig.json',
     });
+
     server.start();
+
 }

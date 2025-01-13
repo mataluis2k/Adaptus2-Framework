@@ -1,0 +1,1 @@
+    tax = price + ( price * 0.7)

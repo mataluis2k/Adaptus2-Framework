@@ -1,5 +1,5 @@
 const { workerData, parentPort } = require('worker_threads');
-const { executeEtlJob } = require('./modules/etl_module');
+const { executeEtlJob } = require('./etl_module');
 
 (async function runEtlJob() {
     const { job, businessRules, state } = workerData;

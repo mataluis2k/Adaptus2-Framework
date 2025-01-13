@@ -27,15 +27,25 @@ function generateValidationSchema(validationRules) {
         }
 
         if (rules.minLength) {
-            fieldSchema = fieldSchema.min(rules.minLength).messages({
-                'string.min': `${key} must be at least ${rules.minLength} characters long.`
-            });
+            if (fieldSchema.type === 'string') {
+                fieldSchema = fieldSchema.min(rules.minLength).messages({
+                    'string.min': `${key} must be at least ${rules.minLength} characters long.`
+                });
+            } else {
+                console.error(`${key}: minLength validation is only applicable to string fields.`);
+                //throw new Error(`${key}: minLength validation is only applicable to string fields.`);
+            }
         }
 
         if (rules.isISO3166CountryCode) {
-            fieldSchema = fieldSchema.pattern(/^[A-Z]{2}$/).messages({
-                'string.pattern.base': `${key} must be a valid ISO 3166-1 country code.`
-            });
+            if (fieldSchema.isJoi && fieldSchema._type === 'string') {
+                fieldSchema = fieldSchema.pattern(/^[A-Z]{2}$/).messages({
+                    'string.pattern.base': `${key} must be a valid ISO 3166-1 country code.`
+                });
+            } else {
+                console.error(`${key}: isISO3166CountryCode validation is only applicable to string fields.`);
+                
+            }
         }
 
         if (rules.isEnum) {

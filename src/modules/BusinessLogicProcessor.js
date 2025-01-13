@@ -81,3 +81,21 @@ processor.registerAction('uniqueEmail', async (params, data) => {
 
 // Export the processor
 module.exports = processor;
+
+// Example usage of businesLogicProcessor
+// {  
+//     "SendSubscriptionProducts" = [ {
+//                                 "action": "ChargeUser",
+//                                 "details": "Charge subscription products to user",
+//                             }, { "action": "SendReciept",
+//                                 "details": "Send receipt to user",
+//                             }, { "action": "MailSubscriptionProducts",
+//                                 "details": "Update user subscription status",
+//                             } ] ,
+//     "SendOneTimeProducts" = [ {
+//                                 "action": "ChargeUser",
+//                                 "details": "Charge one-time products to user",
+//                             }, { "action": "SendReciept",
+//                                 "details": "Send receipt to user",
+//                             } ] ,
+// }

@@ -1,13 +1,15 @@
 const fs = require('fs');
 const path = require('path');
-const { getDbConnection } = require('./modules/db');
-const RuleEngine = require('./modules/ruleEngine');
-
+const { getDbConnection } = require('./db');
+const BusinessRules = require('./business_rules');
+const RuleEngine = require('./ruleEngine');
+const { getApiConfig } = require('./apiConfig');
+const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 
 // Paths for additional configurations and state files
-const stateFilePath = path.join(process.cwd(), 'etl_state.json');
-const etlConfigPath = path.join(process.cwd(), 'config/etlConfig.json');
-const apiConfigPath = path.join(process.cwd(), 'config/apiConfig.json');
+const stateFilePath = path.join(configDir, 'etl_state.json');
+const etlConfigPath = path.join(configDir, 'etlConfig.json');
+
 
 // Load or initialize state file
 function loadState() {
@@ -33,14 +35,6 @@ function loadEtlConfig() {
     }
 }
 
-function loadApiConfig() {
-    try {
-        return JSON.parse(fs.readFileSync(apiConfigPath, 'utf-8'));
-    } catch (error) {
-        console.error('Error loading ETL config:', error);
-        process.exit(1);
-    }
-}
 // Get the schema of a table
 async function getTableSchema(connection, table) {
     const query = `DESCRIBE ${table}`;
@@ -117,7 +111,7 @@ async function processLargeTableInBatches(
     const hasUpdatedAt = Object.keys(sourceSchema).includes('updated_at');
 
     // Get business rules for the source table
-    const ruleEngineInstance = new RuleEngine(loadRulesForEntity(source_table));
+    const ruleEngineInstance = new RuleEngine(loadRulesForEntity(sourceTable));
 
     while (hasMoreData) {
         let query = '';
@@ -125,8 +119,8 @@ async function processLargeTableInBatches(
 
         if (hasUpdatedAt) {
             // Query for updated or new records since the last job run
-            query = `SELECT * FROM ${sourceTable} WHERE updated_at > ? ORDER BY ${keys.join(', ')} ASC LIMIT ?`;
-            params = [lastJobRun || new Date(0).toISOString(), batchSize];
+            query = `SELECT * FROM ${sourceTable} WHERE updated_at > ? ORDER BY ${keys.join(', ')} ASC LIMIT ${batchSize}`;
+            params = [lastJobRun || new Date(0).toISOString()];
         } else {
             // Build lexicographical conditions for composite keys
             const lexConditions = keys
@@ -137,8 +131,8 @@ async function processLargeTableInBatches(
                 })
                 .join(' OR ');
 
-            query = `SELECT * FROM ${sourceTable} WHERE ${lexConditions} ORDER BY ${keys.join(', ')} ASC LIMIT ?`;
-            params = [...lastProcessedKeyValues, ...Array(keys.length - lastProcessedKeyValues.length).fill(''), batchSize];
+            query = `SELECT * FROM ${sourceTable} WHERE ${lexConditions} ORDER BY ${keys.join(', ')} ASC LIMIT ${batchSize}`;
+            params = [...lastProcessedKeyValues, ...Array(keys.length - lastProcessedKeyValues.length).fill('')];
         }
 
         const [rows] = await sourceConnection.execute(query, params);
@@ -147,7 +141,7 @@ async function processLargeTableInBatches(
         for (const row of rows) {
             let transformedData = { ...row };
                       
-            ruleEngineInstance.processEvent('UPDATE', source_table, row);
+            ruleEngineInstance.processEvent('UPDATE', sourceTable, row);
 
             // Build upsert query for target table
             const fields = Object.keys(transformedData).join(', ');
@@ -181,7 +175,7 @@ async function processLargeTableInBatches(
 
 
 // Perform ETL job
-async function executeEtlJob(job, state, businessRules,apiConfig) {
+async function executeEtlJob(job, state, businessRules,apiConfig) { 
     const { source_table, target_table } = job;
     
     const dbConnection1 = apiConfig.find(item => item.dbTable === source_table)?.dbConnection || null;
@@ -189,11 +183,16 @@ async function executeEtlJob(job, state, businessRules,apiConfig) {
     const dbType1 = apiConfig.find(item => item.dbTable === source_table)?.dbType || null;
     const dbType2 = apiConfig.find(item => item.dbTable === target_table)?.dbType || null;
 
-    console.log(dbType1, dbType2, dbConnection1, dbConnection2);
-    if (!dbConnection1 || !dbConnection2 || !dbType1 || !dbType2) {
-        console.error(`Database connection or type not found for tables ${source_table} or ${target_table}`);
+    if (!dbConnection2 || !dbType2) {
+        console.error(`Database connection or type not found for tables  ${target_table}`);
         return;
     }
+    if (!dbConnection1 || !dbType1 ) {
+        console.error(`Database connection or type not found for tables ${source_table} `);
+        return;
+    }
+
+    console.log(dbType1, dbType2, dbConnection1, dbConnection2);
     const sourceConnection = await getDbConnection({ dbType: dbType1, dbConnection: dbConnection1 });
     const targetConnection = await getDbConnection({ dbType: dbType2, dbConnection: dbConnection2 });
 
@@ -238,8 +237,8 @@ async function executeEtlJob(job, state, businessRules,apiConfig) {
 async function main() {
     const etlConfig = loadEtlConfig();
     const state = loadState();
-    const apiConfig = loadApiConfig();
-    const businessRules = new BusinessRules('./config/businessRules.json');
+    const apiConfig = getApiConfig();
+    const businessRules = new BusinessRules(path.join(configDir,'businessRules.json'));
 
     businessRules.loadRules(); // Load transformation rules
 

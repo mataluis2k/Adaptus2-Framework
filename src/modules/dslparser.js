@@ -1,365 +1,634 @@
-// dslParser.js
-
-/**
- * DSL Format:
- * IF <EVENT> <ENTITY> [WHEN <CONDITION EXPRESSION>] THEN
- *    <ACTION>
- *    <ACTION>
- * [ELSE
- *    <ACTION>]
- *
- * EVENT: NEW | UPDATE | DELETE
- * ENTITY: "order", "customer", "fulfillment", etc.
- * CONDITIONS: 
- *   <field> <operator> <value>, combined with AND/OR
- *   Operators: =, !=, >, <, >=, <=, IS NULL, IS NOT NULL, CONTAINS
- *
- * ACTIONS:
- *   send <entity> to action.<something>
- *   update <entity>.<field> = <value>
- *   log <message>
- *   notify <team>
- *   invoke <function>(args)
- *   ...
- */
-
+const consolelog = require('./logger');
+const parseCommand = require('./parser');
+/***************************************
+ * dslParser.js
+ ***************************************/
 class DSLParser {
-    constructor() {
-        this.keywords = {
-            IF: 'IF',
-            WHEN: 'WHEN',
-            THEN: 'THEN',
-            ELSE: 'ELSE',
-            NEW: 'NEW',
-            UPDATE: 'UPDATE',
-            DELETE: 'DELETE'
-        };
-    }
-
-      /**
-     * Public method: parse multiple lines of DSL into a rule set.
-     * @param {string} dslText - The entire DSL script as a string.
-     * @returns {Array} An array of rule objects or an empty array if invalid.
-     */
-      parse(dslText) {
-        // Remove comments and empty lines
-        const lines = dslText
-            .split('\n')
-            .map(l => l.trim())
-            .filter(l => l.length > 0 && !l.startsWith('#')); // Remove empty and comment lines
-
-        if (lines.length === 0) {
-            console.warn('DSL file contains no valid rules after removing comments and empty lines.');
-            return [];
-        }
-
-        try {
-            return this._parseRules(lines);
-        } catch (error) {
-            console.error(`Error parsing DSL: ${error.message}`);
-            return [];
-        }
-    }
-
     /**
-     * Internal method: Parse multiple rules from given lines.
+     * We assume you have a globalContext with:
+     * {
+     *   resources: { order: {}, customer: {}, ... },
+     *   actions: { update: fn, send: fn, ... }
+     * }
+     */
+    constructor(globalContext = {}) {
+      this.globalContext = globalContext;
+  
+      // Keywords used in the DSL
+      this.keywords = {
+        IF: 'IF',
+        WHEN: 'WHEN',
+        THEN: 'THEN',
+        ELSE: 'ELSE',
+        ELSE_IF: 'ELSE IF',
+        UPDATE: 'UPDATE',
+        WITH: 'WITH',
+        DO: 'DO'
+      };
+  
+      // Allowed condition operators
+      this.operators = [
+        '=',
+        '!=',
+        '>',
+        '<',
+        '>=',
+        '<=',
+        'IS NULL',
+        'IS NOT NULL',
+        'CONTAINS',
+        'IN'
+      ];
+  
+      // Logical operators
+      this.logicalOps = ['AND', 'OR'];
+    }
+  
+    /**
+     * Main entry point to parse the DSL text into a list of rule objects.
+     */
+    parse(dslText) {
+      // Remove comments (#...) and empty lines
+      const lines = dslText
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0 && !line.startsWith('#'));
+  
+      if (lines.length === 0) {
+        console.warn('DSL contains no valid lines after removing comments/empty lines.');
+        return [];
+      }
+  
+      return this._parseRules(lines);
+    }
+  
+    /**
+     * Parse multiple rules in a DSL script. 
+     * Supports "WITH <DB> <CONNECTION> DO" blocks, 
+     * and "IF ... THEN ... ELSE IF ... ELSE ..." blocks.
      */
     _parseRules(lines) {
-        const rules = [];
-        let currentRuleLines = [];
-
-        // We assume each rule starts with IF and can contain multiple lines until another IF or EOF.
-        for (const line of lines) {
-            if (line.toUpperCase().startsWith(this.keywords.IF) && currentRuleLines.length > 0) {
-                // Parse the previous rule
-                rules.push(this._parseSingleRule(currentRuleLines));
-                currentRuleLines = [];
+      const rules = [];
+      let currentDbConfig = null;
+  
+      let i = 0;
+      while (i < lines.length) {
+        const line = lines[i];
+        consolelog.log(`Parsing line: ${line}`);
+  
+        // Check for "WITH <something> DO" block
+        if (line.toUpperCase().startsWith(this.keywords.WITH)) {
+          const dbMatch = line.match(/WITH\s+(\S+)\s+(\S+)\s+DO/i);
+          if (dbMatch) {
+            const [, dbType, dbConnection] = dbMatch;
+            currentDbConfig = { dbType, dbConnection };
+            i++;
+            continue;
+          } else {
+            throw new Error(`Invalid WITH syntax: ${line}`);
+          }
+        }
+  
+        // Check for IF rule
+        if (line.toUpperCase().startsWith(this.keywords.IF)) {
+          const ruleLines = [line];
+          let j = i + 1;
+  
+          // Accumulate lines until we hit next IF/WITH or end of file
+          while (j < lines.length) {
+            const nextLine = lines[j];
+            // Stop collecting if next line is a new IF or WITH
+            if (
+              nextLine.toUpperCase().startsWith(this.keywords.IF) ||
+              nextLine.toUpperCase().startsWith(this.keywords.WITH)
+            ) {
+              break;
             }
-            currentRuleLines.push(line);
+            ruleLines.push(nextLine);
+            j++;
+          }
+  
+          const rule = this._parseSingleRule(ruleLines, currentDbConfig);
+          consolelog.log('Parsed rule:', rule);
+          if (rule) {
+                rules.push(rule);
+          }
+  
+          i = j; // Move pointer
+        } else {
+          // Unrecognized line
+          console.log(`Skipping unrecognized line: ${line}`);
+          i++;
         }
-
-        // Parse the last accumulated rule
-        if (currentRuleLines.length > 0) {
-            rules.push(this._parseSingleRule(currentRuleLines));
-        }
-
-        return rules;
+      }
+  
+      return rules;
     }
-
+  
     /**
-     * Internal method: Parse a single rule from a set of lines.
+     * Parse a single rule block of the form:
+     * IF <EVENT> <RESOURCE> [WHEN <CONDITIONS>] THEN
+     *    <ACTIONS>
+     * ELSE IF <CONDITIONS>
+     *    <ACTIONS>
+     * ELSE
+     *    <ACTIONS>
      */
-    _parseSingleRule(lines) {
-        // The first line should define the condition block: IF <EVENT> <ENTITY> [WHEN ...] THEN
-        // Subsequent lines until ELSE or EOF are THEN actions, after ELSE are ELSE actions.
-        const firstLine = lines[0];
-
-        const { event, entity, conditions } = this._parseIfLine(firstLine);
-
-        // Find THEN index and optionally ELSE index
-        let thenIndex = -1;
-        let elseIndex = -1;
-
-        for (let i = 0; i < lines.length; i++) {
-            if (lines[i].toUpperCase().endsWith(this.keywords.THEN)) {
-                thenIndex = i;
-            }
-            if (lines[i].toUpperCase().startsWith(this.keywords.ELSE)) {
-                elseIndex = i;
-            }
+    _parseSingleRule(ruleLines, currentDbConfig) {
+      // The first line is "IF ..."
+      const firstLine = ruleLines[0];
+      const { event, resource, conditions } = this._parseIfLine(firstLine);
+  
+      // Validate resource vs. global context
+      if (!this.globalContext.resources[resource]) {
+        console.log(`Unknown resource '${resource}'. Please register it in globalContext.resources.`);
+        return null;
+      }
+  
+      // We’ll store the final structure of the rule:
+      // {
+      //   event: "NEW" | "UPDATE" | "DELETE" etc.
+      //   resource: "order", "customer", ...
+      //   conditions: [ { type: 'condition', field, op, value }, 'AND', ... ]  (AST for conditions)
+      //   thenActions: [ actionAST, ... ]
+      //   elseIfs: [ { conditions: [...], actions: [...] }, ... ]
+      //   elseActions: [ actionAST, ... ]
+      //   dbConfig: { dbType, dbConnection }
+      // }
+      const rule = {
+        event,
+        resource,
+        conditions,
+        thenActions: [],
+        elseIfs: [],
+        elseActions: [],
+        dbConfig: currentDbConfig
+      };
+  
+      // Find the THEN line
+      let thenIndex = -1;
+      for (let i = 0; i < ruleLines.length; i++) {
+        if (ruleLines[i].toUpperCase().endsWith(this.keywords.THEN)) {
+          thenIndex = i;
+          break;
         }
-
-        if (thenIndex === -1) {
-            throw new Error("THEN keyword missing in rule: " + firstLine);
+      }
+      if (thenIndex === -1) {
+        throw new Error(`Missing THEN clause in rule: ${firstLine}`);
+      }
+  
+      // Parse THEN actions
+      let cursor = thenIndex + 1; // Lines after THEN
+      while (cursor < ruleLines.length) {
+        const line = ruleLines[cursor];
+  
+        // Break if we find ELSE or ELSE IF
+        if (
+          line.toUpperCase().startsWith(this.keywords.ELSE) ||
+          line.toUpperCase().startsWith(this.keywords.ELSE_IF)
+        ) {
+          break;
         }
-
-        const thenActions = [];
+        rule.thenActions.push(this._parseActionLine(line));
+        cursor++;
+      }
+  
+      // Now parse any number of ELSE IF blocks
+      while (
+        cursor < ruleLines.length &&
+        ruleLines[cursor].toUpperCase().startsWith(this.keywords.ELSE_IF)
+      ) {
+        const elseIfBlock = this._parseElseIfBlock(ruleLines, cursor);
+        rule.elseIfs.push(elseIfBlock.block);
+        cursor = elseIfBlock.newCursor;
+      }
+  
+      // Finally, parse single ELSE block if present
+      if (
+        cursor < ruleLines.length &&
+        ruleLines[cursor].toUpperCase().startsWith(this.keywords.ELSE)
+      ) {
+        // The line that starts with ELSE
+        cursor++; // Move past the ELSE line
         const elseActions = [];
-
-        // Actions appear after the THEN line
-        const startThen = thenIndex + 1;
-        const endThen = elseIndex === -1 ? lines.length : elseIndex;
-        for (let i = startThen; i < endThen; i++) {
-            thenActions.push(this._parseActionLine(lines[i]));
+        while (cursor < ruleLines.length) {
+          const nextLine = ruleLines[cursor];
+          // Stop if we see an IF or WITH (means next rule)
+          if (
+            nextLine.toUpperCase().startsWith(this.keywords.IF) ||
+            nextLine.toUpperCase().startsWith(this.keywords.WITH)
+          ) {
+            break;
+          }
+          elseActions.push(this._parseActionLine(nextLine));
+          cursor++;
         }
-
-        if (elseIndex !== -1) {
-            const startElse = elseIndex + 1;
-            for (let i = startElse; i < lines.length; i++) {
-                elseActions.push(this._parseActionLine(lines[i]));
-            }
-        }
-
-        return {
-            event,
-            entity,
-            conditions,
-            then: thenActions,
-            else: elseActions
-        };
+        rule.elseActions = elseActions;
+      }
+  
+      return rule;
     }
-
+  
     /**
-     * Parse the IF line.
-     * Example: "IF NEW order WHEN order.status = "paid" THEN"
-     * We extract event: NEW, entity: order, conditions: [{field:'order.status',op:'=',value:'"paid"'}]
+     * Parse an "ELSE IF" block: 
+     * ELSE IF <CONDITIONS>
+     *   <ACTIONS>
+     * 
+     * Returns an object with { block, newCursor } 
+     * where block = { conditions: [...], actions: [...] }
+     */
+    _parseElseIfBlock(ruleLines, startIndex) {
+      const line = ruleLines[startIndex];
+      // e.g. "ELSE IF order.status = "pending" AND user.id > 100"
+      const regex = /^ELSE\s+IF\s+(.*)$/i;
+      const match = line.match(regex);
+      if (!match) {
+        throw new Error(`Invalid ELSE IF syntax: ${line}`);
+      }
+  
+      const conditionString = match[1].trim();
+      const conditions = this._parseConditionString(conditionString);
+  
+      const block = {
+        conditions,
+        actions: []
+      };
+  
+      let cursor = startIndex + 1;
+      // Collect lines until next ELSE, ELSE IF, IF or WITH
+      while (cursor < ruleLines.length) {
+        const nextLine = ruleLines[cursor];
+        if (
+          nextLine.toUpperCase().startsWith(this.keywords.ELSE) ||
+          nextLine.toUpperCase().startsWith(this.keywords.IF) ||
+          nextLine.toUpperCase().startsWith(this.keywords.WITH)
+        ) {
+          break;
+        }
+        block.actions.push(this._parseActionLine(nextLine));
+        cursor++;
+      }
+  
+      return { block, newCursor: cursor };
+    }
+  
+    /**
+     * Parse the first IF line:
+     * e.g. IF NEW order WHEN order.status = "paid" AND order.total > 500 THEN
      */
     _parseIfLine(line) {
-        // Break down by known keywords
-        // Potential structure:
-        // IF <EVENT> <ENTITY> [WHEN <CONDITIONS>] THEN
-        const upperLine = line.toUpperCase();
-        let [ifPart, ...rest] = line.split(' ');
-        if (ifPart.toUpperCase() !== this.keywords.IF) {
-            throw new Error("Rule must start with IF");
-        }
-
-        // Find WHEN and THEN
-        const whenIndex = rest.map(r => r.toUpperCase()).indexOf(this.keywords.WHEN);
-        const thenIndex = rest.map(r => r.toUpperCase()).indexOf(this.keywords.THEN);
-
-        let event, entity, conditionString = "";
-
-        if (whenIndex === -1) {
-            // No WHEN clause
-            event = rest[0];
-            entity = rest[1];
-        } else {
-            event = rest[0];
-            entity = rest[1];
-            conditionString = rest.slice(whenIndex + 1, thenIndex).join(' ');
-        }
-
-        // Clean event and entity
-        event = event.toUpperCase();
-        // entity could be just "order" or "table:order"
-        // For simplicity, store as-is
-        const conditions = conditionString ? this._parseConditions(conditionString) : [];
-
-        return { event, entity, conditions };
+      const regex = new RegExp(
+        `^IF\\s+(\\w+)\\s+(\\w+)(?:\\s+${this.keywords.WHEN}\\s+(.*))?\\s+${this.keywords.THEN}$`,
+        'i'
+    );
+      const match = line.match(regex);
+      if (!match) {
+        throw new Error(`Invalid IF syntax: ${line}`);
+      }
+      const [, event, resource, rawConditions] = match;
+  
+      // Validate resource from globalContext if needed:
+      // (We do final check in the calling method.)
+  
+      // Parse condition string if present
+      let conditions = [];
+      if (rawConditions) {
+        conditions = this._parseConditionString(rawConditions);
+      }
+  
+      return { event, resource, conditions };
     }
-
+  
     /**
-     * Parse conditions from a condition string, e.g.:
-     * "order.status = \"paid\" AND order.total > 100"
-     * We'll split by AND/OR first and parse each condition.
+     * Parse a raw condition string with optional parentheses, 
+     * multiple conditions, AND/OR, and operators.
+     * e.g. "order.status = "paid" AND order.total > 500"
+     * 
+     * We'll produce an array-based AST, like:
+     * [
+     *   { type:'condition', field:'order.status', op:'=', value:'paid' }, 
+     *   'AND',
+     *   { type:'condition', field:'order.total', op:'>', value:'500' }
+     * ]
+     * 
+     * If parentheses exist, we recursively parse them.
      */
-    _parseConditions(conditionString) {
-        // This is a simplistic parser that assumes conditions are well-formed.
-        // For a robust solution, consider a proper grammar.
-        const logicalParts = this._splitByLogicalOperators(conditionString);
-        const conditions = [];
-
-        // Each part is either a single condition or the operator
-        // We'll build a structure like [cond, 'AND', cond, 'OR', cond]
-        // cond: {field, op, value}
-        let currentCondition = null;
-        let logicOp = null;
-
-        for (const part of logicalParts) {
-            if (part.toUpperCase() === 'AND' || part.toUpperCase() === 'OR') {
-                logicOp = part.toUpperCase();
-            } else {
-                // Parse condition
-                const cond = this._parseSingleCondition(part.trim());
-                if (currentCondition == null) {
-                    currentCondition = cond;
-                } else {
-                    // Multiple conditions chain as [currentCondition, op, nextCondition]
-                    conditions.push(currentCondition);
-                    conditions.push(logicOp);
-                    currentCondition = cond;
-                }
-            }
-        }
-
-        if (currentCondition) {
-            conditions.push(currentCondition);
-        }
-
-        return conditions;
+    _parseConditionString(raw) {
+      // We'll do a small tokenization with parentheses, AND, OR, and operators.
+      return this._tokenizeConditions(raw);
     }
-
-    _splitByLogicalOperators(conditionString) {
-        // Splits condition string by 'AND' / 'OR' while keeping the operators.
-        // A simple approach: replace AND/OR with a delimiter and then re-insert them.
-        // Or use a regex split with capture groups.
-        const tokens = conditionString.split(/\b(AND|OR)\b/i).map(t => t.trim()).filter(t => t.length > 0);
-        return tokens;
-    }
-
-    _parseSingleCondition(condStr) {
-        // Conditions can be:
-        // field op value
-        // e.g. order.status = "paid"
-        // order.shipped_date IS NOT NULL
-        // customer.email CONTAINS "gmail"
-
-        // Handle IS NULL / IS NOT NULL first
-        let match = condStr.match(/^(.+?)\s+(IS NOT NULL|IS NULL)$/i);
-        if (match) {
-            return { field: match[1].trim(), op: match[2].toUpperCase(), value: null };
-        }
-
-        // Handle operators like =, !=, >, <, >=, <=, CONTAINS
-        match = condStr.match(/^(.+?)\s+(=|!=|>|<|>=|<=|CONTAINS)\s+(.*)$/i);
-        if (match) {
-            return { field: match[1].trim(), op: match[2].toUpperCase(), value: match[3].trim() };
-        }
-
-        throw new Error("Unable to parse condition: " + condStr);
-    }
-
+  
     /**
-     * Parse action lines after THEN or ELSE.
-     * Example: "send order to action.fulfillment"
-     * Result: { type:'send', target:'order', to:'action.fulfillment' }
+     * Tokenize condition string into an array-based AST,
+     * also handling parentheses via recursion.
+     */
+    _tokenizeConditions(conditionString) {
+      const tokens = [];
+      let i = 0;
+  
+      const str = conditionString.trim();
+  
+      while (i < str.length) {
+        const c = str[i];
+  
+        // Skip whitespace
+        if (/\s/.test(c)) {
+          i++;
+          continue;
+        }
+  
+        // Parentheses -> we parse sub-expression
+        if (c === '(') {
+          // find matching ')'
+          let depth = 1;
+          let j = i + 1;
+          while (j < str.length && depth > 0) {
+            if (str[j] === '(') depth++;
+            if (str[j] === ')') depth--;
+            j++;
+          }
+          if (depth !== 0) {
+            throw new Error(`Unmatched '(' in condition: ${conditionString}`);
+          }
+          const subExpr = str.substring(i + 1, j - 1);
+          tokens.push(this._tokenizeConditions(subExpr));
+          i = j;
+          continue;
+        }
+  
+        if (c === ')') {
+          // Should be handled by recursion
+          throw new Error(`Unexpected ')' in condition: ${conditionString}`);
+        }
+  
+        // If it's a letter or quote, parse a token
+        const token = this._parseNextToken(str, i);
+        tokens.push(token.value);
+        i = token.nextIndex;
+      }
+  
+      // Now we have a flat array of tokens and nested arrays for parentheses
+      // e.g. ["order.status", "=", "paid", "AND", ["order.total", ">", "500"]]
+  
+      // Next, we convert the top-level array of tokens to an AST: 
+      return this._buildConditionAST(tokens);
+    }
+  
+    /**
+     * Parse the next token, which could be an operator, 
+     * a string, or something in quotes.
+     */
+    _parseNextToken(str, startIndex) {
+      // If the substring starts with a quote, read until the matching quote
+      if (str[startIndex] === '"' || str[startIndex] === "'") {
+        const quoteChar = str[startIndex];
+        let j = startIndex + 1;
+        let result = '';
+        while (j < str.length && str[j] !== quoteChar) {
+          result += str[j];
+          j++;
+        }
+        if (j >= str.length) {
+          throw new Error(`Unterminated string at: ${str.substring(startIndex)}`);
+        }
+        return { value: `"${result}"`, nextIndex: j + 1 };
+      }
+  
+      // Otherwise, read until space or parentheses or quote
+      let j = startIndex;
+      let buffer = '';
+      while (
+        j < str.length &&
+        !/\s|\(|\)|'|"/.test(str[j])
+      ) {
+        buffer += str[j];
+        j++;
+      }
+  
+      return { value: buffer, nextIndex: j };
+    }
+  
+    /**
+     * Convert a flat array of tokens (and nested arrays for parentheses) into 
+     * an array-based AST with condition objects + 'AND'/'OR' strings.
+     */
+    _buildConditionAST(tokens) {
+      // We'll produce something like:
+      // [
+      //   { type: 'condition', field, op, value },
+      //   'AND',
+      //   [ ...subtree... ],
+      //   'OR',
+      //   { type: 'condition', ... }
+      // ]
+      // This method is simplified; it won't do "precedence" beyond parentheses.
+  
+      const ast = [];
+      let i = 0;
+  
+      while (i < tokens.length) {
+        const token = tokens[i];
+  
+        if (Array.isArray(token)) {
+          // This is a nested parentheses array, recursively built
+          ast.push(this._buildConditionAST(token));
+          i++;
+          continue;
+        }
+  
+        // Check if token is AND/OR
+        if (this.logicalOps.includes(token.toUpperCase())) {
+          ast.push(token.toUpperCase());
+          i++;
+          continue;
+        }
+  
+        // If it's an operator from operators[] 
+        // or we suspect it's part of field op value...
+        // We'll do a minimal 3-token parse for field OP value:
+        // e.g. "order.status", "=", "\"paid\""
+        const field = token;
+        i++;
+        if (i >= tokens.length) {
+          // single token leftover
+          ast.push({ type: 'condition', field, op: null, value: null });
+          break;
+        }
+  
+        const possibleOp = tokens[i];
+        if (this.operators.includes(possibleOp.toUpperCase())) {
+          // It's an operator
+          const op = possibleOp.toUpperCase();
+          i++;
+          let value = null;
+  
+          // For operators that do not require a value (IS NULL, IS NOT NULL)
+          if (op === 'IS NULL' || op === 'IS NOT NULL') {
+            ast.push({ type: 'condition', field, op, value: null });
+            continue;
+          }
+  
+          // If it’s an 'IN' operator, parse up to bracket or parentheses
+          if (op === 'IN') {
+            // e.g. IN ["US","CA"]
+            // We'll read the next token, hopefully something like ["US","CA"] or ('US','CA')
+            const inArrayToken = tokens[i];
+            if (inArrayToken.startsWith('[') || inArrayToken.startsWith('(')) {
+              value = this._parseInValue(inArrayToken);
+              i++;
+            } else {
+              throw new Error(`Expected array/list after IN operator, got: ${inArrayToken}`);
+            }
+            ast.push({ type: 'condition', field, op, value });
+            continue;
+          }
+  
+          // else parse normal "value"
+          if (i < tokens.length) {
+            value = tokens[i];
+            i++;
+          }
+          ast.push({
+            type: 'condition',
+            field,
+            op,
+            value: this._stripQuotes(value)
+          });
+        } else {
+          // It's not recognized as an operator, interpret it as a single token condition
+          ast.push({ type: 'condition', field, op: null, value: possibleOp });
+        }
+      }
+  
+      return ast;
+    }
+  
+    // If we see IN ["US","CA"] or IN ('US','CA'), parse it into an array
+    _parseInValue(token) {
+      // Remove bracket or parentheses
+      let raw = token;
+      if (raw.startsWith('(') || raw.startsWith('[')) {
+        raw = raw.slice(1);
+      }
+      if (raw.endsWith(')') || raw.endsWith(']')) {
+        raw = raw.slice(0, -1);
+      }
+      // Split by comma
+      const items = raw.split(',').map((x) => this._stripQuotes(x.trim()));
+      return items;
+    }
+  
+    _stripQuotes(val) {
+      if (!val) return val;
+      return val.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1');
+    }
+  
+    /**
+     * Parse an action line, e.g.:
+     *   send order to action.fulfillment
+     *   update order.total = order.total - (order.total * 0.1)
+     *   create_record user to entity:users with data: {...}
+     *
+     * We'll do a simple approach:
+     *   - check the first token => action name
+     *   - check if it's in globalContext.actions (optional validation)
+     *   - parse the rest as the "args" or "expression"
      */
     _parseActionLine(line) {
-        let match;
+      // Split the line into tokens: action type and arguments
+      const tokens = line.split(/\s+/);
+      if (tokens.length < 2) {
+          throw new Error(`Invalid action line: ${line}`);
+      }
+      var data = {};
+      const action = tokens[0];
+   
+      if( action === 'update' ) { 
+          data = this._parseUpdateExpression(line);
+      } else{
+        if (!this.globalContext.actions[action]) {
+            throw new Error(`Unknown action '${action}'. Please register in globalContext.actions.`);
+        }       
+          data = parseCommand(line);
+      }
     
-        // Create
-        match = line.match(/^create\s+([^\s]+)\s+with\s+(.+)$/i);
-        if (match) {
-            return { action: 'create', entity: match[1], data: JSON.parse(match[2]) };
-        }
-    
-        // Read
-        match = line.match(/^read\s+([^\s]+)\s+where\s+(.+)$/i);
-        if (match) {
-            return { action: 'read', entity: match[1], query: JSON.parse(match[2]) };
-        }
-    
-        // Update with WHERE clause
-        match = line.match(/^update\s+([^\s]+)\s+where\s+(.+)\s+set\s+(.+)$/i);
-        if (match) {
-            return { action: 'update', entity: match[1], query: JSON.parse(match[2]), data: JSON.parse(match[3]) };
-        }
-    
-        // Delete
-        match = line.match(/^delete\s+([^\s]+)\s+where\s+(.+)$/i);
-        if (match) {
-            return { action: 'delete', entity: match[1], query: JSON.parse(match[2]) };
-        }
-    
-           // Update entity = value (NEW REGEX - THIS IS THE KEY FIX)
-        match = line.match(/^update\s+([^\s]+)\s*=\s*(.+)$/i);
-        if (match) {
-            return { action: 'update', entity: match[1], value: match[2] };
-        }
+      return data;
+  }
 
-        // Update entity.field = value (This is still needed for field updates)
-        match = line.match(/^update\s+([^.]+)\.([^\s]+)\s*=\s*(.+)$/i);
-        if (match) {
-            return { action: 'update', entity: match[1], field: match[2], value: match[3] };
-        }
-    
-     
-    
-        // Send
-        match = line.match(/^send\s+([^\s]+)\s+to\s+(action\..+)$/i);
-        if (match) {
-            return { action: 'send', entity: match[1], destination: match[2] };
-        }
-    
-        // Notify
-        match = line.match(/^notify\s+(.+)$/i);
-        if (match) {
-            return { action: 'notify', target: match[1] };
-        }
-    
-        // Log
-        match = line.match(/^log\s+(.+)$/i);
-        if (match) {
-            return { action: 'log', message: match[1] };
-        }
-    
-        // Invoke function
-        match = line.match(/^invoke\s+([^(]+)\((.*)\)$/i);
-        if (match) {
-            return {
-                action: 'invoke',
-                functionName: match[1].trim(),
-                arguments: match[2].split(',').map((a) => a.trim()),
-            };
-        }
-        
-        // Simple assignment: discount = price * 0.1
-        match = line.match(/^(\w+)\s*=\s*(.+)$/i);
-        if (match) {
-            return { action: 'assign', field: match[1], value: match[2] };
-        }
-    
-        // Unknown action
-        return { action: 'unknown', line };
+
+    /**
+     * Parse a line like:
+     *  "order.total = order.total - (order.total * 0.1)"
+     * We extract the field (order.total) and the expression (order.total - (order.total * 0.1))
+     * We'll store them so we can evaluate at runtime.
+     */
+    _parseUpdateExpression(line) {
+      // We need to remove "update" from the start
+      line = line.replace(/^update\s+/, '');
+      // line might be: order.total = order.total - (order.total * 0.1)
+      const eqIndex = line.indexOf('=');
+      if (eqIndex === -1) {
+        throw new Error(`Invalid update syntax (missing '='): ${line}`);
+      }
+      const leftSide = line.slice(0, eqIndex).trim(); // "order.total"
+      const rightSide = line.slice(eqIndex + 1).trim(); // "order.total - (order.total * 0.1)"
+  
+      // Validate that the left side is something like "<resource>.<field>"
+      // We skip advanced checks here, but you could.
+      return {
+        action: 'update',
+        field: leftSide,
+        expression: rightSide
+      };
     }
-    }
-
-// Example usage:
-
-if (require.main === module) {
+  }
+  
+  module.exports = DSLParser;
+  
+  /***************************************
+   * Example usage (test it directly)
+   ***************************************/
+  
+  if (require.main === module) {
+    // A sample globalContext to demonstrate resource/action validation
+    const globalContext = {
+      resources: {
+        order: {},
+        customer: {},
+        fulfillment: {}
+      },
+      actions: {
+        send: () => {},
+        update: () => {},
+        create_record: () => {},
+        log: () => {},
+        notify: () => {},
+        invoke: () => {}
+      }
+    };
+  
+    const parser = new DSLParser(globalContext);
+  
     const dslScript = `
-IF NEW order WHEN order.status = "paid" THEN
-    send order to action.fulfillment
-    send order to action.email
-
-IF UPDATE fulfillment WHEN fulfillment.shipped_date IS NOT NULL THEN
-    send customer to action.email.tracking_info
-
-IF UPDATE order WHEN order.status = "paid" AND order.total > 500 THEN
-    update order.status = "premium"
-    send order to action.notify.vip_team
-ELSE
-    send order to action.email.standard_confirmation
-
-IF NEW customer WHEN customer.email CONTAINS "gmail" THEN
-    update customer.segment = "gmail_offers"
-`;
-
-    const parser = new DSLParser();
-    const rules = parser.parse(dslScript);
-
-    console.log(JSON.stringify(rules, null, 2));
-}
-
-module.exports = DSLParser;
+  # Example with parentheses, placeholders, arithmetic, ELSE IF, and ELSE
+  WITH MYSQL myConnection DO
+  
+  IF NEW order WHEN (order.status = "paid" AND order.total > 500) OR (order.vip IS NOT NULL) THEN
+      update order.total = order.total - (order.total * 0.1)
+      send order to action.notify
+  ELSE IF order.status = "pending"
+      log "Order is pending, no discount"
+  ELSE
+      send order to action.fulfillment
+  
+  IF UPDATE customer WHEN customer.email CONTAINS "gmail" THEN
+      update customer.segment = "gmail_user"
+  
+  IF UPDATE order WHEN order.country IN [ "US","CA" ] THEN
+      update order.tax = (order.total * 0.07)
+  `;
+  
+    const parsedRules = parser.parse(dslScript);
+    consolelog.log(JSON.stringify(parsedRules, null, 2));
+  }
+  

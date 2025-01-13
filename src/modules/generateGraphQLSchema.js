@@ -11,12 +11,6 @@ function printResolvers(resolvers) {
         });
     });
 }
-
-function getLastPartOfPath(fullPath) {
-    const parts = fullPath.split('/'); // Split by URL separator
-    return parts.pop() || fullPath; // Get the last part or empty string if no parts exist
-}
-
 // Utility to generate GraphQL schema and root resolvers from config
 function generateGraphQLSchema(config) {
     let schemaString = '';
@@ -24,17 +18,28 @@ function generateGraphQLSchema(config) {
     var selectFields = "";
     var getAllQuery = "";
     var getByIdQuery = "";
+    const tables = [];
 
     // Collect Query and Mutation fields
     const queryFields = [];
     const mutationFields = [];
 
+    try{
     config.forEach((endpoint) => {
-        if  (endpoint.dbType === "proxy" || endpoint.dbType === 'dynamic' || endpoint.cron === 'cron' || endpoint.authentication)  {
+        if  (endpoint.routeType !== 'database')  {
             return; // Skip this iteration
         }
 
         const { dbTable, allowRead, allowWrite } = endpoint;
+        if(tables.includes(dbTable)) {
+            return;
+        }
+        // test if table has allowRead if not skip
+        if (!allowRead) {
+            return;
+        }
+
+        tables.push(dbTable);
     
         // Generate type definition for the database table
         const typeName = dbTable.charAt(0).toUpperCase() + dbTable.slice(1);
@@ -80,7 +85,10 @@ function generateGraphQLSchema(config) {
             rootResolvers.Mutation[`create${typeName}`] = createMutationResolver(typeName, dbTable);
         }
     });
-    
+} catch (error) {   
+    console.error('Error in generateGraphQLSchema:', error.message);
+    throw new Error('Failed to generate GraphQL schema.');
+}
 
     if (queryFields.length > 0) {
         schemaString += `

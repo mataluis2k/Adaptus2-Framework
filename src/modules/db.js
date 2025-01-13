@@ -3,9 +3,12 @@ const mysql = require('mysql2/promise');
 const { Client } = require('pg');
 const { MongoClient, ObjectId } = require('mongodb');
 const snowflake = require('snowflake-sdk');
-
+const { globalContext } = require('./context'); // Import the shared globalContext
+const { getApiConfig } = require('./apiConfig');
+const response = require('./response'); // Import the shared response object
 
 const dbConnections = {};
+let isContextExtended = false; // Ensure extendContext is only called once
 
 
 async function getDbConnection(config) {
@@ -61,24 +64,55 @@ async function getDbConnection(config) {
         console.error(`Failed to connect to database (${dbType}):`, error.message);
         return null;
     }
-
+        // Extend globalContext after the first successful connection
+    if (!isContextExtended) {
+        extendContext();
+        isContextExtended = true; // Prevent multiple extensions
+    }
     return dbConnections[normalizedDbConnection];
 }
 
+function findDefUsersRoute(table) {
+    const apiConfig = getApiConfig();
+    return apiConfig.find(item => 
+      item.routeType === 'def' &&
+      item.dbTable === table
+    );
+  }
+  
 // CRUD Operations
 async function create(config, entity, data) {
-    const db = await getDbConnection(config);
-    const modelConfig = apiConfig[entity];
+
+    console.log('create', config, entity, data);
+    const db = await getDbConnection(config);    
+    const modelConfig = findDefUsersRoute(entity);
 
     if (!modelConfig) {
         throw new Error(`Entity ${entity} not defined in apiConfig.`);
     }
-
+  
+    console.log("Incoming data:", data);
+    if (typeof data !== "object" || data === null) {
+        try {
+            data = JSON.parse(JSON.parse(data)); // Only parse if `data` is a string
+        } catch (error) {
+            console.error("Error parsing data:", data, error);
+            throw new Error("Invalid input data: Must be a valid JSON object or string.");
+        }
+    }
     const allowedFields = modelConfig.allowWrite || [];
-    const validData = Object.keys(data)
-        .filter(key => allowedFields.includes(key))
-        .reduce((obj, key) => ({ ...obj, [key]: data[key] }), {});
 
+    console.log('allowedFields', allowedFields);
+   
+    const validData = {};
+
+    for (const key of allowedFields) {
+
+      if (data.hasOwnProperty(key)) { // Use hasOwnProperty for safety
+        validData[key] = data[key];
+      }
+    }
+    console.log('validData', validData);
     if (Object.keys(validData).length === 0) {
         throw new Error(`No valid fields to create for ${entity}.`);
     }
@@ -95,7 +129,8 @@ async function create(config, entity, data) {
 
                 const query = `INSERT INTO ${dbTable} (${keys}) VALUES (${placeholders})`;
                 const [result] = await db.execute(query, values);
-                return result;
+                response.setResponse(200, 'Record created successfully', '', result, 'create_record');
+                return response;
             }
             case 'mongodb': {
                 const collection = db.collection(dbTable);
@@ -118,16 +153,21 @@ async function create(config, entity, data) {
         }
     } catch (error) {
         console.error(`Error creating record in ${entity}:`, error.message);
-        throw error;
+        response.setResponse(500, 'Error creating record in ${entity}', error.message, {}, 'create_record');
+        return { error: error.message };
     }
 }
 
 async function update(config, entity, query, data) {
     const db = await getDbConnection(config);
-    const modelConfig = apiConfig[entity];
+    const modelConfig = findDefUsersRoute(entity);
 
     if (!modelConfig) {
         throw new Error(`Entity ${entity} not defined in apiConfig.`);
+    }
+    // Test if data is not JSON object and convert it to JSON object
+    if (typeof data !== 'object') {
+        data = JSON.parse(data);
     }
 
     const allowedFields = modelConfig.allowWrite || [];
@@ -186,12 +226,12 @@ async function update(config, entity, query, data) {
 
 async function read(config, entity, query) {
     const db = await getDbConnection(config);
-    const modelConfig = apiConfig[entity];
+    const modelConfig = findDefUsersRoute(entity);
 
     if (!modelConfig) {
         throw new Error(`Entity ${entity} not defined in apiConfig.`);
     }
-
+   
     const allowedFields = modelConfig.allowRead || [];
     const dbTable = modelConfig.dbTable || entity;
 
@@ -285,11 +325,12 @@ async function query(config, query, params = []) {
 
 async function deleteRecord(config, entity, query) {
     const db = await getDbConnection(config);
-    const modelConfig = apiConfig[entity];
+    const modelConfig = findDefUsersRoute(entity);
 
     if (!modelConfig) {
         throw new Error(`Entity ${entity} not defined in apiConfig.`);
     }
+    
 
     const primaryKey = modelConfig.keys[0]; // Assume the first key is the primary key
     const dbTable = modelConfig.dbTable || entity;
@@ -341,9 +382,9 @@ async function deleteRecord(config, entity, query) {
 function extendContext() {
     if (!globalContext.actions) globalContext.actions = {};
 
-    globalContext.actions.create = async (ctx, params) => {
-        const { entity, data } = params;
-        return await create(ctx.config, entity, data);
+    globalContext.actions.create_record = async (ctx, params) => {            
+        const { entity, data } = params;          
+        return await create(ctx.config, entity, data);      
     };
 
     globalContext.actions.read = async (ctx, params) => {

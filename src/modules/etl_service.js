@@ -1,8 +1,8 @@
 const fs = require('fs');
 const path = require('path');
 const { Worker } = require('worker_threads');
-const BusinessRules = require('./modules/business_rules');
-const { loadState, saveState, loadEtlConfig } = require('./modules/etl_module'); // Reuse ETL module functions
+const BusinessRules = require('./business_rules');
+const { loadState, saveState, loadEtlConfig } = require('./etl_module'); // Reuse ETL module functions
 
 // Execute a single ETL job in a worker thread
 function executeEtlJobInWorker(job, businessRules, state) {

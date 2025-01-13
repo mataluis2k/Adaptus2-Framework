@@ -1,6 +1,9 @@
 const { getDbConnection } = require('./db'); // Your database module
 const validationMiddleware = require('../middleware/validationMiddleware'); // Validation Middleware
 const BusinessLogicProcessor = require('./BusinessLogicProcessor'); // Business Logic Processor
+const consolelog = require('./logger');
+const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
+const responseBus = require('./response');
 
 class DynamicRouteHandler {
     /**
@@ -10,9 +13,23 @@ class DynamicRouteHandler {
      */
     static registerDynamicRoute(app, endpoint) {
         const { route, allowMethods, validation, sqlQuery, businessLogic, response } = endpoint;
+        consolelog.log("Dynaroute:", endpoint);
+
+        if (!Array.isArray(allowMethods) || allowMethods.length === 0) {
+            console.error(`Invalid or missing 'allowMethods' for route ${endpoint}`);
+            return; // Skip registering this route
+        }
 
         allowMethods.forEach((method) => {
             const middlewares = [];
+            // need to add the auth middleware here and acl middleware
+            if (endpoint.auth) {
+                middlewares.push(authenticateMiddleware(endpoint.auth));
+            }
+            if (endpoint.acl) {
+                middlewares.push(aclMiddleware(endpoint.acl));
+            }
+
 
             // Attach validation middleware if validation rules are defined
             if (validation) {
@@ -35,8 +52,7 @@ class DynamicRouteHandler {
 
                     // Execute SQL query if defined
                     if (sqlQuery) {
-                        endpoint.dbType = "mysql";
-                        console.log("DyanQuery:",endpoint);
+                        console.log("Dynaroute:", endpoint)
                         const dbConnection = await getDbConnection(endpoint);
                         const queryParams = Object.values(data);
                         const [queryResult] = await dbConnection.execute(sqlQuery, queryParams);
@@ -44,8 +60,11 @@ class DynamicRouteHandler {
                         return res.json({ message: 'SQL query executed successfully', result: queryResult });
                     }
 
-                    // Default response if no business logic or SQL is defined
-                    res.status(400).json({ error: 'No business logic or SQL query defined for this endpoint.' });
+                  
+                    const respond = res.status(responseBus.status).json({ message: responseBus.message, error: responseBus.error, data: responseBus.data, module: responseBus.module });
+                    responseBus.Reset();
+                    return respond;
+                  
                 } catch (error) {
                     console.error(`Error processing route ${route}:`, error.message);
                     res.status(500).json({ error: 'Internal Server Error', details: error.message });

@@ -1,3 +1,4 @@
+require ('dotenv').config();
 class Logger {
     constructor() {
         // Check if logging is enabled from the environment variable

@@ -1,7 +1,7 @@
 const jwt = require('jsonwebtoken');
 
 // Use the secret from your .env file
-const JWT_SECRET = 'mysecret';
+const JWT_SECRET = 'P0W3rS3cr3t';
 
 // Payload for the token
 const payload = {
@@ -10,6 +10,6 @@ const payload = {
 };
 
 // Generate a token
-const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '24h' });
+const token = jwt.sign(payload, JWT_SECRET, { expiresIn: '365d' });
 
 console.log("Your JWT Token:", token);

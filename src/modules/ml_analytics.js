@@ -22,13 +22,10 @@ class MLAnalytics {
      */
     loadConfig() {
         try {
-
-            console.log("mainConfigPath",this.mainConfigPath);
             // Load main server configuration
             const mainData = fs.readFileSync(this.mainConfigPath, 'utf-8');
             this.mainConfig = JSON.parse(mainData);
 
-            console.log("mlConfigPath",this.mlConfigPath);
             // Load ML-specific configuration
             const mlData = fs.readFileSync(this.mlConfigPath, 'utf-8');
             this.mlConfig = JSON.parse(mlData);

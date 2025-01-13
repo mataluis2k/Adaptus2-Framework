@@ -1,15 +1,25 @@
 {
-  "name": "opengraphapiserver",
+  "name": "adaptus2-framework",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "The Highly Scalable and Configurable API Framework for Node.js",
+  "private": false,  
+  "preferGlobal": true,   
+  "engines": {
+    "node": ">=18.18.0"
+  },
+  "bin": {    
+    "opengraphapi": "./cliClient.js",
+    "adaptus2": "./index.js"
+  },
+  "main": "index.js",           
   "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
+    "postinstall": "node install.js",
+    "start": "node index.js",
+    "dev": "nodemon index.js",
     "test": "jest"
   },
   "keywords": [],
-  "author": "",
+  "author": "Your Name",
   "license": "ISC",
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
@@ -32,6 +42,7 @@
     "fs": "^0.0.1-security",
     "graphql": "^16.9.0",
     "graphql-http": "^1.22.3",
+    "handlebars": "^4.7.8",
     "ioredis": "^5.4.1",
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
@@ -56,6 +67,7 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "stripe": "^17.4.0",
+    "uuid": "^11.0.3",
     "weaviate-client": "^3.2.5",
     "web-push": "^3.6.7"
   },

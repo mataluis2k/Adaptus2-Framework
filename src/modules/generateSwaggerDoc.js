@@ -23,7 +23,7 @@ function generateSwaggerDoc(apiConfig, outputFilePath) {
         paths: {}
     };
 
-    console.log(`API Config:`,apiConfig);
+    
     apiConfig.forEach(endpoint => {
         const { route, allowMethods = ["GET"], allowRead = [], allowWrite = [], columnDefinitions = {} } = endpoint;
         console.log(`First Endpoint:`,endpoint);

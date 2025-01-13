@@ -1,5 +1,11 @@
-[
+[ 
   {
+  "routeType": "static",
+  "route": "/img",
+  "folderPath": "/home/devops/Pictures"
+  },
+  {
+    "routeType":"database", 
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "dbTable": "users",
@@ -14,17 +20,206 @@
     "cache" : 0    
   },
   {
-    "dbType": "proxy",
+    "routeType":"proxy",    
     "route": "/proxy/search",
-    "method": "GET",
+    "allowMethods": ["GET"],
     "targetUrl": "https://www.google.com/search",
+    "auth": "token",
     "acl": ["publicAccess"],
     "queryMapping": {
         "q": "q"
     }
   },
   {
-    "dbType": "dynamic",
+    "routeType":"database",
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "events",
+    "route": "/api/trackevent",
+    "allowMethods": ["POST"],
+    "allowWrite": ["event_type", "user_id", "page_url", "event_data", "user_agent", "ip_address"],
+    "keys": ["id"],
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "event_type": "VARCHAR(255)",
+      "user_id": "VARCHAR(255)",
+      "page_url": "TEXT",
+      "user_agent": "TEXT",
+      "ip_address": "VARCHAR(255)",
+      "event_data": "JSON",
+      "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
+    }
+  },
+  {
+    "routeType":"database", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "video_catalog",
+    "route": "/api/videos",
+    "allowMethods": ["GET", "PATCH"],
+    "allowRead": ["videoID", "name", "description", "source", "filename", "hero"],    
+    "allowWrite": ["name", "description"],
+    "keys": ["videoID"],
+    "acl": ["publicAccess"],
+    "auth": "token"
+  },
+
+  {
+    "routeType":"fileUpload", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "uploads",
+    "route": "/api/upload",
+    "allowMethods": ["POST"],
+    "allowRead": ["id", "filename", "filepath", "filetype", "uploaded_by", "uploaded_at"],
+    "allowWrite": ["filename", "filepath", "filetype", "uploaded_by"],
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "auth": "token",
+    "fileUpload": {
+      "allowedFileTypes": [
+        "image/png",
+        "image/jpeg",
+        "application/pdf",
+        "video/mp4",
+        "video/x-msvideo",
+        "video/quicktime"
+      ], 
+      "storagePath": "./uploads" ,
+      "fieldName": "video"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "filename": "VARCHAR(255)",
+      "filepath": "TEXT",
+      "filetype": "VARCHAR(50)",
+      "uploaded_by": "VARCHAR(100)",
+      "uploaded_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
+    }
+  },  
+  {
+    "routeType":"proxy",    
+    "route": "/proxy/meals",
+    "allowMethods": ["GET"],
+    "targetUrl": "https://www.themealdb.com/api/json/v1/1/filter.php",
+    "auth": "token",
+    "acl": ["publicAccess"],
+    "queryMapping": {
+        "ingredient": "i"
+    },
+    "headers": {},
+    "cache": {
+        "enabled": true,
+        "ttl": 300
+    },
+    "responseMapping": {
+        "strMeal": "mealName",
+        "strMealThumb": "mealThumbnail",
+        "idMeal": "mealId"
+    }
+  },
+  {
+    "routeType":"database", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "articles",
+    "route": "/api/articles",
+    "allowMethods": ["GET", "POST", "PUT", "DELETE"],
+    "allowRead": ["id", "title", "content", "image_url", "author_id"],
+    "allowWrite": ["title", "content", "image_url"],
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "auth": "token",
+    "cache" : 0,
+    "mlmodel": ["sentiment","recommendation","anomaly","rag"],
+    "openGraphMapping": {
+      "og:title": "title",
+      "og:description": "content",
+      "og:image": "image_url",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "title": "VARCHAR(255)",
+      "content": "TEXT",
+      "image_url": "VARCHAR(255)",
+      "author_id": "INT"
+    },
+    "relationships": [
+      {
+        "type": "one-to-one",
+        "relatedTable": "authors",
+        "foreignKey": "author_id",
+        "relatedKey": "id",
+        "joinType": "LEFT JOIN",
+        "fields": ["name", "bio", "profile_image"]
+      }
+    ]
+  }
+  ,
+  {
+    "routeType":"database", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "products",
+    "route": "/api/products",
+    "allowRead": ["id", "product_name", "description", "image", "price", "category_id"],
+    "allowWrite": ["product_name", "description", "image", "price"],
+    "mlmodel": ["rag"],
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "auth": "token",
+    "openGraphMapping": {
+      "og:title": "product_name",
+      "og:description": "description",
+      "og:image": "image",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "product_name": "VARCHAR(255)",
+      "description": "TEXT",
+      "image": "VARCHAR(255)",
+      "price": "DECIMAL(10, 2)",
+      "category_id": "INT"
+    },
+    "relationships": [
+      {
+        "type": "one-to-many",
+        "relatedTable": "categories",
+        "foreignKey": "category_id",
+        "relatedKey": "id",
+        "joinType": "LEFT JOIN"
+      }
+    ]
+  },
+  {
+    "routeType":"database", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "authors",
+    "route": "/api/authors",
+    "allowRead": ["id", "name", "bio", "profile_image"],
+    "allowWrite": ["name", "bio", "profile_image"],
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "auth": "token",
+    "openGraphMapping": {
+      "og:title": "name",
+      "og:description": "bio",
+      "og:image": "profile_image",
+      "og:url": "id"
+    },
+    "columnDefinitions": {
+      "id": "INT PRIMARY KEY AUTO_INCREMENT",
+      "name": "VARCHAR(255)",
+      "bio": "TEXT",
+      "profile_image": "VARCHAR(255)"
+    }
+  },
+  {
+    "routeType":"dynamic",
+    "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "route": "/api/pending-messages",
     "allowMethods": ["GET"],
@@ -50,334 +245,52 @@
     "auth": "token",
     "cache": 0
   },
-  {
+  {  
+    "routeType":"dynamic",
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
-    "dbTable": "articles",
-    "route": "/api/articles",
-    "allowRead": [
-      "id",
-      "title",
-      "content",
-      "image_url",
-      "author_id"
-    ],
-    "allowWrite": [
-      "id",
-      "title",
-      "content",
-      "image_url",
-      "author_id"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "title": "String",
-      "content": "String",
-      "image_url": "String",
-      "author_id": "Int"
+    "route": "/api/register",
+    "allowMethods": ["POST"],
+    "validation": {
+      "username": { "isValidEmail": true },
+      "password": { "notEmpty": true, "minLength": 8 },
+      "country": { "isISO3166CountryCode": true }
+    },
+    "response": {
+      "fields": ["username", "uuid", "status", "firebase_user_token"]
     }
   },
   {
+    "routeType":"def", 
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
-    "dbTable": "authors",
-    "route": "/api/authors",
-    "allowRead": [
-      "id",
-      "name",
-      "bio",
-      "profile_image"
-    ],
-    "allowWrite": [
-      "id",
-      "name",
-      "bio",
-      "profile_image"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "name": "String",
-      "bio": "String",
-      "profile_image": "String"
-    }
+    "dbTable": "users",            
+    "encryption": "sha256",
+    "allowWrite": ["username", "password", "acl"],    
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "cache" : 0    
   },
   {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "categories",
-    "route": "/api/categories",
-    "allowRead": [
-      "id",
-      "category_name"
-    ],
-    "allowWrite": [
-      "id",
-      "category_name"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "category_name": "String"
-    }
-  },
-  {
+    "routeType": "def",
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "dbTable": "listprice",
-    "route": "/api/listprice",
-    "allowRead": [
-      "id",
-      "product_name",
-      "description",
-      "image",
-      "price",
-      "category_id",
-      "discount",
-      "tax",
-      "updated_at"
-    ],
-    "allowWrite": [
-      "id",
-      "product_name",
-      "description",
-      "image",
-      "price",
-      "category_id",
-      "discount",
-      "tax",
-      "updated_at"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
+    "allowWrite": ["product_name", "description", "image", "price", "category_id", "discount", "tax"],
+    "allowRead": ["id", "product_name", "description", "image", "price", "category_id", "discount", "tax", "updated_at"],
+    "keys": ["id"],
+    "acl": ["publicAccess"],
+    "cache": 0,
     "columnDefinitions": {
-      "id": "Int",
-      "product_name": "String",
-      "description": "String",
-      "image": "String",
-      "price": "String",
-      "category_id": "Int",
-      "discount": "Int",
-      "tax": "Int",
-      "updated_at": "String"
+        "id": "INT NOT NULL AUTO_INCREMENT PRIMARY KEY",
+        "product_name": "VARCHAR(255) NOT NULL",
+        "description": "TEXT",
+        "image": "VARCHAR(255) DEFAULT NULL",
+        "price": "DECIMAL(10,2) NOT NULL",
+        "category_id": "INT NOT NULL",
+        "discount": "INT DEFAULT 0",
+        "tax": "INT DEFAULT 0",
+        "updated_at": "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
     }
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "messages",
-    "route": "/api/messages",
-    "allowRead": [
-      "id",
-      "sender_id",
-      "recipient_id",
-      "group_name",
-      "message",
-      "status",
-      "timestamp"
-    ],
-    "allowWrite": [
-      "id",
-      "sender_id",
-      "recipient_id",
-      "group_name",
-      "message",
-      "status",
-      "timestamp"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "sender_id": "String",
-      "recipient_id": "String",
-      "group_name": "String",
-      "message": "String",
-      "status": "String",
-      "timestamp": "String"
-    }
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "products",
-    "route": "/api/products",
-    "allowRead": [
-      "id",
-      "product_name",
-      "description",
-      "image",
-      "price",
-      "category_id"
-    ],
-    "allowWrite": [
-      "id",
-      "product_name",
-      "description",
-      "image",
-      "price",
-      "category_id"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "product_name": "String",
-      "description": "String",
-      "image": "String",
-      "price": "String",
-      "category_id": "Int"
-    }
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "uploads",
-    "route": "/api/uploads",
-    "allowRead": [
-      "id",
-      "filename",
-      "filepath",
-      "filetype",
-      "uploaded_by",
-      "uploaded_at"
-    ],
-    "allowWrite": [
-      "id",
-      "filename",
-      "filepath",
-      "filetype",
-      "uploaded_by",
-      "uploaded_at"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "filename": "String",
-      "filepath": "String",
-      "filetype": "String",
-      "uploaded_by": "String",
-      "uploaded_at": "String"
-    }
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "users",
-    "route": "/api/users",
-    "allowRead": [
-      "id",
-      "username",
-      "password",
-      "acl",
-      "created_at",
-      "updated_at"
-    ],
-    "allowWrite": [
-      "id",
-      "username",
-      "password",
-      "acl",
-      "created_at",
-      "updated_at"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "id": "Int",
-      "username": "String",
-      "password": "String",
-      "acl": "String",
-      "created_at": "String",
-      "updated_at": "String"
-    }
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "video_catalog",
-    "route": "/api/video_catalog",
-    "allowRead": [
-      "videoID",
-      "name",
-      "description",
-      "source",
-      "filename",
-      "created_at",
-      "updated_at",
-      "hls"
-    ],
-    "allowWrite": [
-      "videoID",
-      "name",
-      "description",
-      "source",
-      "filename",
-      "created_at",
-      "updated_at",
-      "hls"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "videoID": "String",
-      "name": "String",
-      "description": "String",
-      "source": "String",
-      "filename": "String",
-      "created_at": "String",
-      "updated_at": "String",
-      "hls": "String"
-    }
-  }
+}
 ]

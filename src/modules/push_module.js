@@ -1,6 +1,7 @@
 const webpush = require("web-push");
 const admin = require("firebase-admin");
 const bodyParser = require("body-parser");
+const globalContext = require('./context'); // Import the shared globalContext
 
 class PushNotification {
     constructor(app, fcmConfig, vapidKeys, dbConfig) {

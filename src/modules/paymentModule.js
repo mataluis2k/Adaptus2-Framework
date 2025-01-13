@@ -1,4 +1,5 @@
 const PaymentTransport = require('../transports/PaymentTransport');
+const globalContext = require('./context'); // Import the shared globalContext
 
 class PaymentModule {
     constructor(config, dbConfig) {
