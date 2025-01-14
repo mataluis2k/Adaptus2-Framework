@@ -2,6 +2,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "articles",
     "route": "/api/articles",
     "allowRead": [
@@ -18,7 +19,6 @@
       "image_url",
       "author_id"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -36,6 +36,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "authors",
     "route": "/api/authors",
     "allowRead": [
@@ -50,7 +51,6 @@
       "bio",
       "profile_image"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -67,6 +67,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "categories",
     "route": "/api/categories",
     "allowRead": [
@@ -77,7 +78,6 @@
       "id",
       "category_name"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -92,6 +92,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "events",
     "route": "/api/events",
     "allowRead": [
@@ -114,7 +115,6 @@
       "event_data",
       "created_at"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -135,6 +135,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "listprice",
     "route": "/api/listprice",
     "allowRead": [
@@ -159,7 +160,6 @@
       "tax",
       "updated_at"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -181,6 +181,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "messages",
     "route": "/api/messages",
     "allowRead": [
@@ -201,7 +202,6 @@
       "status",
       "timestamp"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -221,6 +221,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "products",
     "route": "/api/products",
     "allowRead": [
@@ -241,7 +242,6 @@
       "category_id",
       "updated_at"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -261,6 +261,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "uploads",
     "route": "/api/uploads",
     "allowRead": [
@@ -279,7 +280,6 @@
       "uploaded_by",
       "uploaded_at"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -298,6 +298,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "users",
     "route": "/api/users",
     "allowRead": [
@@ -316,7 +317,6 @@
       "created_at",
       "updated_at"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
@@ -335,6 +335,7 @@
   {
     "routeType": "database",
     "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
     "dbTable": "video_catalog",
     "route": "/api/video_catalog",
     "allowRead": [

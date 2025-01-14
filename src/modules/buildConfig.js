@@ -111,12 +111,11 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
     return {
         routeType,
         dbType,
-        dbConnection: process.env.DEFAUL_DBCONNECTION,
+        dbConnection: process.env.DEFAULT_DBCONNECTION,
         dbTable: tableName,
         route: `/api/${tableName}`,
         allowRead,
         allowWrite,
-        acl,
         allowedMethods,
         columnDefinitions,
     };

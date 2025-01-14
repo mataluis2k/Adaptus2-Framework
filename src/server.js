@@ -452,7 +452,12 @@ const registerFileUploadEndpoint = (app, config) => {
 
 function registerRoutes(app, apiConfig) {
     apiConfig.forEach((endpoint, index) => {
-        const {  route, dbTable, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache , auth, authentication, encryption} = endpoint;
+        const {  route, dbTable, dbConnection, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache , auth, authentication, encryption} = endpoint;
+        // if dbConnection is not defined, or dbTable is not defined, skip this endpoint
+        if (!dbConnection || !dbTable) {
+            console.log(`Skipping endpoint at index ${index}: dbConnection and dbTable are required.`);  
+            return;
+        }
         consolelog.log(endpoint);
         // Default to all methods if `allowMethods` is not specified
         const allowedMethods = allowMethods || ["GET", "POST", "PUT", "DELETE", "PATCH"];
@@ -539,89 +544,113 @@ function registerRoutes(app, apiConfig) {
 
 
         // GET Endpoint with Redis Caching
-        app.get(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
-            try {
-                const connection = await getDbConnection(endpoint);
-                if (!connection) {
-                    return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-                }
-        
-                // Extract pagination parameters with defaults
-                const limit = parseInt(req.query.limit, 10) || 20; // Default 20 records per page
-                const offset = parseInt(req.query.offset, 10) || 0; // Default start at the first record
-        
-                // Check for negative values
-                if (limit < 0 || offset < 0) {
-                    return res.status(400).json({ error: "Limit and offset must be non-negative integers" });
-                }
-        
-                // Determine requested columns
-                const requestedFields = req.query.fields
-                    ? req.query.fields.split(',').filter((field) => allowRead.includes(field))
-                    : allowRead;
-        
-                if (requestedFields.length === 0) {
-                    return res.status(400).json({ error: 'Invalid or no fields requested' });
-                }
-        
-                const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(', ');
-        
-                // Handle relationships
-                let joinClause = '';
-                let relatedFields = '';
-                if (relationships && Array.isArray(relationships)) {
-                    relationships.forEach((rel) => {
-                        joinClause += ` ${rel.joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
-                        if (rel.fields && Array.isArray(rel.fields)) {
-                            relatedFields += rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(', ');
-                        }
-                    });
-                }
-        
-                const queryFields = relatedFields ? `${fields}, ${relatedFields}` : fields;
-        
-                // Construct WHERE clause from keys
-                let whereClause = '';
-                let params = [];
-                if (keys && keys.length > 0) {
-                    const queryKeys = keys.filter((key) => req.query[key] !== undefined);
-                    if (queryKeys.length > 0) {
-                        whereClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(' AND ');
-                        params = queryKeys.map((key) => req.query[key]);
+    // GET Endpoint with Redis Caching
+app.get(route, cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+    try {
+        console.log('Incoming GET request:', {
+            route,
+            query: req.query,
+        });
+
+        const connection = await getDbConnection(endpoint);
+        if (!connection) {
+            console.error(`Database connection failed for ${endpoint.dbConnection}`);
+            return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
+        }
+
+        // Extract pagination parameters with defaults
+        const limit = parseInt(req.query.limit, 10) || 20; // Default 20 records per page
+        const offset = parseInt(req.query.offset, 10) || 0; // Default start at the first record
+
+        // Check for negative values
+        if (limit < 0 || offset < 0) {
+            console.error('Invalid pagination parameters:', { limit, offset });
+            return res.status(400).json({ error: "Limit and offset must be non-negative integers" });
+        }
+
+        // Determine requested columns
+        if (req.query.fields && typeof req.query.fields !== 'string') {
+            console.error('Invalid fields parameter type:', typeof req.query.fields);
+            return res.status(400).json({ error: 'Invalid fields parameter. Expected a comma-separated string.' });
+        }
+
+        const requestedFields = req.query.fields
+            ? req.query.fields.split(',').filter((field) => allowRead.includes(field))
+            : allowRead || [];
+
+        if (!Array.isArray(requestedFields) || requestedFields.length === 0) {
+            console.error('No valid fields requested:', req.query.fields);
+            return res.status(400).json({ error: 'Invalid or no fields requested' });
+        }
+
+        const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(', ');
+
+        // Handle relationships
+        let joinClause = '';
+        let relatedFields = '';
+        if (relationships && Array.isArray(relationships)) {
+            relationships.forEach((rel) => {
+                if (!rel.relatedTable || !rel.foreignKey || !rel.relatedKey) {
+                    console.warn('Invalid relationship configuration:', rel);
+                } else {
+                    joinClause += ` ${rel.joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
+                    if (rel.fields && Array.isArray(rel.fields)) {
+                        relatedFields += rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(', ');
                     }
                 }
-        
-                // Query to get the total record count
-                const countQuery = `SELECT COUNT(*) as totalCount FROM ${dbTable} ${whereClause ? `WHERE ${whereClause}` : ''}`;
-                const [countResult] = await connection.execute(countQuery, params);
-                const totalCount = countResult[0].totalCount;
-                console.log(`Total records: ${totalCount}`);
-                // Query to fetch paginated data
-                const query = `
-                    SELECT ${queryFields}
-                    FROM ${dbTable}
-                    ${joinClause}
-                    ${whereClause ? `WHERE ${whereClause}` : ''}
-                    LIMIT ${limit}
-                    OFFSET ${offset}
-                `;             
-                const [results] = await connection.execute(query, params);
-        
-                // Return paginated data along with metadata
-                res.json({
-                    data: results,
-                    metadata: {
-                        totalRecords: totalCount,
-                        limit,
-                        offset,
-                        totalPages: Math.ceil(totalCount / limit),
-                    },
-                });
-            } catch (error) {
-                console.error(`Error in GET ${route}:`, error.message);
-                res.status(500).json({ error: error.message });
+            });
+        }
+
+        const queryFields = relatedFields ? `${fields}, ${relatedFields}` : fields;
+
+        // Construct WHERE clause from keys
+        let whereClause = '';
+        let params = [];
+        if (keys && Array.isArray(keys) && keys.length > 0) {
+            const queryKeys = keys.filter((key) => req.query[key] !== undefined);
+            if (queryKeys.length > 0) {
+                whereClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(' AND ');
+                params = queryKeys.map((key) => req.query[key]);
             }
+        }
+
+        // Query to get the total record count
+        const countQuery = `SELECT COUNT(*) as totalCount FROM ${dbTable} ${whereClause ? `WHERE ${whereClause}` : ''}`;
+        console.log('Count query:', countQuery, 'Params:', params);
+
+        const [countResult] = await connection.execute(countQuery, params);
+        const totalCount = countResult[0]?.totalCount || 0;
+        console.log(`Total records: ${totalCount}`);
+
+        // Query to fetch paginated data
+        const query = `
+            SELECT ${queryFields}
+            FROM ${dbTable}
+            ${joinClause}
+            ${whereClause ? `WHERE ${whereClause}` : ''}
+            LIMIT ${limit}
+            OFFSET ${offset}
+        `;
+        console.log('Data query:', query, 'Params:', params);
+
+        const [results] = await connection.execute(query, params);
+
+        // Return paginated data along with metadata
+        res.json({
+            data: results,
+            metadata: {
+                totalRecords: totalCount,
+                limit,
+                offset,
+                totalPages: Math.ceil(totalCount / limit),
+            },
         });
+    } catch (error) {
+        console.error(`Error in GET ${route}:`, error.stack); // Log stack trace for debugging
+        res.status(500).json({ error: error.message });
+    }
+});
+
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {

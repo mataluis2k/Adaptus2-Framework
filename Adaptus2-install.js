@@ -137,6 +137,34 @@ const defaultConfig = {
   SERVER_ROLE: "MASTER"
 };
 
+
+function verifyAndCreateConfigDir(configDir) {
+  if (!fs.existsSync(configDir)) {
+    console.log("Config directory does not exist. Creating: ${configDir}");
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+
+  const businessRulesPath = path.join(configDir, 'businessRules.dsl');
+  if (!fs.existsSync(businessRulesPath)) {
+    console.log("Creating empty file: ${businessRulesPath}");
+    fs.writeFileSync(businessRulesPath, '');
+  }
+
+  const mlConfigPath = path.join(configDir, 'mlConfig.json');
+  if (!fs.existsSync(mlConfigPath)) {
+    console.log("Creating default ML config file: ${mlConfigPath}");
+    const mlConfig = {
+      default: {
+        batchSize: 1000,
+        samplingRate: 1,
+        parallelProcessing: false,
+        incrementalTraining: false,
+      },
+    };
+    fs.writeFileSync(mlConfigPath, JSON.stringify(mlConfig, null, 2));
+  }
+}
+
 function prompt(question, defaultValue = "") {
   const rl = readline.createInterface({
     input: process.stdin,
@@ -165,6 +193,9 @@ async function configureGroup(groupName, keys, config) {
   for (const key of keys) {
     const currentValue = config[key] || "";
     config[key] = await prompt(`Set value for ${key}`, currentValue);
+    if (key === "CONFIG_DIR") {
+      verifyAndCreateConfigDir(config[key]);
+    }
   }
 }
 
