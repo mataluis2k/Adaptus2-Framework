@@ -1033,6 +1033,20 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "listPlugins":
+                            try {
+                                const plugins = fs.readdirSync(this.pluginDir)
+                                    .filter(file => file.endsWith('.js')) // Only include JavaScript files
+                                    .map(file => path.basename(file, '.js')); // Remove file extension
+                                if (plugins.length === 0) {
+                                    socket.write("No plugins found in the plugins folder.\n");
+                                } else {
+                                    socket.write(`Available plugins:\n${plugins.join("\n")}\n`);
+                                }
+                            } catch (err) {
+                                socket.write(`Error reading plugins folder: ${err.message}\n`);
+                            }
+                            break;
                         case "listActions":
                             // Fetch and display all actions from globalContext.actions
                             const actions = Object.keys(globalContext.actions);

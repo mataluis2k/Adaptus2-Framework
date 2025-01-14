@@ -1,5 +1,5 @@
-const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
-const { globalContext } = require('../modules/context'); // Import the shared globalContext
+const { authenticateMiddleware, aclMiddleware } = require('../src/middleware/authenticationMiddleware');
+const { globalContext } = require('../src/modules/context'); // Import the shared globalContext
 const axios = require('axios');
 
 module.exports = {

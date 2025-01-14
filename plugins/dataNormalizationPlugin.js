@@ -1,4 +1,4 @@
-const { globalContext } = require('../modules/context'); // Import shared globalContext
+const { globalContext } = require('../src/modules/context'); // Import shared globalContext
 const { scale, oneHotEncode } = require('../utils/normalizationUtils'); // Custom utility functions for scaling and encoding
 
 module.exports = {

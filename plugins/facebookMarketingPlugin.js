@@ -1,6 +1,6 @@
 require('dotenv').config(); // Ensure environment variables are loaded
 
-const UniversalApiClient = require('../modules/UniversalApiClient');
+const UniversalApiClient = require('../src/modules/UniversalApiClient');
 
 module.exports = {
     name: 'facebookMarketingPlugin',

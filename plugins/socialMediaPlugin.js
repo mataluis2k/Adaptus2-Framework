@@ -2,7 +2,7 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const FacebookStrategy = require('passport-facebook').Strategy;
 const session = require('express-session');
-const { globalContext } = require('../modules/context'); // Import shared globalContext
+const { globalContext } = require('../src/modules/context'); // Import shared globalContext
 
 module.exports = {
     name: 'socialLoginPlugin',

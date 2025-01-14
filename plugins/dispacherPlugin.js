@@ -8,11 +8,11 @@
 // 4. It should cache the render pages in redis for 5 minutes.
 // 5. The plugin should have a method to clear the cache.
 
-const { getDbConnection } = require('./db'); // Your database module
-const consolelog = require('./logger');
-const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
-const response = require('../modules/response');
-const { RuleEngine } = require('./ruleEngine');
+const { getDbConnection } = require('../src/modules/db'); // Your database module
+const consolelog = require('../src/modules/logger');
+const { authenticateMiddleware, aclMiddleware } = require('../src/middleware/authenticationMiddleware');
+const response = require('../src/modules/response');
+const { RuleEngine } = require('../src/modules/ruleEngine');
 const path = require('path');
 const handlebars = require('handlebars');
 const redis = require('redis');
