@@ -4,6 +4,7 @@ const consolelog = require('./logger');
 const DSLParser = require('./dslparser');
 // Define sha256 function in the global scope
 const crypto = require('crypto');
+const { getApiConfig } = require('./apiConfig');
 const { getContext, globalContext  } = require('./context'); // Shared global context
 global.sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 global.bcrypt = (value) => crypto.createHash('bcrypt').update(value).digest('hex');

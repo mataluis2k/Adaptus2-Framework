@@ -1,296 +1,170 @@
-[ 
+[
   {
-  "routeType": "static",
-  "route": "/img",
-  "folderPath": "/home/devops/Pictures"
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "routeType": "database",
+    "dbTable": "articles",
+    "route": "/api/articles",
+    "allowRead": [
+      "article_id",
+      "title",
+      "author",
+      "publication_date",
+      "content",
+      "category",
+      "tags"
+    ],
+    "allowWrite": [
+      "article_id",
+      "title",
+      "author",
+      "publication_date",
+      "content",
+      "category",
+      "tags"
+    ],
+    "allowedMethods": [
+      "GET",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "article_id": "Int",
+      "title": "String",
+      "author": "String",
+      "publication_date": "String",
+      "content": "String",
+      "category": "String",
+      "tags": "String"
+    }
   },
   {
-    "routeType":"database", 
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "orders",
+    "routeType": "database",
+    "route": "/api/orders",
+    "allowRead": [
+      "order_id",
+      "user_id",
+      "order_date",
+      "total_amount",
+      "payment_method",
+      "shipping_address",
+      "shipping_city",
+      "shipping_state",
+      "shipping_zip_code",
+      "shipping_country",
+      "order_status"
+    ],
+    "allowWrite": [
+      "order_id",
+      "user_id",
+      "order_date",
+      "total_amount",
+      "payment_method",
+      "shipping_address",
+      "shipping_city",
+      "shipping_state",
+      "shipping_zip_code",
+      "shipping_country",
+      "order_status"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "order_id": "Int",
+      "user_id": "Int",
+      "order_date": "String",
+      "total_amount": "String",
+      "payment_method": "String",
+      "shipping_address": "String",
+      "shipping_city": "String",
+      "shipping_state": "String",
+      "shipping_zip_code": "String",
+      "shipping_country": "String",
+      "order_status": "String"
+    }
+  },
+  {
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "dbTable": "users",
-    "auth": "username",
-    "allowMethods": ["POST"],
-    "authentication": "password",
-    "encryption": "sha256",
-    "allowRead": ["id", "username", "password", "acl"],
-    "route": "/api/login",
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "cache" : 0    
-  },
-  {
-    "routeType":"proxy",    
-    "route": "/proxy/search",
-    "allowMethods": ["GET"],
-    "targetUrl": "https://www.google.com/search",
-    "auth": "token",
-    "acl": ["publicAccess"],
-    "queryMapping": {
-        "q": "q"
+    "routeType": "database",
+    "route": "/api/users",
+    "allowRead": [
+      "user_id",
+      "first_name",
+      "last_name",
+      "email",
+      "date_of_birth",
+      "address",
+      "city",
+      "state",
+      "zip_code",
+      "country",
+      "phone_number",
+      "registration_date"
+    ],
+    "allowWrite": [
+      "user_id",
+      "first_name",
+      "last_name",
+      "email",
+      "date_of_birth",
+      "address",
+      "city",
+      "state",
+      "zip_code",
+      "country",
+      "phone_number",
+      "registration_date"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "user_id": "Int",
+      "first_name": "String",
+      "last_name": "String",
+      "email": "String",
+      "date_of_birth": "String",
+      "address": "String",
+      "city": "String",
+      "state": "String",
+      "zip_code": "String",
+      "country": "String",
+      "phone_number": "String",
+      "registration_date": "String"
     }
   },
   {
-    "routeType":"database",
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "events",
-    "route": "/api/trackevent",
-    "allowMethods": ["POST"],
-    "allowWrite": ["event_type", "user_id", "page_url", "event_data", "user_agent", "ip_address"],
-    "keys": ["id"],
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "event_type": "VARCHAR(255)",
-      "user_id": "VARCHAR(255)",
-      "page_url": "TEXT",
-      "user_agent": "TEXT",
-      "ip_address": "VARCHAR(255)",
-      "event_data": "JSON",
-      "created_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
-    }
-  },
-  {
-    "routeType":"database", 
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "video_catalog",
-    "route": "/api/videos",
-    "allowMethods": ["GET", "PATCH"],
-    "allowRead": ["videoID", "name", "description", "source", "filename", "hero"],    
-    "allowWrite": ["name", "description"],
-    "keys": ["videoID"],
-    "acl": ["publicAccess"],
-    "auth": "token"
-  },
-
-  {
-    "routeType":"fileUpload", 
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "uploads",
-    "route": "/api/upload",
-    "allowMethods": ["POST"],
-    "allowRead": ["id", "filename", "filepath", "filetype", "uploaded_by", "uploaded_at"],
-    "allowWrite": ["filename", "filepath", "filetype", "uploaded_by"],
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "auth": "token",
-    "fileUpload": {
-      "allowedFileTypes": [
-        "image/png",
-        "image/jpeg",
-        "application/pdf",
-        "video/mp4",
-        "video/x-msvideo",
-        "video/quicktime"
-      ], 
-      "storagePath": "./uploads" ,
-      "fieldName": "video"
-    },
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "filename": "VARCHAR(255)",
-      "filepath": "TEXT",
-      "filetype": "VARCHAR(50)",
-      "uploaded_by": "VARCHAR(100)",
-      "uploaded_at": "DATETIME DEFAULT CURRENT_TIMESTAMP"
-    }
-  },  
-  {
-    "routeType":"proxy",    
-    "route": "/proxy/meals",
-    "allowMethods": ["GET"],
-    "targetUrl": "https://www.themealdb.com/api/json/v1/1/filter.php",
-    "auth": "token",
-    "acl": ["publicAccess"],
-    "queryMapping": {
-        "ingredient": "i"
-    },
-    "headers": {},
-    "cache": {
-        "enabled": true,
-        "ttl": 300
-    },
-    "responseMapping": {
-        "strMeal": "mealName",
-        "strMealThumb": "mealThumbnail",
-        "idMeal": "mealId"
-    }
-  },
-  {
-    "routeType":"database", 
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "articles",
-    "route": "/api/articles",
-    "allowMethods": ["GET", "POST", "PUT", "DELETE"],
-    "allowRead": ["id", "title", "content", "image_url", "author_id"],
-    "allowWrite": ["title", "content", "image_url"],
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "auth": "token",
-    "cache" : 0,
-    "mlmodel": ["sentiment","recommendation","anomaly","rag"],
-    "openGraphMapping": {
-      "og:title": "title",
-      "og:description": "content",
-      "og:image": "image_url",
-      "og:url": "id"
-    },
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "title": "VARCHAR(255)",
-      "content": "TEXT",
-      "image_url": "VARCHAR(255)",
-      "author_id": "INT"
-    },
-    "relationships": [
-      {
-        "type": "one-to-one",
-        "relatedTable": "authors",
-        "foreignKey": "author_id",
-        "relatedKey": "id",
-        "joinType": "LEFT JOIN",
-        "fields": ["name", "bio", "profile_image"]
-      }
-    ]
-  }
-  ,
-  {
-    "routeType":"database", 
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "products",
-    "route": "/api/products",
-    "allowRead": ["id", "product_name", "description", "image", "price", "category_id"],
-    "allowWrite": ["product_name", "description", "image", "price"],
-    "mlmodel": ["rag"],
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "auth": "token",
-    "openGraphMapping": {
-      "og:title": "product_name",
-      "og:description": "description",
-      "og:image": "image",
-      "og:url": "id"
-    },
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "product_name": "VARCHAR(255)",
-      "description": "TEXT",
-      "image": "VARCHAR(255)",
-      "price": "DECIMAL(10, 2)",
-      "category_id": "INT"
-    },
-    "relationships": [
-      {
-        "type": "one-to-many",
-        "relatedTable": "categories",
-        "foreignKey": "category_id",
-        "relatedKey": "id",
-        "joinType": "LEFT JOIN"
-      }
-    ]
-  },
-  {
-    "routeType":"database", 
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "authors",
-    "route": "/api/authors",
-    "allowRead": ["id", "name", "bio", "profile_image"],
-    "allowWrite": ["name", "bio", "profile_image"],
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "auth": "token",
-    "openGraphMapping": {
-      "og:title": "name",
-      "og:description": "bio",
-      "og:image": "profile_image",
-      "og:url": "id"
-    },
-    "columnDefinitions": {
-      "id": "INT PRIMARY KEY AUTO_INCREMENT",
-      "name": "VARCHAR(255)",
-      "bio": "TEXT",
-      "profile_image": "VARCHAR(255)"
-    }
-  },
-  {
-    "routeType":"dynamic",
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "route": "/api/pending-messages",
-    "allowMethods": ["GET"],
-    "sqlQuery": "SELECT m.id, m.sender_id, m.message, m.timestamp FROM messages m INNER JOIN users u ON m.recipient_id = u.username WHERE u.username = ? AND m.status = 'pending'",
-    "validation": {
-      "username": {
-        "notEmpty": true,
-        "errorCodes": {
-          "httpCode": 400,
-          "code": [1001]  
-        }
-      }
-    },
-    "response": {
-      "fields": [
-        "id",
-        "sender_id",
-        "message",
-        "timestamp"
-      ]
-    },
-    "acl": ["publicAccess"],
-    "auth": "token",
-    "cache": 0
-  },
-  {  
-    "routeType":"dynamic",
+    "routeType": "dynamic",
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
     "route": "/api/register",
-    "allowMethods": ["POST"],
-    "validation": {
-      "username": { "isValidEmail": true },
-      "password": { "notEmpty": true, "minLength": 8 },
-      "country": { "isISO3166CountryCode": true }
-    },
-    "response": {
-      "fields": ["username", "uuid", "status", "firebase_user_token"]
-    }
+    "allowMethods": [
+      "POST"
+    ]
   },
   {
-    "routeType":"def", 
     "dbType": "mysql",
     "dbConnection": "MYSQL_1",
-    "dbTable": "users",            
-    "encryption": "sha256",
-    "allowWrite": ["username", "password", "acl"],    
-    "keys": ["id"],
+    "routeType": "dynamic",
+    "route": "/api/makedata",
+    "auth": "token",
     "acl": ["publicAccess"],
-    "cache" : 0    
-  },
-  {
-    "routeType": "def",
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "listprice",
-    "allowWrite": ["product_name", "description", "image", "price", "category_id", "discount", "tax"],
-    "allowRead": ["id", "product_name", "description", "image", "price", "category_id", "discount", "tax", "updated_at"],
-    "keys": ["id"],
-    "acl": ["publicAccess"],
-    "cache": 0,
-    "columnDefinitions": {
-        "id": "INT NOT NULL AUTO_INCREMENT PRIMARY KEY",
-        "product_name": "VARCHAR(255) NOT NULL",
-        "description": "TEXT",
-        "image": "VARCHAR(255) DEFAULT NULL",
-        "price": "DECIMAL(10,2) NOT NULL",
-        "category_id": "INT NOT NULL",
-        "discount": "INT DEFAULT 0",
-        "tax": "INT DEFAULT 0",
-        "updated_at": "TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP"
-    }
-}
+    "allowedMethods": [
+      "POST"
+    ]
+  }
 ]

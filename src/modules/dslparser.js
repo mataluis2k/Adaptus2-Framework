@@ -59,9 +59,18 @@ class DSLParser {
         return [];
       }
   
+      if (!this._containsWithClause(lines)) {
+        throw new Error(
+          `DSL must contain at least one "WITH <DB> <CONNECTION> DO" block to specify the database connection.`
+        );
+      }
+
       return this._parseRules(lines);
     }
   
+    _containsWithClause(lines) {
+      return lines.some((line) => line.toUpperCase().startsWith(this.keywords.WITH));
+    }
     /**
      * Parse multiple rules in a DSL script. 
      * Supports "WITH <DB> <CONNECTION> DO" blocks, 
