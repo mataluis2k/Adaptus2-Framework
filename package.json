@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.5.1",
+  "version": "2.0.6",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,  
   "preferGlobal": true,   
@@ -8,7 +8,7 @@
     "node": ">=18.18.0"
   },
   "bin": {    
-    "opengraphapi": "./cliClient.js",
+    "adaptus-cli": "./cliClient.js",
     "adaptus2": "./index.js",
     "adaptus2-setup": "./Adaptus2-install.js"
   },        

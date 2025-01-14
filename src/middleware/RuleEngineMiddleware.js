@@ -35,7 +35,7 @@ class RuleEngineMiddleware {
             if (!hasRules) {
                 console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
                 return next();
-            }
+            }else {
 
             const globalContext = this.dependencyManager.context; // Access globalContext from DependencyManager
 
@@ -68,10 +68,30 @@ class RuleEngineMiddleware {
 
                 res.send = async (data) => {
                     try {
-                        const parsedData = typeof data === 'string' ? JSON.parse(data) : data;
-                        console.log(`Processing outbound ${eventType} on ${entityName} with data:`, parsedData.data);
-
-                       await this.ruleEngine.processEvent(eventType, entityName, parsedData.data, {
+                        // Parse response data if it's a string; handle invalid JSON gracefully
+                        let parsedData;
+                        try {
+                            parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+                        } catch (parseError) {
+                            console.warn(`Failed to parse response data for ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Ensure parsedData exists and has a `data` field
+                        if (!parsedData || !parsedData.data) {
+                            console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Check if rules exist for the entity
+                        const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
+                        if (!hasRules) {
+                            console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Process rules
+                        await this.ruleEngine.processEvent(eventType, entityName, parsedData.data, {
                             ...globalContext, // Merge globalContext into the rule processing context
                             actions: {
                                 ...globalContext.actions, // Use global actions
@@ -80,17 +100,19 @@ class RuleEngineMiddleware {
                                 },
                             },
                         });
-
+                
+                        // Send the modified response
                         originalSend.call(res, JSON.stringify(parsedData));
                     } catch (err) {
-                        console.error(`Error processing outbound ${eventType} rules:`, err.message);
-                        originalSend.call(res, data); // Fallback to original data if processing fails
+                        console.error(`Error processing outbound ${eventType} rules for entity: ${entityName}:`, err.message);
+                        // Fallback to original response if processing fails
+                        originalSend.call(res, data);
                     }
                 };
             } else {
                 console.log(`No rule processing required for ${eventType} on ${entityName}`);
             }
-
+            }
             next();
         };
     }

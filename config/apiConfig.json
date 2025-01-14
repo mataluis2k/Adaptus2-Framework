@@ -1,177 +1,41 @@
 [
   {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "routeType": "database",
+    "dbType": "mysql",
     "dbTable": "articles",
     "route": "/api/articles",
     "allowRead": [
-      "article_id",
+      "id",
       "title",
-      "author",
-      "publication_date",
       "content",
-      "category",
-      "tags"
+      "image_url",
+      "author_id"
     ],
     "allowWrite": [
-      "article_id",
+      "id",
       "title",
-      "author",
-      "publication_date",
       "content",
-      "category",
-      "tags"
+      "image_url",
+      "author_id"
     ],
+    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
+      "POST",
       "PUT",
       "DELETE"
     ],
     "columnDefinitions": {
-      "article_id": "Int",
+      "id": "Int",
       "title": "String",
-      "author": "String",
-      "publication_date": "String",
       "content": "String",
-      "category": "String",
-      "tags": "String"
+      "image_url": "String",
+      "author_id": "Int"
     }
   },
   {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "orders",
     "routeType": "database",
-    "route": "/api/orders",
-    "allowRead": [
-      "order_id",
-      "user_id",
-      "order_date",
-      "total_amount",
-      "payment_method",
-      "shipping_address",
-      "shipping_city",
-      "shipping_state",
-      "shipping_zip_code",
-      "shipping_country",
-      "order_status"
-    ],
-    "allowWrite": [
-      "order_id",
-      "user_id",
-      "order_date",
-      "total_amount",
-      "payment_method",
-      "shipping_address",
-      "shipping_city",
-      "shipping_state",
-      "shipping_zip_code",
-      "shipping_country",
-      "order_status"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "order_id": "Int",
-      "user_id": "Int",
-      "order_date": "String",
-      "total_amount": "String",
-      "payment_method": "String",
-      "shipping_address": "String",
-      "shipping_city": "String",
-      "shipping_state": "String",
-      "shipping_zip_code": "String",
-      "shipping_country": "String",
-      "order_status": "String"
-    }
-  },
-  {
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "dbTable": "users",
-    "routeType": "database",
-    "route": "/api/users",
-    "allowRead": [
-      "user_id",
-      "first_name",
-      "last_name",
-      "email",
-      "date_of_birth",
-      "address",
-      "city",
-      "state",
-      "zip_code",
-      "country",
-      "phone_number",
-      "registration_date"
-    ],
-    "allowWrite": [
-      "user_id",
-      "first_name",
-      "last_name",
-      "email",
-      "date_of_birth",
-      "address",
-      "city",
-      "state",
-      "zip_code",
-      "country",
-      "phone_number",
-      "registration_date"
-    ],
-    "acl": "publicAccess",
-    "allowedMethods": [
-      "GET",
-      "POST",
-      "PUT",
-      "DELETE"
-    ],
-    "columnDefinitions": {
-      "user_id": "Int",
-      "first_name": "String",
-      "last_name": "String",
-      "email": "String",
-      "date_of_birth": "String",
-      "address": "String",
-      "city": "String",
-      "state": "String",
-      "zip_code": "String",
-      "country": "String",
-      "phone_number": "String",
-      "registration_date": "String"
-    }
-  },
-  {
-    "routeType": "dynamic",
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "route": "/api/register",
-    "allowMethods": [
-      "POST"
-    ]
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
-    "routeType": "dynamic",
-    "route": "/api/makedata",
-    "auth": "token",
-    "acl": [
-      "publicAccess"
-    ],
-    "allowedMethods": [
-      "POST"
-    ]
-  },
-  {
-    "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "authors",
     "route": "/api/authors",
     "allowRead": [
@@ -201,8 +65,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "categories",
     "route": "/api/categories",
     "allowRead": [
@@ -226,8 +90,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "events",
     "route": "/api/events",
     "allowRead": [
@@ -269,8 +133,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "listprice",
     "route": "/api/listprice",
     "allowRead": [
@@ -315,8 +179,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "messages",
     "route": "/api/messages",
     "allowRead": [
@@ -355,8 +219,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "products",
     "route": "/api/products",
     "allowRead": [
@@ -395,8 +259,8 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
     "dbTable": "uploads",
     "route": "/api/uploads",
     "allowRead": [
@@ -432,8 +296,45 @@
     }
   },
   {
+    "routeType": "database",
     "dbType": "mysql",
-    "dbConnection": "MYSQL_1",
+    "dbTable": "users",
+    "route": "/api/users",
+    "allowRead": [
+      "id",
+      "username",
+      "password",
+      "acl",
+      "created_at",
+      "updated_at"
+    ],
+    "allowWrite": [
+      "id",
+      "username",
+      "password",
+      "acl",
+      "created_at",
+      "updated_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "username": "String",
+      "password": "String",
+      "acl": "String",
+      "created_at": "String",
+      "updated_at": "String"
+    }
+  },
+  {
+    "routeType": "database",
+    "dbType": "mysql",
     "dbTable": "video_catalog",
     "route": "/api/video_catalog",
     "allowRead": [
@@ -458,7 +359,6 @@
       "hls",
       "hero"
     ],
-    "acl": "publicAccess",
     "allowedMethods": [
       "GET",
       "POST",
