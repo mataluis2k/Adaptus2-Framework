@@ -100,6 +100,7 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
     const allowRead = [];
     const allowWrite = [];
     const allowedMethods = ['GET', 'POST', 'PUT', 'DELETE'];
+    const routeType = "database";
 
     columns.forEach(({ Field, Type }) => {
         columnDefinitions[Field] = Type.includes('int') ? 'Int' : 'String';
@@ -108,8 +109,9 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
     });
 
     return {
+        routeType,
         dbType,
-        dbConnection: process.env.GRAPHQL_DBCONNECTION,
+        dbConnection: process.env.DEFAUL_DBCONNECTION,
         dbTable: tableName,
         route: `/api/${tableName}`,
         allowRead,
