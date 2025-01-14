@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.8",
+  "version": "2.0.9",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,  
   "preferGlobal": true,   
@@ -8,12 +8,12 @@
     "node": ">=18.18.0"
   },
   "bin": {    
-    "adaptus-cli": "./cliClient.js",
+    "adaptus2-cli": "./cliClient.js",
     "adaptus2": "./index.js",
     "adaptus2-setup": "./Adaptus2-install.js"
   },        
   "scripts": {
-    "postinstall": "node Adaptus2-install.js",
+    "postinstall": "node scripts/copy-plugin.js",
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest"
