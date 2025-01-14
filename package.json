@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,  
   "preferGlobal": true,   
@@ -12,14 +12,18 @@
     "adaptus2": "./index.js"
   },        
   "scripts": {
-    "postinstall": "node install.js",
+    "postinstall": "node Adaptus2-install.js",
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest"
   },
-  "keywords": [],
-  "author": "Your Name",
+  "keywords": ["nodejs", "Adaptus2", "server"],
+  "author": "Luis B. Mata <headmaster@theleadershub.net>",
   "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/mataluis2k/Adaptus2-Framework/issues"
+  },
+  "homepage": "https://github.com/mataluis2k/Adaptus2-Framework#readme",
   "dependencies": {
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
