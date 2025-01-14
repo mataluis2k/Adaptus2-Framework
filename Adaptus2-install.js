@@ -1,6 +1,4 @@
-#!/usr/bin/env node
-
-// Updated Installer Script with Full Environment Variables
+// Updated Installer Script with Folder and File Verification
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
@@ -12,6 +10,8 @@ const defaultConfig = {
   CORS_ENABLED: 'false',
   CORS_ORIGIN: 'http://localhost:5173',
   CORS_METHODS: 'GET,POST,PUT,DELETE',
+  DEFAULT_DBTYPE: 'mysql',
+  DEFAULT_DBCONNECTION: 'MYSQL_1',
   MYSQL_1_HOST: 'localhost',
   MYSQL_1_USER: 'root',
   MYSQL_1_PASSWORD: '',
@@ -65,6 +65,33 @@ function prompt(question, defaultValue) {
   );
 }
 
+function verifyAndCreateConfigDir(configDir) {
+  if (!fs.existsSync(configDir)) {
+    console.log(`Config directory does not exist. Creating: ${configDir}`);
+    fs.mkdirSync(configDir, { recursive: true });
+  }
+
+  const businessRulesPath = path.join(configDir, 'businessRules.dsl');
+  if (!fs.existsSync(businessRulesPath)) {
+    console.log(`Creating empty file: ${businessRulesPath}`);
+    fs.writeFileSync(businessRulesPath, '');
+  }
+
+  const mlConfigPath = path.join(configDir, 'mlConfig.json');
+  if (!fs.existsSync(mlConfigPath)) {
+    console.log(`Creating default ML config file: ${mlConfigPath}`);
+    const mlConfig = {
+      default: {
+        batchSize: 1000,
+        samplingRate: 1,
+        parallelProcessing: false,
+        incrementalTraining: false,
+      },
+    };
+    fs.writeFileSync(mlConfigPath, JSON.stringify(mlConfig, null, 2));
+  }
+}
+
 function loadEnvFile(envPath) {
   if (fs.existsSync(envPath)) {
     console.log(`Loading existing .env file from ${envPath}...`);
@@ -90,6 +117,10 @@ async function createEnvFile() {
   console.log('Starting configuration update...');
   for (const key of Object.keys(defaultConfig)) {
     finalConfig[key] = await prompt(`Set value for ${key}`, finalConfig[key]);
+
+    if (key === 'CONFIG_DIR') {
+      verifyAndCreateConfigDir(finalConfig[key]);
+    }
   }
 
   writeEnvFile(envPath, finalConfig);

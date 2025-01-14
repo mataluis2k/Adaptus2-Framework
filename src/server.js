@@ -82,8 +82,8 @@ const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
 
 consolelog.log('Current directory:', __dirname);
 
-const graphqlDbType = process.env.GRAPHQL_DBTYPE;
-const graphqlDbConnection = process.env.GRAPHQL_DBCONNECTION;
+const graphqlDbType = process.env.DEFAULT_DBTYPE;
+const graphqlDbConnection = process.env.DEFAULT_DBCONNECTION;
 
 const mlAnalytics = new MLAnalytics();
 

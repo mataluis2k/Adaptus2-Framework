@@ -39,8 +39,8 @@ async function buildApiConfigFromDatabase() {
         }
     }
 
-    const dbType = process.env.GRAPHQL_DBTYPE;
-    const dbConnectionName = process.env.GRAPHQL_DBCONNECTION;
+    const dbType = process.env.DEFAULT_DBTYPE;
+    const dbConnectionName = process.env.DEFAULT_DBCONNECTION;
 
     if (!dbType || !dbConnectionName) {
         console.error('Database type or connection name is missing in environment variables.');
