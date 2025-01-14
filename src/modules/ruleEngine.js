@@ -2,6 +2,7 @@
 const consolelog = require('./logger');
 
 const DSLParser = require('./dslparser');
+
 // Define sha256 function in the global scope
 const crypto = require('crypto');
 const { getApiConfig } = require('./apiConfig');
