@@ -2,8 +2,8 @@ const fs = require('fs');
 const path = require('path');
 
 // Define paths
-const pluginDir = path.join(__dirname, '../plugin'); // Adjust relative to the script
-const userDir = path.join(require('os').homedir(), '.adaptus2', 'plugin'); // Adjust the user directory as needed
+const pluginDir = path.join(__dirname, '../plugins'); // Adjust relative to the script
+const userDir = path.join(process.cwd(), 'plugins');
 
 // Function to copy directory
 function copyDir(src, dest) {
