@@ -162,9 +162,319 @@
     "routeType": "dynamic",
     "route": "/api/makedata",
     "auth": "token",
-    "acl": ["publicAccess"],
+    "acl": [
+      "publicAccess"
+    ],
     "allowedMethods": [
       "POST"
     ]
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "authors",
+    "route": "/api/authors",
+    "allowRead": [
+      "id",
+      "name",
+      "bio",
+      "profile_image"
+    ],
+    "allowWrite": [
+      "id",
+      "name",
+      "bio",
+      "profile_image"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "name": "String",
+      "bio": "String",
+      "profile_image": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "categories",
+    "route": "/api/categories",
+    "allowRead": [
+      "id",
+      "category_name"
+    ],
+    "allowWrite": [
+      "id",
+      "category_name"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "category_name": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "events",
+    "route": "/api/events",
+    "allowRead": [
+      "id",
+      "event_type",
+      "user_id",
+      "page_url",
+      "user_agent",
+      "ip_address",
+      "event_data",
+      "created_at"
+    ],
+    "allowWrite": [
+      "id",
+      "event_type",
+      "user_id",
+      "page_url",
+      "user_agent",
+      "ip_address",
+      "event_data",
+      "created_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "event_type": "String",
+      "user_id": "String",
+      "page_url": "String",
+      "user_agent": "String",
+      "ip_address": "String",
+      "event_data": "String",
+      "created_at": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "listprice",
+    "route": "/api/listprice",
+    "allowRead": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id",
+      "discount",
+      "tax",
+      "updated_at"
+    ],
+    "allowWrite": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id",
+      "discount",
+      "tax",
+      "updated_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "product_name": "String",
+      "description": "String",
+      "image": "String",
+      "price": "String",
+      "category_id": "Int",
+      "discount": "Int",
+      "tax": "Int",
+      "updated_at": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "messages",
+    "route": "/api/messages",
+    "allowRead": [
+      "id",
+      "sender_id",
+      "recipient_id",
+      "group_name",
+      "message",
+      "status",
+      "timestamp"
+    ],
+    "allowWrite": [
+      "id",
+      "sender_id",
+      "recipient_id",
+      "group_name",
+      "message",
+      "status",
+      "timestamp"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "sender_id": "String",
+      "recipient_id": "String",
+      "group_name": "String",
+      "message": "String",
+      "status": "String",
+      "timestamp": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "products",
+    "route": "/api/products",
+    "allowRead": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id",
+      "updated_at"
+    ],
+    "allowWrite": [
+      "id",
+      "product_name",
+      "description",
+      "image",
+      "price",
+      "category_id",
+      "updated_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "product_name": "String",
+      "description": "String",
+      "image": "String",
+      "price": "String",
+      "category_id": "Int",
+      "updated_at": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "uploads",
+    "route": "/api/uploads",
+    "allowRead": [
+      "id",
+      "filename",
+      "filepath",
+      "filetype",
+      "uploaded_by",
+      "uploaded_at"
+    ],
+    "allowWrite": [
+      "id",
+      "filename",
+      "filepath",
+      "filetype",
+      "uploaded_by",
+      "uploaded_at"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "id": "Int",
+      "filename": "String",
+      "filepath": "String",
+      "filetype": "String",
+      "uploaded_by": "String",
+      "uploaded_at": "String"
+    }
+  },
+  {
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "video_catalog",
+    "route": "/api/video_catalog",
+    "allowRead": [
+      "videoID",
+      "name",
+      "description",
+      "source",
+      "filename",
+      "created_at",
+      "updated_at",
+      "hls",
+      "hero"
+    ],
+    "allowWrite": [
+      "videoID",
+      "name",
+      "description",
+      "source",
+      "filename",
+      "created_at",
+      "updated_at",
+      "hls",
+      "hero"
+    ],
+    "acl": "publicAccess",
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE"
+    ],
+    "columnDefinitions": {
+      "videoID": "String",
+      "name": "String",
+      "description": "String",
+      "source": "String",
+      "filename": "String",
+      "created_at": "String",
+      "updated_at": "String",
+      "hls": "String",
+      "hero": "String"
+    }
   }
 ]

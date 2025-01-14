@@ -13,7 +13,7 @@ const axios = require('axios');
 // Import other modules
 const { loadConfig, apiConfig, categorizedConfig, categorizeApiConfig } = require('./modules/apiConfig');
 const { getDbConnection, extendContext } = require(path.join(__dirname, '/modules/db'));
-// const buildApiConfigFromDatabase = require('./modules/buildConfig');
+const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./modules/ml_analytics');
 
@@ -991,6 +991,17 @@ class DependencyManager {
     }
 }
 
+async function handleBuildCommand() {
+    try {
+        console.log('Executing build command...');
+        await buildApiConfigFromDatabase();
+        console.log('Build command completed successfully.');
+        process.exit(0);
+    } catch (error) {
+        console.error('Build command failed:', error);
+        process.exit(1);
+    }
+}
 
 class Adaptus2Server {
     constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
@@ -1423,7 +1434,10 @@ class Adaptus2Server {
                 );
                 process.exit(1); // Exit with an error code
             }
-    
+            if (process.argv.includes('--build')) {
+                await handleBuildCommand();
+                exit();
+            }
 
     
             // Handle the --generate-swagger flag
