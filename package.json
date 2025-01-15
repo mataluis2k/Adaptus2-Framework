@@ -2,23 +2,27 @@
   "name": "adaptus2-framework",
   "version": "2.0.12",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
-  "private": false,  
-  "preferGlobal": true,   
+  "private": false,
+  "preferGlobal": true,
   "engines": {
     "node": ">=18.18.0"
   },
-  "bin": {    
+  "bin": {
     "adaptus2-cli": "./cliClient.js",
     "adaptus2": "./index.js",
-    "adaptus2-setup": "./Adaptus2-install.js"
-  },        
+    "adaptus2-setup": "./Adaptus2-install.js"    
+  },
   "scripts": {
     "postinstall": "node scripts/copy-plugins.js",
     "start": "node index.js",
     "dev": "nodemon index.js",
     "test": "jest"
   },
-  "keywords": ["nodejs", "Adaptus2", "server"],
+  "keywords": [
+    "nodejs",
+    "Adaptus2",
+    "server"
+  ],
   "author": "Luis B. Mata <headmaster@theleadershub.net>",
   "license": "MIT",
   "bugs": {

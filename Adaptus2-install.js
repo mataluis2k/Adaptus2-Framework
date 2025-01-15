@@ -4,6 +4,45 @@ const path = require('path');
 const readline = require('readline');
 const dotenv = require('dotenv');
 
+// Define paths
+const pluginDir = path.join(__dirname, './plugins'); // Adjust relative to the script
+const configDir = path.join(__dirname, './config'); // Adjust relative to the script
+const userDir = path.join(process.cwd(), 'plugins');
+const userConfig = path.join(process.cwd(), 'config');
+
+// Function to copy directory
+function copyDir(src, dest) {
+  if (!fs.existsSync(src)) {
+    console.error(`Source directory does not exist: ${src}`);
+    process.exit(1);
+  }
+
+  fs.mkdirSync(dest, { recursive: true });
+
+  fs.readdirSync(src).forEach((item) => {
+    const srcPath = path.join(src, item);
+    const destPath = path.join(dest, item);
+
+    if (fs.statSync(srcPath).isDirectory()) {
+      copyDir(srcPath, destPath);
+    } else {
+      fs.copyFileSync(srcPath, destPath);
+    }
+  });
+}
+
+// Perform the copy
+try {
+  console.log(`Copying plugin directory from ${pluginDir} to ${userDir}`);
+  copyDir(pluginDir, userDir);
+  console.log('Plugin directory copied successfully!');
+  console.log(`Copying config directory from ${configDir} to ${userConfig}`);
+  copyDir(configDir, userConfig);
+  console.log('Config directory copied successfully!');
+} catch (err) {
+  console.error('Error copying plugin/config directory:', err.message);
+}
+
 const groups = {
   "GENERAL SETTINGS": [
     "ENABLE_LOGGING",
