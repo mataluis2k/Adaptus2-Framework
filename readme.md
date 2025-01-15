@@ -47,8 +47,18 @@
 
 ## **5. Getting Started**
 ### **Installation**
+Make sure you have at least Node v18 or higher!
 ```bash
-npm install adaptus2-framework
+Create folder where you want to have your server configs and plugins e.g. 
+mkdir adaptus2
+cd adaptus2
+npm install -g adaptus2-framework
+# once installation completes
+adaptus2-setup 
+# If you already have a database in place with schema , you can hydrates/build the apiConfig.json file 
+adaptus2 --build 
+# Now you are ready to run the server 
+adaptus2 
 ```
 
 ### **Basic Usage**
