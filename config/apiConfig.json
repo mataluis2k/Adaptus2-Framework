@@ -338,6 +338,8 @@
     "dbConnection": "MYSQL_1",
     "dbTable": "video_catalog",
     "route": "/api/video_catalog",
+    "auth":"token",
+    "acl": ["publicAccess"],
     "allowRead": [
       "videoID",
       "name",

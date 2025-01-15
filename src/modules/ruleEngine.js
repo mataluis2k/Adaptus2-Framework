@@ -83,6 +83,7 @@ class Rule {
     };
   }
 
+
   /**
    * Check if this rule is relevant based on eventType + entity.
    * Then evaluate top-level conditions.
@@ -450,6 +451,17 @@ class RuleEngine {
     this.response = { status: 200, message: 'Success', error: null };
   }
 
+    /**
+   * Reload the rules in the engine.
+   * @param {Array} newRules - New set of rules to replace the current rules.
+   */
+    reloadRules(newRules) {
+      consolelog.log('Reloading rules...');
+      this.rules = newRules || [];
+      this.response = { status: 200, message: 'Success', error: null };
+      consolelog.log('Rules reloaded successfully.');
+    }
+
   /**
    * Process an event (e.g. "NEW order" with some data).
    * We check each rule in turn.
@@ -466,7 +478,7 @@ class RuleEngine {
       }
     };
 
-    console.log(`Processing event: ${eventType} on entity: ${entityName} : dATA`);
+    console.log(`Processing event: ${eventType} on entity: ${entityName} : data`);
 
     // If data is an array, handle each record
     if (Array.isArray(data)) {

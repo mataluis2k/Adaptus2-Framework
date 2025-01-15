@@ -758,23 +758,29 @@ function initializeRules() {
         
         // Use RuleEngine's fromDSL to initialize the engine properly
         const ruleEngineInstance = RuleEngine.fromDSL(dslText, globalContext);
-
-        if (ruleEngine) {
-            // Merge new rules with existing rules
-            ruleEngine.rules = [...ruleEngine.rules, ...ruleEngineInstance.rules];
+        if (ruleEngine instanceof RuleEngine) {
+            // Reload rules in the existing rule engine instance
+            ruleEngine.reloadRules(ruleEngineInstance.rules);
         } else {
             // Initialize the rule engine with the parsed rules
             ruleEngine = ruleEngineInstance;
         }
-       
+        console.log(ruleEngine);      
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
-        console.error('Failed to initialize business rules:', error.message);
-        process.exit(1); // Exit server if rules can't be loaded
+        console.error('Failed to initialize business rules:', error.message);        
     }
 }
 
+// Catch unhandled promise rejections
+process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled Rejection:', reason.message || reason);
+});
 
+// Catch uncaught exceptions
+process.on('uncaughtException', (error) => {
+    console.error('Uncaught Exception:', error.message || error);    
+});
 
 function setupRag(apiConfig) {
     const openAIApiKey = process.env.OPENAI_API_KEY;
@@ -1062,6 +1068,75 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "userGenToken":
+                            if (args.length < 2) {
+                                socket.write("Usage: userGenToken <username> <acl>\n");
+                            } else {
+                                const [username, acl] = args;
+                                try {
+                                    // Generate the JWT
+                                    const payload = { username, acl };
+                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+    
+                                    socket.write(`Generated user token:\n${token}\n`);
+                                } catch (error) {
+                                    console.error("Error generating user token:", error.message);
+                                    socket.write(`Error generating user token: ${error.message}\n`);
+                                }
+                            }
+                            break;
+    
+                        case "appGenToken":
+                            if (args.length < 2) {
+                                socket.write("Usage: appGenToken <table> <acl>\n");
+                            } else {
+                                const [table, acl] = args;
+                                try {
+                                    // Generate the JWT
+                                    const payload = { table, acl, username: table };
+                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
+    
+                                    socket.write(`Generated app token:\n${token}\n`);
+                                } catch (error) {
+                                    console.error("Error generating app token:", error.message);
+                                    socket.write(`Error generating app token: ${error.message}\n`);
+                                }
+                            }
+                            break;                               
+                        case "configReload":
+                            try {                               
+                                consolelog.log('Reloading configuration...');
+                                initializeRules();
+                                this.apiConfig = await loadConfig();
+                                consolelog.log(this.apiConfig);
+                                this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
+                                // Clear existing routes
+                                this.app._router.stack = this.app._router.stack.filter((layer) => {
+                                    // Keep layers that are not associated with a route
+                                    if (!layer.route) return true;
+
+                                    // Check if the route is part of databaseRoutes
+                                    return !this.categorizedConfig.databaseRoutes.some((routeConfig) => {
+                                        return layer.route.path === routeConfig.route;
+                                    });
+                                });                              
+                                registerRoutes(this.app, this.categorizedConfig.databaseRoutes); 
+                                if (PLUGIN_MANAGER === 'network') {
+                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
+                                    subscribeToConfigUpdates((updatedConfig) => {
+                                        this.apiConfig = updatedConfig.apiConfig;
+                                        this.categorizedConfig = updatedConfig.categorizedConfig;
+                                        globalContext.resources = updatedConfig.globalContext.resources || {};
+                                        console.log('Configuration updated from cluster.');
+                                    });
+                                }                                                              
+                                consolelog.log("API config reloaded successfully.");
+                                socket.write("API config reloaded successfully.");
+                            } catch (error) {
+                                consolelog.error(`Error reloading API config: ${error.message}`);
+                                socket.write("Error reloading API config: ${error.message}");
+                            }
+                            break;
                         case "listPlugins":
                             try {
                                 const plugins = fs.readdirSync(this.pluginDir)
@@ -1134,11 +1209,9 @@ class Adaptus2Server {
                             socket.write("Goodbye!\n");
                             socket.end();
                             break;
-                        case "help":
-                            socket.write("Available commands: load, unload, reload, reloadall, list, routes, exit.\n");
-                            break;
+                        case "help":                   
                         default:
-                            socket.write("Unknown command. Available commands: load, unload, reload, reloadall, list, routes, exit.\n");
+                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);
@@ -1259,11 +1332,16 @@ class Adaptus2Server {
 
         // Reload Configuration
     setupReloadHandler(configFile) {
-        process.on('SIGHUP', async () => {
-            consolelog.log('Reloading configuration...');
-            await loadConfig(configFile);
-            registerRoutes();
-            consolelog.log('Configuration reloaded.');
+        process.on('SIGHUP', async () => {           
+            try {
+                consolelog.log('Reloading configuration...');
+                this.apiConfig = await loadConfig();                
+                this.categorizedConfig = categorizeApiConfig(this.apiConfig);                                
+                registerRoutes(this.app, this.categorizedConfig.databaseRoutes);                                                               
+                console.log("API config reloaded successfully.");                
+            } catch (configError) {
+                console.error('Failed to load API configuration:', configError.message);                
+            }
         });
     }
 
