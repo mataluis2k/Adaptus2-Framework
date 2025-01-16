@@ -6,7 +6,7 @@ async function buildApiConfigFromDatabase() {
     const args = process.argv.slice(2);
     let overwrite = false;
     let refresh = false;
-    let acl = 'publicAccess';
+    let acl = null;
     let selectedTables = [];
 
     args.forEach((arg) => {
@@ -108,7 +108,7 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
         allowWrite.push(Field);
     });
 
-    return {
+    const tableConfig = {
         routeType,
         dbType,
         dbConnection: process.env.DEFAULT_DBCONNECTION,
@@ -119,6 +119,14 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
         allowedMethods,
         columnDefinitions,
     };
+
+    // Add auth and acl attributes if acl is provided
+    if (acl) {
+        tableConfig.auth = "token";
+        tableConfig.acl = `[ ${acl} ]`;
+    }
+
+    return tableConfig;
 }
 
 module.exports = buildApiConfigFromDatabase;
