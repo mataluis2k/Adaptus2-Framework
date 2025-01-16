@@ -29,7 +29,8 @@ async function initializeRAG(apiConfig) {
   );
 
   if (ragEnabledTables.length === 0) {
-    throw new Error("No RAG-enabled tables found in the configuration.");
+    console.log("No RAG-enabled tables found in the configuration.");
+    return;
   }
 
   console.log("Initializing RAG-enabled tables...");
