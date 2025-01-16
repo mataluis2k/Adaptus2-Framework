@@ -61,20 +61,121 @@ adaptus2 --build
 adaptus2 
 ```
 
-### **Basic Usage**
-- Example setup:
+### **Expanding the Logic**
+Adaptus2-Framework uses a pluginManager to expand it's capabilities. This modules can be deployed on the plugins folder relative to the folder that the application was install if by the previous example you install the server configs in adaptus2 folder , the plugins would be located on adaptus2/plugins folder. 
+
+Here is an example of what a plugin file might look like.
+
+- Plugin Template :
   ```javascript
-  const { Adaptus2Server } = require('adaptus2-framework');
+  module.exports = {
+    name: 'examplePlugin',
+    version: '1.0.0',
 
-  const app = new Adaptus2Server({
-    port: 3000,
-    configPath: './config/apiConfig.json',
-  });
+    initialize(dependencies) {
+        console.log('Initializing examplePlugin...');
+        const { context, customRequire } = dependencies;
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient'); // Universal api Client
+        const db = customRequire('../src/modules/db'); // Database ORM
+        const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware'); // Route protection middleware 
+        // Perform initialization tasks
+    },
 
-  app.start(() => {
-    console.log('Adaptus2 Framework server is running on port 3000');
-  });
-  ```
+    registerRoutes({ app }) {
+        const routes = [];
+        
+        // Register route and keep track of it
+        const routePath = '/example';
+        app.get(routePath,authenticateMiddleware("token"), aclMiddleware(["publicAccess"]), (req, res) => {
+            res.send('Example Plugin Route');
+        });
+        routes.push({ method: 'get', path: routePath });
+    
+        // Return registered routes for cleanup later
+        return routes;
+    },
+
+    async cleanup() {
+        console.log('Cleaning up examplePlugin...');
+        // Perform cleanup tasks
+    },
+};
+```
+
+# CLI Commands for Adaptus2Server using CLI tool "adaptus2-cli"
+
+This document provides an overview of the available CLI commands for interacting with the Adaptus2Server application via its socket-based CLI adaptus2-cli
+
+## Getting Started
+
+To access the CLI run the command adaptus2-cli
+
+### Example
+```bash
+adaptus2-cli
+```
+
+Once connected, you can issue the commands listed below.
+
+---
+
+## CLI Commands
+
+### General Commands
+
+| Command       | Description                                         | Usage Example  |
+|---------------|-----------------------------------------------------|----------------|
+| `help`        | Displays a list of available commands.             | `help`         |
+| `exit`        | Disconnects from the CLI.                          | `exit`         |
+
+---
+
+### Token Management
+
+| Command          | Description                                          | Usage Example                      |
+|------------------|------------------------------------------------------|-----------------------------------|
+| `userGenToken`   | Generates a JWT for a user with a specified ACL.     | `userGenToken <username> <acl>`  |
+| `appGenToken`    | Generates a JWT for an application with table access and ACL. | `appGenToken <table> <acl>`      |
+
+---
+
+### Configuration Management
+
+| Command          | Description                            | Usage Example  |
+|------------------|----------------------------------------|----------------|
+| `configReload`   | Reloads the API configuration.         | `configReload` |
+
+---
+
+### Plugin Management
+
+| Command          | Description                                     | Usage Example             |
+|------------------|-------------------------------------------------|---------------------------|
+| `listPlugins`    | Lists all available plugins in the directory.   | `listPlugins`             |
+| `load`           | Loads a specified plugin.                      | `load <pluginName>`       |
+| `unload`         | Unloads a specified plugin.                    | `unload <pluginName>`     |
+| `reload`         | Reloads a specified plugin.                    | `reload <pluginName>`     |
+| `reloadall`      | Reloads all currently loaded plugins.           | `reloadall`               |
+| `list`           | Lists all currently loaded plugins.            | `list`                    |
+
+---
+
+### Route and Action Management
+
+| Command          | Description                                     | Usage Example  |
+|------------------|-------------------------------------------------|----------------|
+| `routes`         | Displays a list of all registered API routes.  | `routes`       |
+| `listActions`    | Lists all available actions from the global context. | `listActions`  |
+
+---
+
+## Notes
+
+- Commands are case-sensitive.
+- Ensure that the server is running and the socket server is active before attempting to connect.
+- For security, use proper access control for sensitive commands like token generation.
+
+---
 
 ---
 
@@ -123,7 +224,6 @@ Example configuration for dynamic OpenGraph metadata:
 - **Dynamic Plugin Management**: Load and manage plugins across clusters in real-time.
 - **Extensive Logging and Monitoring**: Built-in tools for runtime insights.
 
----
 
 ## **8. Roadmap**
 - Real-time WebSocket support.

@@ -1,12 +1,12 @@
-const { authenticateMiddleware, aclMiddleware } = require('../src/middleware/authenticationMiddleware');
-
-
 module.exports = {
     name: 'examplePlugin',
     version: '1.0.0',
 
     initialize(dependencies) {
         console.log('Initializing examplePlugin...');
+        const { context, customRequire } = dependencies;
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
+        const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware');
         // Perform initialization tasks
     },
 

@@ -815,6 +815,11 @@ class PluginManager {
         this.subscribeToPluginEvents();
     }
 
+    loadModule(moduleName) {
+        // Add the server path to the module name        
+        return require(moduleName);
+      }
+      
     /**
      * Load a plugin and broadcast it (if in network mode).
      */
@@ -1013,12 +1018,17 @@ class DependencyManager {
         this.context = globalContext; 
     }
 
+    loadModule(moduleName) {
+        // Maybe do some logic to point to your server’s node_modules
+        return require(moduleName);
+    }
+
     addDependency(name, instance) {
         this.dependencies[name] = instance;
     }
 
     getDependencies() {
-        return { ...this.dependencies, context: this.context };
+        return { ...this.dependencies, context: this.context , customRequire: this.loadModule };
     }
 
     extendContext(key, value) {

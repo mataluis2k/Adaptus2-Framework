@@ -1,5 +1,4 @@
-const { authenticateMiddleware, aclMiddleware } = require('../src/middleware/authenticationMiddleware');
-const { globalContext } = require('../src/modules/context'); // Import the shared globalContext
+
 const axios = require('axios');
 
 module.exports = {
@@ -11,6 +10,9 @@ module.exports = {
      */
     initialize(dependencies) {
         console.log('Initializing klaviyoPlugin...');
+        const { context, customRequire } = dependencies;
+        const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware');
+        const { globalContext } = customRequire('../src/modules/context'); // Import the shared globalContext
         this.extendContext();
     },
 

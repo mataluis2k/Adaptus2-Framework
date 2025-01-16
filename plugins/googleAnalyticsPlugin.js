@@ -1,6 +1,3 @@
-require('dotenv').config(); // Ensure environment variables are loaded
-
-const UniversalApiClient = require('../src/modules/UniversalApiClient');
 
 module.exports = {
     name: 'googleAnalyticsPlugin',
@@ -11,7 +8,8 @@ module.exports = {
      * @param {Object} dependencies - Dependencies provided by the server.
      */
     initialize(dependencies) {
-        const { context } = dependencies;
+        const { context, customRequire } = dependencies;
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
 
         if (!context || !context.actions) {
             throw new Error('Global context with actions is required for Google Analytics Plugin.');

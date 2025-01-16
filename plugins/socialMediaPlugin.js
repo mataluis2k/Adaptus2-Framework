@@ -2,7 +2,7 @@ const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const FacebookStrategy = require('passport-facebook').Strategy;
 const session = require('express-session');
-const { globalContext } = require('../src/modules/context'); // Import shared globalContext
+
 
 module.exports = {
     name: 'socialLoginPlugin',
@@ -10,6 +10,8 @@ module.exports = {
 
     initialize(dependencies) {
         console.log('Initializing socialLoginPlugin...');
+        const { context, customRequire } = dependencies;
+        const { globalContext } = customRequire('../src/modules/context'); // Import shared globalContext
         this.extendContext(dependencies);
         this.configurePassport();
     },

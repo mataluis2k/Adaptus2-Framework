@@ -8,11 +8,7 @@
 // 4. It should cache the render pages in redis for 5 minutes.
 // 5. The plugin should have a method to clear the cache.
 
-const { getDbConnection } = require('../src/modules/db'); // Your database module
-const consolelog = require('../src/modules/logger');
-const { authenticateMiddleware, aclMiddleware } = require('../src/middleware/authenticationMiddleware');
-const response = require('../src/modules/response');
-const { RuleEngine } = require('../src/modules/ruleEngine');
+
 const path = require('path');
 const handlebars = require('handlebars');
 const redis = require('redis');
@@ -40,7 +36,7 @@ class DispatcherPlugin {
     }
 }
 
-const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
+
 
 module.exports = {
     
@@ -49,7 +45,12 @@ module.exports = {
 
     initialize(dependencies) {
         console.log('Initializing examplePlugin...');
-        // Perform initialization tasks
+        const { customRequire } = dependencies;
+        const { getDbConnection } = customRequire('../src/modules/db'); // Your database module
+        const consolelog = customRequire('../src/modules/logger');
+        const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware');
+        const response = customRequire('../src/modules/response');
+        const { RuleEngine } = customRequire('../src/modules/ruleEngine');       
     },
 
     registerRoutes({ app, endpoint }) {

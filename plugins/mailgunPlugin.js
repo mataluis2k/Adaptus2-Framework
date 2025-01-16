@@ -1,12 +1,13 @@
 require('dotenv').config();
-const UniversalApiClient = require('../src/modules/universalAPIClient');
+
 
 module.exports = {
     name: 'mailgunPlugin',
     version: '1.0.0',
 
     initialize(dependencies) {
-        const { context } = dependencies;
+        const { context, customRequire } = dependencies;
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
 
         if (!context || !context.actions) {
             throw new Error('Global context with actions is required for Mailgun Plugin.');
