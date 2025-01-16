@@ -1028,7 +1028,7 @@ class DependencyManager {
     }
 
     getDependencies() {
-        return { ...this.dependencies, context: this.context , customRequire: this.loadModule };
+        return { ...this.dependencies, context: this.context , customRequire: this.loadModule, process: process };
     }
 
     extendContext(key, value) {
