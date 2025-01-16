@@ -123,7 +123,7 @@ async function generateTableConfig(connection, tableName, dbType, acl) {
     // Add auth and acl attributes if acl is provided
     if (acl) {
         tableConfig.auth = "token";
-        tableConfig.acl = `[ ${acl} ]`;
+        tableConfig.acl = `[ '${acl}' ]`;
     }
 
     return tableConfig;
