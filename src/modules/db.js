@@ -294,7 +294,7 @@ async function query(config, query, params = []) {
             case 'postgres': {
                 // MySQL and PostgreSQL use similar query execution with placeholders
                 const [results] = await db.execute(query, params);
-                console.log(results);
+               
                 return results;
             }
             case 'mongodb': {
@@ -403,11 +403,27 @@ function extendContext() {
     };
 
     globalContext.actions.rawQuery = async (ctx, params) => {
-        const { query, values } = params; // Query and values for parameterized query
-        if (!query) {
+        let myQuery;
+        const { values } = params; // Query and values for parameterized query
+        console.log("In Action",params, ctx.config);
+        if(params.data){
+            
+                const { query } = params.data;
+                myQuery = query;
+        }
+        if (!myQuery) {
             throw new Error("A raw SQL query string is required.");
         }
-        return await executeRawQuery(ctx.config, query, values || []);
+        const result = await query(ctx.config, myQuery, values || []);
+        // count if it is only one record return the record itself and not the array.
+        if(result.length === 1) {
+                 ctx.data['response'] = JSON.stringify(result[0]);        
+        } else {
+            ctx.data['response'] = result;
+        }
+        console.log("Here is my Response",ctx.data['response']);
+        return { success: true, result, key: 'response' };
+        
     };
 }
 

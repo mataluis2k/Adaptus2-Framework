@@ -63,7 +63,8 @@ class RuleEngineMiddleware {
                     return res.status(500).json({ error: `${eventType} rules processing failed` });
                 }
             } else if (['GET', 'DELETE'].includes(eventType)) {
-                console.log(`Processing outbound ${eventType} on ${entityName}`);
+                console.log(`Processing outbound ${eventType} on ${entityName} data with data:${res.data}`);
+                
                 const originalSend = res.send;
 
                 res.send = async (data) => {

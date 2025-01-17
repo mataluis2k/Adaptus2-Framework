@@ -71,7 +71,7 @@ class Rule {
         consolelog.log(`Notifying: ${action.raw}`);
       },
       invoke: (ctx, action) => {
-        consolelog.log(`Invoking function ${action.raw}`);
+        consolelog.log(`Invoking function ${action.raw} , ${action}`);
       },
       create_record: (ctx, action) => {
         consolelog.log(`Creating record with: ${action.raw}`);
@@ -420,7 +420,7 @@ class Rule {
   
     // 2) If it's an array, map over its elements recursively.
     if (Array.isArray(obj)) {
-      return obj.map(item => _interpolatePlaceholders(item, dataObj));
+      return obj.map(item => this._interpolatePlaceholders(item, dataObj));
     }
   
     // 3) If it's a non-null object, recursively interpolate each value.
@@ -428,7 +428,7 @@ class Rule {
       const newObj = {};
       for (const key in obj) {
         if (Object.prototype.hasOwnProperty.call(obj, key)) {
-          newObj[key] = _interpolatePlaceholders(obj[key], dataObj);
+          newObj[key] = this._interpolatePlaceholders(obj[key], dataObj);
         }
       }
       consolelog.log("Interpolated result:", newObj);

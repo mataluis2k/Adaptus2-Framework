@@ -43,6 +43,7 @@ const configFile = path.join(configDir, 'apiConfig.json');
 const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
+const Handlebars = require('handlebars');
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -111,8 +112,51 @@ globalContext.actions.log = (ctx, action) => {
 };
 
 globalContext.actions.response = (ctx, action) => {
-    console.log(`[RESPONSE]: ${ctx.data}`);
-    return ctx.data;    
+    const { key = "data" } = action;
+
+    if (!ctx.data[key]) {
+        ctx.data[key] = {};
+        console.log(`Initialized response object with key: ${key}`);
+    } else {
+        console.log(`Response object with key: ${key} already exists.`);
+    }
+
+    return { success: true, message: `Response object is ready under key: ${key}` };
+};
+
+globalContext.actions.mergeTemplate = (ctx, params) => {
+            const { data } = params;
+            const template = data.template;
+            let templateData = data.data;
+            console.log(templateData);
+            if (typeof templateData === 'string') {
+                try {
+                    // Attempt to parse JSON strings
+                    templateData = JSON.parse(templateData);
+                } catch (error) {
+                    console.warn(
+                        'Invalid templateData format. Could not parse as JSON. Proceeding with raw string.',error.message
+                    );
+                }
+            }
+            if (!template || typeof template !== 'string') {
+                throw new Error('Invalid template. Ensure template is a valid string.');
+            }
+            if (!templateData || typeof templateData !== 'object') {
+                throw new Error('Invalid data. Ensure data is a valid object.');
+            }
+
+            try {
+                // Compile the Handlebars template and merge with data
+                const compiledTemplate = Handlebars.compile(template);
+                const result = compiledTemplate(templateData);
+                ctx.data['response'] = result;
+                console.log('Template merged successfully:', result);
+                return { success: true, result, key: 'response' };
+            } catch (error) {
+                console.error('Error merging template:', error.message);
+                throw new Error(`Failed to merge template: ${error.message}`);
+            }
 };
 
 globalContext.actions.notify = (ctx, target) => {
@@ -1626,6 +1670,8 @@ class Adaptus2Server {
     
             // Set up other parts of the server
             this.setupDependencies();
+            this.setupPluginLoader();
+            autoloadPlugins(this.pluginManager);
             setupRag(this.apiConfig);
             extendContext();
             initializeRules();
@@ -1637,8 +1683,7 @@ class Adaptus2Server {
             this.registerStaticEndpoints();
             this.initializeOptionalModules(this.app);
             await this.setupGraphQL();
-            this.setupPluginLoader();
-            autoloadPlugins(this.pluginManager);
+           
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
                 this.setupSocketServer(); // Start the socket server

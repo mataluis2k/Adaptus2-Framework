@@ -2,6 +2,12 @@
 *"Build robust, dynamic, and high-performance APIs with integrated AI features and effortless OpenGraph metadata configuration."*
 
 ---
+## **1. Release Log**
+- Move templateparser to server to make it available in init
+- Move PluginManager to the top of the loading process to make available all actions in init
+- Improve business logic handler to daisy chain data from db to other modules
+- fix bugs related to template parsing and JSON structure.
+
 
 ## **2. Overview**
 - **What it is**: A Node.js framework for scalable, configurable API services, with advanced features like AI-based retrieval-augmented generation (RAG), dynamic OpenGraph metadata handling, and extensive middleware support.

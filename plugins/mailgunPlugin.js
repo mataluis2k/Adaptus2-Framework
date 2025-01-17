@@ -14,7 +14,9 @@ module.exports = {
         }
 
         async function sendMailgunEmail(ctx, params) {
-            const { to, subject, text, html } = params;
+            const { entity, data } = params;
+            const { to, subject, text, html } = data;
+            console.log(to);
 
             // Validate parameters
             if (!to || !subject || (!text && !html)) {
@@ -43,15 +45,15 @@ module.exports = {
                 authValue: `api:${mailgunApiKey}`,
             });
 
-            const data = new URLSearchParams();
-            data.append('from', `Mailgun Sandbox <mailgun@${mailgunDomain}>`);
-            data.append('to', to);
-            data.append('subject', subject);
-            if (text) data.append('text', text);
-            if (html) data.append('html', html);
+            const maildata = new URLSearchParams();
+            maildata.append('from', `Mailgun Sandbox <mailgun@${mailgunDomain}>`);
+            maildata.append('to', to);
+            maildata.append('subject', subject);
+            if (text) maildata.append('text', text);
+            if (html) maildata.append('html', html);
 
             try {
-                const response = await apiClient.post(`/v3/${mailgunDomain}/messages`, data.toString(), {
+                const response = await apiClient.post(`/v3/${mailgunDomain}/messages`, maildata.toString(), {
                     'Content-Type': 'application/x-www-form-urlencoded',
                 });
 

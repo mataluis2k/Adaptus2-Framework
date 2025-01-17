@@ -551,7 +551,7 @@ class DSLParser {
       }
       var data = {};
       const action = tokens[0];
-   
+
       if( action === 'update' ) { 
           data = this._parseUpdateExpression(line);
       } else{
