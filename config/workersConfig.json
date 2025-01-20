@@ -1,2 +1,49 @@
-[
+[{
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "subscriptions",        
+    "read": ["id", "user_id", "plan_id","next_renewal", "start_date", "end_date", "status"],
+    "keys": ["id"],
+    "relationships": [
+        {
+          "type": "one-to-one",
+          "relatedTable": "plans",
+          "foreignKey": "id",
+          "relatedKey": "plan_id",
+          "joinType": "LEFT JOIN",
+          "fields": ["name", "amount", "currency"]
+        }
+    ],
+    "triggers": {        
+        "rules": [
+            "IF status = 'active' AND next_renewal = NOW() then action.processSubscription(data.object)",
+            "IF end_date = NOW() then action.cancelSubscription(data.object)"
+        ]
+    
+    }
+},
+{
+    "dbType": "mysql",
+    "dbConnection": "MYSQL_1",
+    "dbTable": "orders",        
+    "read": ["id", "user_id", "created_at","updated_at", "status"],
+    "keys": ["id"],
+    "relationships": [
+        {
+          "type": "one-to-many",
+          "relatedTable": "order_items",
+          "foreignKey": "order_id",
+          "relatedKey": "id",
+          "joinType": "LEFT JOIN",
+          "fields": ["sku", "price", "tax", "shipping", "description"]
+        }
+    ],
+    "triggers": {        
+        "rules": [
+            "IF status = 'pending' then action.processOrder(data.object)",
+            "IF status = 'shipped' then action.sendEmail(data.object)"
+        ]
+    
+    }
+}
 ]

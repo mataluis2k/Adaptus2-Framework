@@ -40,7 +40,7 @@ const CONFIG_STORAGE_KEY = `${CLUSTER_NAME}:config:data`;
 const { broadcastConfigUpdate, subscribeToConfigUpdates } = require('./modules/configSync');
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 const configFile = path.join(configDir, 'apiConfig.json');
-const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
+
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 const Handlebars = require('handlebars');
@@ -91,6 +91,7 @@ const mlAnalytics = new MLAnalytics();
 
 const { globalContext, middleware } = require('./modules/context');
 const e = require('express');
+const DSLParser = require('./modules/dslparser.js');
 
 globalContext.actions.log = (ctx, action) => {
     let message = null; // Declare message in the outer scope
@@ -807,12 +808,10 @@ function registerRoutes(app, apiConfig) {
 }
 
 function initializeRules() {
+    const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
+    const workflowConfigPath = path.join(configDir, 'workflowRules.dsl'); // Path to the workflow file
     try {
-
-        //DSLParser.autoRegisterFromContext(globalContext);
-
-        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
-        
+        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');        
         // Use RuleEngine's fromDSL to initialize the engine properly
         const ruleEngineInstance = RuleEngine.fromDSL(dslText, globalContext);
         if (ruleEngine instanceof RuleEngine) {
@@ -822,11 +821,29 @@ function initializeRules() {
             // Initialize the rule engine with the parsed rules
             ruleEngine = ruleEngineInstance;
         }
-        console.log(ruleEngine);      
+           
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
-        console.error('Failed to initialize business rules:', error.message);        
+        console.error('Failed to initialize business rules:', error.message);     
+        exit();   
     }
+    try{
+        const WorkflowEngine = require('./modules/workflowEngine');
+        const dslText = fs.readFileSync(workflowConfigPath, 'utf-8'); 
+        if(dslText !== null) {      
+            const dslparser = new DSLParser();
+            const workflowEngine = new WorkflowEngine(dslparser, globalContext);
+            workflowEngine.loadWorkflows(dslText);
+            
+            consolelog.log('Workflow rules initialized successfully.');
+        }  else {
+            console.error('Failed to initialize workflow rules:', 'No workflow rules found');        
+        }
+    }catch (error) {
+        console.error('Failed to initialize workflow rules:', error.message); 
+        exit();
+    }
+    console.log(ruleEngine); 
 }
 
 // Catch unhandled promise rejections
@@ -1671,9 +1688,10 @@ class Adaptus2Server {
             // Set up other parts of the server
             this.setupDependencies();
             this.setupPluginLoader();
+            extendContext();
             autoloadPlugins(this.pluginManager);
             setupRag(this.apiConfig);
-            extendContext();
+            
             initializeRules();
             this.registerMiddleware();
             this.registerRoutes();
