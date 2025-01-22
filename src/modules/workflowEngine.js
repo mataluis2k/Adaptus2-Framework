@@ -222,5 +222,5 @@ class WorkflowEngine {
     }
 }
 
-module.exports = WorkflowDSLParser, WorkflowEngine;
+module.exports = { WorkflowDSLParser, WorkflowEngine };
 

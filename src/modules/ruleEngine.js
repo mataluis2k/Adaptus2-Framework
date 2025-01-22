@@ -248,6 +248,30 @@ class Rule {
     return this.response;
   }
 
+  parseCommandString(commandString) {
+    const splitIndex = commandString.indexOf('data:');
+    if (splitIndex === -1) {
+        throw new Error(`Invalid command string format: ${commandString}`);
+    }
+
+    // Extract command and data parts
+    const commandPart = commandString.slice(0, splitIndex).trim(); // e.g., "rawQuery"
+    const dataPart = commandString.slice(splitIndex + 5).trim(); // e.g., "{ ... }"
+
+    let data;
+    try {
+        data = dataPart; // Parse the JSON string in the data part
+    } catch (err) {
+        throw new Error(`Failed to parse data as JSON: ${err.message}`);
+    }
+
+    return {
+        type: commandPart, // The command name
+        data: data,        // Parsed JSON object
+    };
+}
+
+
   /**
    * Looks for an action handler in:
    *   1) actionContext.actions (global or custom)
@@ -291,37 +315,57 @@ class Rule {
           if (action.expression && action.field) {
             try {
               consolelog.log("ExecuteActions ========================>:", action);
-          
-              // Check if the expression contains any global functions
-            const globalFunctionNames = Object.keys(global);
-            const containsGlobalFunction = globalFunctionNames.some((fnName) =>
-              new RegExp(`\\b${fnName}\\b`).test(action.expression)
-            );
+              consolelog.log("Executing update action:", action);
 
-            let interpolatedExpression;
-            if (containsGlobalFunction) {
-              // Do not stringify if global function is present
-              interpolatedExpression = this._interpolatePlaceholders(action.expression, data);
-            } else {
-              // Stringify the interpolated object otherwise
-              interpolatedExpression = JSON.stringify(this._interpolatePlaceholders(action.expression, data));
-            }
+              // Check if the expression contains a command marker
+              const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
+              let computedValue;
+  
+              if (isCommand) {
+                const command = isCommand[1].trim();
+                consolelog.log(`Detected command: ${command}`);
+
+                 // Split at the first occurrence of "data:"
+                const commandAction = this.parseCommandString(command);                            
+
+                console.log("Command Action:",commandAction);
+                // Execute the command action using executeAction
+                await this._executeAction(actionContext, commandAction, data);
+                console.log("Returned result:",actionContext.data['result']);
+                // Assume the command stores its result in `data[commandAction.outputKey]`
+                computedValue = actionContext.data['result'];
+              } else {
           
-              consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
-          
-              // Dynamically evaluate the expression
-              const computedValue = new Function(
-                'data',
-                'globals',
-                `
-                  with (data) {
-                    with (globals) {
-                      return ${interpolatedExpression};
-                    }
+                    // Check if the expression contains any global functions
+                  const globalFunctionNames = Object.keys(global);
+                  const containsGlobalFunction = globalFunctionNames.some((fnName) =>
+                    new RegExp(`\\b${fnName}\\b`).test(action.expression)
+                  );
+
+                  let interpolatedExpression;
+                  if (containsGlobalFunction) {
+                    // Do not stringify if global function is present
+                    interpolatedExpression = this._interpolatePlaceholders(action.expression, data);
+                  } else {
+                    // Stringify the interpolated object otherwise
+                    interpolatedExpression = JSON.stringify(this._interpolatePlaceholders(action.expression, data));
                   }
-                `
-              )(data, global);
-          
+                
+                    consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
+                
+                    // Dynamically evaluate the expression
+                    const computedValue = new Function(
+                      'data',
+                      'globals',
+                      `
+                        with (data) {
+                          with (globals) {
+                            return ${interpolatedExpression};
+                          }
+                        }
+                      `
+                    )(data, global);
+              }
               // Update the data object with the computed value
               data[action.field] = computedValue;
               console.log(`Updated: ${action.field} = ${computedValue}`);

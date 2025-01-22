@@ -126,39 +126,81 @@ globalContext.actions.response = (ctx, action) => {
 };
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
-            const { data } = params;
-            const template = data.template;
-            let templateData = data.data;
-            console.log(templateData);
-            if (typeof templateData === 'string') {
-                try {
-                    // Attempt to parse JSON strings
-                    templateData = JSON.parse(templateData);
-                } catch (error) {
-                    console.warn(
-                        'Invalid templateData format. Could not parse as JSON. Proceeding with raw string.',error.message
-                    );
-                }
-            }
-            if (!template || typeof template !== 'string') {
-                throw new Error('Invalid template. Ensure template is a valid string.');
-            }
-            if (!templateData || typeof templateData !== 'object') {
-                throw new Error('Invalid data. Ensure data is a valid object.');
-            }
+    const { data } = params;
+    const template = data.template;
+    let templateData = data.data;
 
-            try {
-                // Compile the Handlebars template and merge with data
-                const compiledTemplate = Handlebars.compile(template);
-                const result = compiledTemplate(templateData);
-                ctx.data['response'] = result;
-                console.log('Template merged successfully:', result);
-                return { success: true, result, key: 'response' };
-            } catch (error) {
-                console.error('Error merging template:', error.message);
-                throw new Error(`Failed to merge template: ${error.message}`);
-            }
+    console.log("Template data:",templateData);
+
+    // Parse `templateData` if it's a string
+    if (typeof templateData === 'string') {
+        try {
+            templateData = JSON.parse(templateData);
+        } catch (error) {
+            console.warn(
+                'Invalid templateData format. Could not parse as JSON. Proceeding with raw string.',
+                error.message
+            );
+        }
+    }
+
+    // Validate template
+    if (!template || typeof template !== 'string') {
+        throw new Error('Invalid template. Ensure template is a valid string.');
+    }
+
+    // Validate data
+    if (!templateData || (typeof templateData !== 'object' && !Array.isArray(templateData))) {
+        throw new Error('Invalid data. Ensure data is a valid object or array.');
+    }
+
+    // Function to detect HTML content
+    const isHtml = str => /<\/?[a-z][\s\S]*>/i.test(str);
+
+    try {
+        // Compile the Handlebars template
+        const compiledTemplate = Handlebars.compile(template);
+
+        // Process single object or array of objects
+        let result;
+        if (Array.isArray(templateData)) {
+            // Iterate over the array and append the parsed template to each object
+            result = templateData.map(record => {
+                if (typeof record !== 'object') {
+                    throw new Error('Invalid record in array. Ensure each item is a valid object.');
+                }
+                const mergedTemplate = compiledTemplate(record);
+                const key = isHtml(mergedTemplate)
+                    ? 'mergedTemplateHtml'
+                    : 'mergedTemplateText';
+                return {
+                    ...record, // Preserve original record
+                    [key]: mergedTemplate, // Append the parsed template with the correct key
+                };
+            });
+        } else {
+            // Process single object and append the parsed template
+            const mergedTemplate = compiledTemplate(templateData);
+            const key = isHtml(mergedTemplate)
+                ? 'mergedTemplateHtml'
+                : 'mergedTemplateText';
+            result = {
+                ...templateData, // Preserve original data
+                [key]: mergedTemplate, // Append the parsed template with the correct key
+            };
+        }
+
+        // Save the result in the context and return it
+        ctx.data['response'] = result;
+        console.log('Template(s) merged and appended successfully:', result);
+        return { success: true, result, key: 'response' };
+    } catch (error) {
+        console.error('Error merging template:', error.message);
+        throw new Error(`Failed to merge template: ${error.message}`);
+    }
 };
+
+
 
 globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
@@ -436,7 +478,7 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, ...middlewares, express.static(folderPath));
+    app.use(route, cors(corsOptions), ...middlewares, express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -712,7 +754,7 @@ function registerRoutes(app, apiConfig) {
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -721,6 +763,8 @@ function registerRoutes(app, apiConfig) {
                 const values = writableFields.map((key) => req.body[key]);
                 const placeholders = writableFields.map(() => '?').join(', ');
                 const query = `INSERT INTO ${dbTable} (${writableFields.join(', ')}) VALUES (${placeholders})`;
+
+                console.log(`Inserting record into ${dbTable}:`, query , values);
 
                 try {
                     const connection = await getDbConnection(endpoint);
@@ -733,7 +777,7 @@ function registerRoutes(app, apiConfig) {
             });
         }
         if (allowedMethods.includes("PUT")) {
-            app.put(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.put(`${route}/:id`,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -761,14 +805,14 @@ function registerRoutes(app, apiConfig) {
             });
         }
         if (allowedMethods.includes("PATCH")) {
-            app.patch(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.patch(`${route}/:id`, cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
                 }
         
                 const recordKeys = keys; // The keys defined in the configuration
-                const keyValues = recordKeys.map((key) => req.body[key]);
+                const keyValues = recordKeys.map((key) => req.body[key] || req.params[key]);
                 if (keyValues.some((value) => value === undefined)) {
                     return res.status(400).json({ error: 'Missing required key fields in request body' });
                 }
@@ -778,6 +822,7 @@ function registerRoutes(app, apiConfig) {
                 const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
                 const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
         
+                console.log(`Updating record in ${dbTable}:`, query, [...values, ...keyValues]);
                 try {
                     const connection = await getDbConnection(endpoint);
                     await connection.execute(query, [...values, ...keyValues]);
@@ -787,11 +832,10 @@ function registerRoutes(app, apiConfig) {
                     res.status(500).json({ error: 'Internal Server Error' });
                 }
             });
-        }
-                
+        }  
 
         if (allowedMethods.includes("DELETE")) {
-            app.delete(`${route}/:id`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.delete(`${route}/:id`, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const query = `DELETE FROM ${dbTable} WHERE id = ?`;
 
                 try {
@@ -825,10 +869,10 @@ function initializeRules() {
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
         console.error('Failed to initialize business rules:', error.message);     
-        exit();   
+        process.exit(1); // Use a non-zero exit code for errors 
     }
     try{
-        const WorkflowEngine = require('./modules/workflowEngine');
+        const { WorkflowEngine } = require('./modules/workflowEngine');
         const dslText = fs.readFileSync(workflowConfigPath, 'utf-8'); 
         if(dslText !== null) {      
             const dslparser = new DSLParser();
@@ -841,7 +885,7 @@ function initializeRules() {
         }
     }catch (error) {
         console.error('Failed to initialize workflow rules:', error.message); 
-        exit();
+        process.exit(1); // Use a non-zero exit code for errors
     }
     console.log(ruleEngine); 
 }
