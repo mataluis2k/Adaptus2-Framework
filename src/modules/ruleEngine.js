@@ -331,9 +331,9 @@ class Rule {
                 console.log("Command Action:",commandAction);
                 // Execute the command action using executeAction
                 await this._executeAction(actionContext, commandAction, data);
-                console.log("Returned result:",actionContext.data['result']);
+                console.log("Returned result:",actionContext.data.response);
                 // Assume the command stores its result in `data[commandAction.outputKey]`
-                computedValue = actionContext.data['result'];
+                computedValue = actionContext.data.response;
               } else {
           
                     // Check if the expression contains any global functions
@@ -366,9 +366,24 @@ class Rule {
                       `
                     )(data, global);
               }
-              // Update the data object with the computed value
-              data[action.field] = computedValue;
-              console.log(`Updated: ${action.field} = ${computedValue}`);
+              try{
+                computedValue = JSON.parse(computedValue);
+              } catch (err) {
+                console.error(`Error parsing JSON:`, err.message);
+              }
+              // Parse computedValue to JSON if it's a string
+              let parsedValue = typeof computedValue === 'string' ? JSON.parse(computedValue) : computedValue;
+
+              // Check if parsedValue is JSON and has a template property
+              if (typeof parsedValue === 'object' && parsedValue !== null && parsedValue.hasOwnProperty(action.field)) {
+                  data[action.field] = parsedValue[action.field]; // Assign value from JSON template property
+                  console.log(`Updated1: ${action.field} = `,data[action.field]);
+              } else {
+                data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
+                console.log(`Updated2: ${action.field} = `,data[action.field]);
+              }
+              // Update the data object with the computed value              
+             
             } catch (err) {
               console.error(`Error updating field "${action.field}":`, err.message);
             }
@@ -391,9 +406,21 @@ class Rule {
                   }
                 `
               )(data, global);
-        
-      
-              data[action.field] = computedValue;
+              try{
+                computedValue = JSON.parse(computedValue);
+              } catch (err) {
+                console.error(`Error parsing JSON:`, err.message);
+              }
+              // Check if computedValue is JSON and action.field is a key in it
+              if (typeof computedValue === 'object' && computedValue !== null) {
+                if (computedValue.hasOwnProperty(action.field)) {
+                  data[action.field] = computedValue[action.field]; // Assign value from JSON
+                } else {
+                  data[action.field] = computedValue; // Assign the whole JSON if field not present
+                }
+              } else {
+                data[action.field] = computedValue; // Assign computedValue directly if not JSON
+              }
               console.log(`Assigned: ${action.field} = ${computedValue}`);
             } catch (err) {
               console.error(`Error assigning field "${action.field}":`, err.message);
@@ -475,7 +502,7 @@ class Rule {
           newObj[key] = this._interpolatePlaceholders(obj[key], dataObj);
         }
       }
-      consolelog.log("Interpolated result:", newObj);
+      consolelog.log("Interpolated NEW Object result:", newObj);
       return newObj;
     }
    consolelog.log("Interpolated result:", obj);

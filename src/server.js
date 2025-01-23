@@ -129,9 +129,8 @@ globalContext.actions.mergeTemplate = (ctx, params) => {
     const { data } = params;
     const template = data.template;
     let templateData = data.data;
-
-    console.log("Template data:",templateData);
-
+    console.log(JSON.stringify(data.data));
+   
     // Parse `templateData` if it's a string
     if (typeof templateData === 'string') {
         try {
@@ -143,6 +142,7 @@ globalContext.actions.mergeTemplate = (ctx, params) => {
             );
         }
     }
+    console.log("Template data:",templateData);
 
     // Validate template
     if (!template || typeof template !== 'string') {
