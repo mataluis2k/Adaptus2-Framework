@@ -632,7 +632,7 @@ function registerRoutes(app, apiConfig) {
 
         // GET Endpoint with Redis Caching
     // GET Endpoint with Redis Caching
-    app.get(route, cors(corsOptions), async (req, res) => {
+    app.get(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
         try {
             console.log('Incoming GET request:', {
                 route,
