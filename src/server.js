@@ -1,16 +1,51 @@
 const express = require('express');
-const cors = require('cors'); // Import the cors middleware
-const fs = require('fs');
+const cors = require('cors');
+const fs = require('fs').promises;
 const path = require('path');
 const morgan = require('morgan');
 const Redis = require('ioredis');
+const WebSocket = require('ws');
+const http = require('http');
+const APIAnalytics = require('./modules/apiAnalytics');
+const AnalyticsRoutes = require('./routes/analytics');
+const DevTools = require('./routes/devTools.js');
+const DevToolsRoutes = require('./routes/devTools');
 const crypto = require('crypto');
 const multer = require('multer');
 const net = require("net");
+const helmet = require('helmet'); // Security middleware
+const rateLimit = require('express-rate-limit'); // Rate limiting
+const compression = require('compression'); // Response compression
 require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
-// Import other modules
+
+// Constants for configuration
+const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
+const DEFAULT_TIMEOUT = 30000; // 30 seconds
+const MAX_REQUEST_SIZE = '10mb';
+// Configure axios defaults
+axios.defaults.timeout = DEFAULT_TIMEOUT;
+axios.defaults.maxContentLength = 10 * 1024 * 1024; // 10MB
+axios.interceptors.request.use(request => {
+    request.startTime = Date.now();
+    return request;
+});
+axios.interceptors.response.use(
+    response => {
+        const duration = Date.now() - response.config.startTime;
+        console.log(`Request to ${response.config.url} took ${duration}ms`);
+        return response;
+    },
+    error => {
+        if (error.response) {
+            console.error(`API Error: ${error.response.status} - ${error.response.statusText}`);
+        }
+        return Promise.reject(error);
+    }
+);
+
+// Import other modules with error handling
 const { loadConfig, apiConfig, categorizedConfig, categorizeApiConfig } = require('./modules/apiConfig');
 const { getDbConnection, extendContext } = require(path.join(__dirname, '/modules/db'));
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
@@ -40,7 +75,7 @@ const CONFIG_STORAGE_KEY = `${CLUSTER_NAME}:config:data`;
 const { broadcastConfigUpdate, subscribeToConfigUpdates } = require('./modules/configSync');
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 const configFile = path.join(configDir, 'apiConfig.json');
-
+const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 const Handlebars = require('handlebars');
@@ -77,9 +112,43 @@ const { passport, authenticateOAuth } = require('./middleware/oauth.js');
 const { config } = require('dotenv');
 
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+// Redis configuration with error handling and retry strategy
+const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
+    retryStrategy: REDIS_RETRY_STRATEGY,
+    maxRetriesPerRequest: 3,
+    enableReadyCheck: true,
+    connectTimeout: 10000,
+    lazyConnect: true
+});
+
+redis.on('error', (err) => {
+    console.error('Redis Error:', err);
+});
+
+redis.on('connect', () => {
+    console.log('Successfully connected to Redis');
+});
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
+
+// WebSocket event types
+const WS_EVENTS = {
+    DATABASE_CHANGE: 'DATABASE_CHANGE',
+    CACHE_INVALIDATED: 'CACHE_INVALIDATED',
+    CONFIG_UPDATED: 'CONFIG_UPDATED',
+    ERROR: 'ERROR'
+};
+
+// Redis pub/sub channels
+const REDIS_CHANNELS = {
+    DB_CHANGES: 'db:changes',
+    CACHE_UPDATES: 'cache:updates',
+    CONFIG_CHANGES: 'config:changes'
+};
+
+// Create Redis publisher/subscriber instances
+const redisPublisher = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+const redisSubscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
 consolelog.log('Current directory:', __dirname);
 
@@ -91,7 +160,6 @@ const mlAnalytics = new MLAnalytics();
 
 const { globalContext, middleware } = require('./modules/context');
 const e = require('express');
-const DSLParser = require('./modules/dslparser.js');
 
 globalContext.actions.log = (ctx, action) => {
     let message = null; // Declare message in the outer scope
@@ -126,81 +194,39 @@ globalContext.actions.response = (ctx, action) => {
 };
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
-    const { data } = params;
-    const template = data.template;
-    let templateData = data.data;
-    console.log(JSON.stringify(data.data));
-   
-    // Parse `templateData` if it's a string
-    if (typeof templateData === 'string') {
-        try {
-            templateData = JSON.parse(templateData);
-        } catch (error) {
-            console.warn(
-                'Invalid templateData format. Could not parse as JSON. Proceeding with raw string.',
-                error.message
-            );
-        }
-    }
-    console.log("Template data:",templateData);
-
-    // Validate template
-    if (!template || typeof template !== 'string') {
-        throw new Error('Invalid template. Ensure template is a valid string.');
-    }
-
-    // Validate data
-    if (!templateData || (typeof templateData !== 'object' && !Array.isArray(templateData))) {
-        throw new Error('Invalid data. Ensure data is a valid object or array.');
-    }
-
-    // Function to detect HTML content
-    const isHtml = str => /<\/?[a-z][\s\S]*>/i.test(str);
-
-    try {
-        // Compile the Handlebars template
-        const compiledTemplate = Handlebars.compile(template);
-
-        // Process single object or array of objects
-        let result;
-        if (Array.isArray(templateData)) {
-            // Iterate over the array and append the parsed template to each object
-            result = templateData.map(record => {
-                if (typeof record !== 'object') {
-                    throw new Error('Invalid record in array. Ensure each item is a valid object.');
+            const { data } = params;
+            const template = data.template;
+            let templateData = data.data;
+            console.log(templateData);
+            if (typeof templateData === 'string') {
+                try {
+                    // Attempt to parse JSON strings
+                    templateData = JSON.parse(templateData);
+                } catch (error) {
+                    console.warn(
+                        'Invalid templateData format. Could not parse as JSON. Proceeding with raw string.',error.message
+                    );
                 }
-                const mergedTemplate = compiledTemplate(record);
-                const key = isHtml(mergedTemplate)
-                    ? 'mergedTemplateHtml'
-                    : 'mergedTemplateText';
-                return {
-                    ...record, // Preserve original record
-                    [key]: mergedTemplate, // Append the parsed template with the correct key
-                };
-            });
-        } else {
-            // Process single object and append the parsed template
-            const mergedTemplate = compiledTemplate(templateData);
-            const key = isHtml(mergedTemplate)
-                ? 'mergedTemplateHtml'
-                : 'mergedTemplateText';
-            result = {
-                ...templateData, // Preserve original data
-                [key]: mergedTemplate, // Append the parsed template with the correct key
-            };
-        }
+            }
+            if (!template || typeof template !== 'string') {
+                throw new Error('Invalid template. Ensure template is a valid string.');
+            }
+            if (!templateData || typeof templateData !== 'object') {
+                throw new Error('Invalid data. Ensure data is a valid object.');
+            }
 
-        // Save the result in the context and return it
-        ctx.data['response'] = result;
-        console.log('Template(s) merged and appended successfully:', result);
-        return { success: true, result, key: 'response' };
-    } catch (error) {
-        console.error('Error merging template:', error.message);
-        throw new Error(`Failed to merge template: ${error.message}`);
-    }
+            try {
+                // Compile the Handlebars template and merge with data
+                const compiledTemplate = Handlebars.compile(template);
+                const result = compiledTemplate(templateData);
+                ctx.data['response'] = result;
+                console.log('Template merged successfully:', result);
+                return { success: true, result, key: 'response' };
+            } catch (error) {
+                console.error('Error merging template:', error.message);
+                throw new Error(`Failed to merge template: ${error.message}`);
+            }
 };
-
-
 
 globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
@@ -478,7 +504,7 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions), ...middlewares, express.static(folderPath));
+    app.use(route, ...middlewares, express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -538,13 +564,83 @@ const registerFileUploadEndpoint = (app, config) => {
 
 
 function registerRoutes(app, apiConfig) {
+    // Connection pool for database connections
+    const connectionPool = new Map();
+
+    // Cleanup function for connection pool
+    const cleanup = async () => {
+        for (const [key, conn] of connectionPool.entries()) {
+            try {
+                await conn.end();
+                connectionPool.delete(key);
+            } catch (error) {
+                console.error(`Error closing connection for ${key}:`, error);
+            }
+        }
+    };
+
+    // Handle process termination
+    process.on('SIGTERM', cleanup);
+    process.on('SIGINT', cleanup);
+
     apiConfig.forEach((endpoint, index) => {
-        const {  route, dbTable, dbConnection, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache , auth, authentication, encryption} = endpoint;
-        // if dbConnection is not defined, or dbTable is not defined, skip this endpoint
-        if (!dbConnection || !dbTable) {
-            console.log(`Skipping endpoint at index ${index}: dbConnection and dbTable are required.`);  
+        const { route, dbTable, dbConnection: connString, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache, auth, authentication, encryption } = endpoint;
+        
+        // Validate required configuration
+        if (!connString || !dbTable || !route) {
+            console.error(`Invalid endpoint configuration at index ${index}:`, {
+                hasConnection: !!connString,
+                hasTable: !!dbTable,
+                hasRoute: !!route
+            });
             return;
         }
+
+        // if allowRead is undefined do not validate it
+        if (allowRead !== undefined && !Array.isArray(allowRead) ) {
+            console.error(`Invalid Read permissions at index ${route}:`, {
+                allowRead
+            });
+            return;
+        }
+
+        if (allowWrite !== undefined && !Array.isArray(allowWrite) ) {
+            console.error(`Invalid Write permissions at index ${route}:`, {
+                allowWrite
+            });
+            return;
+        }
+
+        // Input validation helper
+        const validateInput = (input, allowedFields) => {
+            if (!input || typeof input !== 'object') return false;
+            return Object.keys(input).every(key => 
+                allowedFields.includes(key) && 
+                typeof input[key] === 'string' && 
+                input[key].length < 1000
+            );
+        };
+
+        // SQL injection prevention helper
+        const escapeSql = (str) => {
+            if (typeof str !== 'string') return str;
+            return str.replace(/[\0\x08\x09\x1a\n\r"'\\\%]/g, char => {
+                switch (char) {
+                    case "\0": return "\\0";
+                    case "\x08": return "\\b";
+                    case "\x09": return "\\t";
+                    case "\x1a": return "\\z";
+                    case "\n": return "\\n";
+                    case "\r": return "\\r";
+                    case "\"":
+                    case "'":
+                    case "\\":
+                    case "%":
+                        return "\\"+char;
+                    default: return char;
+                }
+            });
+        };
         consolelog.log(endpoint);
         // Default to all methods if `allowMethods` is not specified
         const allowedMethods = allowMethods || ["GET", "POST", "PUT", "DELETE", "PATCH"];
@@ -631,130 +727,204 @@ function registerRoutes(app, apiConfig) {
 
 
         // GET Endpoint with Redis Caching
-    // GET Endpoint with Redis Caching
-    app.get(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
-        try {
-            console.log('Incoming GET request:', {
-                route,
-                query: req.query,
-            });
-    
-            const connection = await getDbConnection(endpoint);
-            if (!connection) {
-                console.error(`Database connection failed for ${endpoint.dbConnection}`);
-                return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-            }
-    
-            // Sanitize and validate query parameters
-            const sanitizedQuery = Object.fromEntries(
-                Object.entries(req.query).map(([key, value]) => [key, value.replace(/^['"]|['"]$/g, '')])
-            );
-    
-            // Extract pagination parameters with defaults
-            const limit = parseInt(sanitizedQuery.limit, 10) || 20;
-            const offset = parseInt(sanitizedQuery.offset, 10) || 0;
-            if (limit < 0 || offset < 0) {
-                console.error('Invalid pagination parameters:', { limit, offset });
-                return res.status(400).json({ error: 'Limit and offset must be non-negative integers' });
-            }
-    
-            // Check for keys and build WHERE clause dynamically
-            const queryKeys = endpoint.keys
-                ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
-                : Object.keys(sanitizedQuery); // Use all query params if keys are not defined
-            const whereClause = queryKeys
-                .map((key) => `${endpoint.dbTable}.${key} = ?`)
-                .join(' AND ');
-            const params = queryKeys.map((key) => sanitizedQuery[key]);
-    
-            // Validate fields to select
-            const requestedFields = sanitizedQuery.fields
-                ? sanitizedQuery.fields.split(',').filter((field) => endpoint.allowRead.includes(field))
-                : endpoint.allowRead;
-            if (!requestedFields.length) {
-                console.error('No valid fields requested:', sanitizedQuery.fields);
-                return res.status(400).json({ error: 'No valid fields requested' });
-            }
-    
-            const fields = requestedFields.map((field) => `${endpoint.dbTable}.${field}`).join(', ');
-    
-            // Process relationships
-            let joinClause = '';
-            let relatedFields = '';
-            if (Array.isArray(endpoint.relationships)) {
-                endpoint.relationships.forEach((rel) => {
-                    joinClause += ` LEFT JOIN ${rel.relatedTable} ON ${endpoint.dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
-                    relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(', ')}`;
+        // GET endpoint with improved error handling and performance
+        app.get(route, cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            try {
+                const startTime = Date.now();
+                logger.info('Incoming GET request:', {
+                    route,
+                    query: req.query,
+                    timestamp: new Date().toISOString()
                 });
-            }
-    
-            const queryFields = `${fields}${relatedFields}`;
-    
-            // Generate the SQL query and cache key
-            const whereClauseString = whereClause ? `WHERE ${whereClause}` : '';
-            const dataQuery = `
-                SELECT ${queryFields}
-                FROM ${endpoint.dbTable}
-                ${joinClause}
-                ${whereClauseString}
-                LIMIT ${limit} OFFSET ${offset}
-            `;
-            const countQuery = `
-                SELECT COUNT(*) as totalCount
-                FROM ${endpoint.dbTable}
-                ${joinClause}
-                ${whereClauseString}
-            `;
-            const cacheKey = `cache:${route}:${JSON.stringify(req.query)}`;
-    
-            // Caching logic
-            if (endpoint.cache === 1) {
-                const cachedData = await redis.get(cacheKey);
-                if (cachedData) {
-                    console.log('Cache hit for key:', cacheKey);
-                    return res.json(JSON.parse(cachedData));
+
+                // Get connection from pool or create new one
+                let connection = connectionPool.get(connString);
+                if (!connection) {
+                    connection = await getDbConnection(endpoint);
+                    if (!connection) {
+                        throw new Error(`Database connection failed for ${connString}`);
+                    }
+                    connectionPool.set(connString, connection);
                 }
-            }
+
+                // Start transaction for consistent reads
+                await connection.beginTransaction();
+    
+                // Validate and sanitize query parameters
+                if (!validateInput(req.query, [...allowRead, 'limit', 'offset', 'fields'])) {
+                    throw new Error('Invalid query parameters');
+                }
+
+                const sanitizedQuery = Object.fromEntries(
+                    Object.entries(req.query).map(([key, value]) => [
+                        escapeSql(key),
+                        escapeSql(value.toString().replace(/^['"]|['"]$/g, ''))
+                    ])
+                );
+    
+                // Pagination with validation
+                const limit = Math.min(parseInt(sanitizedQuery.limit, 10) || 20, 100); // Cap at 100
+                const offset = Math.max(parseInt(sanitizedQuery.offset, 10) || 0, 0);
+                
+                if (isNaN(limit) || isNaN(offset)) {
+                    throw new Error('Invalid pagination parameters');
+                }
+    
+                // Build optimized WHERE clause
+                const queryKeys = endpoint.keys
+                    ? endpoint.keys.filter(key => sanitizedQuery[key] !== undefined)
+                    : Object.keys(sanitizedQuery).filter(key => !['limit', 'offset', 'fields'].includes(key));
+
+                const whereClause = queryKeys.length
+                    ? `WHERE ${queryKeys
+                        .map(key => `${dbTable}.${escapeSql(key)} = ?`)
+                        .join(' AND ')}`
+                    : '';
+
+                const params = queryKeys.map(key => sanitizedQuery[key]);
+    
+                // Field selection with validation
+                const requestedFields = sanitizedQuery.fields
+                    ? sanitizedQuery.fields
+                        .split(',')
+                        .map(f => f.trim())
+                        .filter(f => allowRead.includes(f))
+                    : allowRead;
+
+                if (!requestedFields.length) {
+                    throw new Error('No valid fields requested');
+                }
+
+                const selectedFields = requestedFields
+                    .map(field => `${dbTable}.${escapeSql(field)}`)
+                    .join(', ');
+    
+                // Optimized JOIN handling
+                const { joinClause, relatedFields } = Array.isArray(relationships)
+                    ? relationships.reduce((acc, rel) => {
+                        if (!rel.relatedTable || !rel.foreignKey || !rel.relatedKey) {
+                            throw new Error('Invalid relationship configuration');
+                        }
+                        acc.joinClause += ` LEFT JOIN ${escapeSql(rel.relatedTable)} ON ${dbTable}.${
+                            escapeSql(rel.foreignKey)} = ${escapeSql(rel.relatedTable)}.${escapeSql(rel.relatedKey)}`;
+                        acc.relatedFields += rel.fields
+                            ? `, ${rel.fields.map(f => `${escapeSql(rel.relatedTable)}.${escapeSql(f)}`).join(', ')}`
+                            : '';
+                        return acc;
+                    }, { joinClause: '', relatedFields: '' })
+                    : { joinClause: '', relatedFields: '' };
+    
+            const queryFields = `${selectedFields}${relatedFields}`;
+    
+                // Create index for better performance if it doesn't exist
+                await connection.execute(
+                    `CREATE INDEX IF NOT EXISTS idx_${dbTable}_query 
+                     ON ${dbTable} (${queryKeys.join(', ')})`
+                ).catch(err => logger.warn('Index creation warning:', err));
+
+                // Optimized query building with FORCE INDEX hint
+                const baseQuery = `FROM ${dbTable} FORCE INDEX (idx_${dbTable}_query) ${joinClause} ${whereClause}`;
+                const dataQuery = `SELECT ${selectedFields}${relatedFields} ${baseQuery} LIMIT ? OFFSET ?`;
+                
+                // Cache key with version for invalidation
+                const cacheKey = `cache:v1:${route}:${crypto
+                    .createHash('md5')
+                    .update(JSON.stringify(req.query))
+                    .digest('hex')}`;
+    
+                // Improved caching with error handling
+                if (cache === 1) {
+                    try {
+                        const cachedData = await redis.get(cacheKey);
+                        if (cachedData) {
+                            logger.info(`Cache hit for ${route}`, {
+                                cacheKey,
+                                responseTime: Date.now() - startTime
+                            });
+                            await connection.commit();
+                            return res.json(JSON.parse(cachedData));
+                        }
+                    } catch (error) {
+                        logger.error('Cache error:', error);
+                        // Continue without cache
+                    }
+                }
     
             console.log('Cache miss or cache disabled. Executing queries.');
     
-            // Execute the count query
-            const [countResult] = await connection.execute(countQuery, params);
-            const totalCount = countResult[0]?.totalCount || 0;
+                // Execute the main data query first
+                const [results] = await connection.execute(
+                    dataQuery,
+                    [...params, limit, offset]
+                );
+
+                // Get estimated row count from table statistics
+                const [tableStats] = await connection.execute(
+                    `EXPLAIN SELECT COUNT(*) FROM ${dbTable}`
+                );
+                
+                // Extract estimated rows from EXPLAIN result
+                // Note: This is an estimation, not an exact count
+                const estimatedTotal = tableStats[0]?.rows || 1000;
+
+                // Check if we have more records
+                const hasMore = results.length === limit;
+                
+                // Structured response with metadata
+                const response = {
+                    data: results,
+                    metadata: {
+                        estimatedTotal,
+                        limit,
+                        offset,
+                        hasMore,
+                        currentPage: Math.floor(offset / limit) + 1,
+                        queryTime: Date.now() - startTime
+                    },
+                };
     
-            // Execute the data query
-            const [results] = await connection.execute(dataQuery, params);
-    
-            // Prepare the response
-            const response = {
-                data: results,
-                metadata: {
-                    totalRecords: totalCount,
-                    limit,
-                    offset,
-                    totalPages: Math.ceil(totalCount / limit),
-                },
-            };
-    
-            // Cache the response if caching is enabled
-            if (endpoint.cache === 1) {
-                console.log('Caching response for key:', cacheKey);
-                await redis.set(cacheKey, JSON.stringify(response), 'EX', 300); // Cache for 5 minutes
+                // Cache response with error handling
+                if (cache === 1) {
+                    try {
+                        await redis.set(cacheKey, JSON.stringify(response), 'EX', 300);
+                        logger.info(`Cached response for ${route}`, { cacheKey });
+                    } catch (error) {
+                        logger.error('Cache write error:', error);
+                    }
+                }
+
+                await connection.commit();
+                res.json(response);
+
+                logger.info(`Completed GET ${route}`, {
+                    responseTime: Date.now() - startTime,
+                    recordCount: results.length
+                });
+
+            } catch (error) {
+                if (connection) {
+                    await connection.rollback().catch(console.error);
+                }
+                
+                logger.error(`Error in GET ${route}:`, {
+                    error: error.message,
+                    stack: error.stack,
+                    query: req.query
+                });
+
+                res.status(error.status || 500).json({
+                    error: process.env.NODE_ENV === 'development' 
+                        ? error.message 
+                        : 'Internal Server Error'
+                });
             }
-    
-            // Send the response
-            res.json(response);
-        } catch (error) {
-            console.error(`Error in GET ${route}:`, error.stack);
-            res.status(500).json({ error: error.message });
-        }
-    });
+        });
     
     
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -763,8 +933,6 @@ function registerRoutes(app, apiConfig) {
                 const values = writableFields.map((key) => req.body[key]);
                 const placeholders = writableFields.map(() => '?').join(', ');
                 const query = `INSERT INTO ${dbTable} (${writableFields.join(', ')}) VALUES (${placeholders})`;
-
-                console.log(`Inserting record into ${dbTable}:`, query , values);
 
                 try {
                     const connection = await getDbConnection(endpoint);
@@ -777,7 +945,7 @@ function registerRoutes(app, apiConfig) {
             });
         }
         if (allowedMethods.includes("PUT")) {
-            app.put(`${route}/:id`,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.put(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -805,14 +973,14 @@ function registerRoutes(app, apiConfig) {
             });
         }
         if (allowedMethods.includes("PATCH")) {
-            app.patch(`${route}/:id`, cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.patch(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
                 }
         
                 const recordKeys = keys; // The keys defined in the configuration
-                const keyValues = recordKeys.map((key) => req.body[key] || req.params[key]);
+                const keyValues = recordKeys.map((key) => req.body[key]);
                 if (keyValues.some((value) => value === undefined)) {
                     return res.status(400).json({ error: 'Missing required key fields in request body' });
                 }
@@ -822,7 +990,6 @@ function registerRoutes(app, apiConfig) {
                 const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
                 const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
         
-                console.log(`Updating record in ${dbTable}:`, query, [...values, ...keyValues]);
                 try {
                     const connection = await getDbConnection(endpoint);
                     await connection.execute(query, [...values, ...keyValues]);
@@ -832,10 +999,11 @@ function registerRoutes(app, apiConfig) {
                     res.status(500).json({ error: 'Internal Server Error' });
                 }
             });
-        }  
+        }
+                
 
         if (allowedMethods.includes("DELETE")) {
-            app.delete(`${route}/:id`, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.delete(`${route}/:id`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const query = `DELETE FROM ${dbTable} WHERE id = ?`;
 
                 try {
@@ -852,10 +1020,12 @@ function registerRoutes(app, apiConfig) {
 }
 
 function initializeRules() {
-    const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
-    const workflowConfigPath = path.join(configDir, 'workflowRules.dsl'); // Path to the workflow file
     try {
-        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');        
+
+        //DSLParser.autoRegisterFromContext(globalContext);
+
+        const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
+        
         // Use RuleEngine's fromDSL to initialize the engine properly
         const ruleEngineInstance = RuleEngine.fromDSL(dslText, globalContext);
         if (ruleEngine instanceof RuleEngine) {
@@ -865,29 +1035,11 @@ function initializeRules() {
             // Initialize the rule engine with the parsed rules
             ruleEngine = ruleEngineInstance;
         }
-           
+        console.log(ruleEngine);      
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
-        console.error('Failed to initialize business rules:', error.message);     
-        process.exit(1); // Use a non-zero exit code for errors 
+        console.error('Failed to initialize business rules:', error.message);        
     }
-    try{
-        const { WorkflowEngine } = require('./modules/workflowEngine');
-        const dslText = fs.readFileSync(workflowConfigPath, 'utf-8'); 
-        if(dslText !== null) {      
-            const dslparser = new DSLParser();
-            const workflowEngine = new WorkflowEngine(dslparser, globalContext);
-            workflowEngine.loadWorkflows(dslText);
-            
-            consolelog.log('Workflow rules initialized successfully.');
-        }  else {
-            console.error('Failed to initialize workflow rules:', 'No workflow rules found');        
-        }
-    }catch (error) {
-        console.error('Failed to initialize workflow rules:', error.message); 
-        process.exit(1); // Use a non-zero exit code for errors
-    }
-    console.log(ruleEngine); 
 }
 
 // Catch unhandled promise rejections
@@ -1168,11 +1320,23 @@ async function handleBuildCommand() {
 
 class Adaptus2Server {
     constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
+        // Initialize API Analytics and DevTools
+        this.apiAnalytics = new APIAnalytics();
+        this.devTools = new DevTools();
+        // Create HTTP server instance
+        this.httpServer = http.createServer();
         this.port = port;
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
         this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+        
+        // Attach Express app to HTTP server
+        this.httpServer.on('request', this.app);
+        
+        // Initialize WebSocket server
+        this.wss = new WebSocket.Server({ server: this.httpServer });
+        this.setupWebSocket();
         this.apiConfig = apiConfig;
         this.categorizedConfig = categorizedConfig;
         this.businessRules = new BusinessRules();
@@ -1196,6 +1360,10 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "SHUTDOWN":
+                            console.log("Shutting down server...");
+                            await this.shutdown();
+                            break;
                         case "userGenToken":
                             if (args.length < 2) {
                                 socket.write("Usage: userGenToken <username> <acl>\n");
@@ -1396,62 +1564,129 @@ class Adaptus2Server {
     async initializeTables() {
         console.log('Initializing tables...');
         
-        for (const endpoint of this.apiConfig) {
-            const { dbType, dbTable, columnDefinitions } = endpoint;
-            consolelog.log("Working on endpoint",endpoint);
-            // Not acceptable dbType's are skipped
-            if (!['mysql', 'postgres'].includes(dbType)) {
-                console.warn(`Skipping ${dbTable}: Unsupported database type ${dbType}`);
-                continue;
-            }
-            const connection = await getDbConnection(endpoint);
-            
-            if (!connection) {
-                console.error(`Failed to connect to database for ${endpoint.dbConnection}`);
-                continue;
-            }
-    
-            if (!columnDefinitions) {
-                console.warn(`Skipping ${dbTable}: No column definitions provided.`);
-                continue;
-            }
-    
-            try {
-                // Check if the table exists
-                let tableExists = false;
-                if (dbType === 'mysql') {
-                    const [rows] = await connection.execute(
-                        `SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?`,
-                        [dbTable]
-                    );
-                    tableExists = rows[0].count > 0;
-                } else if (dbType === 'postgres') {
-                    const [rows] = await connection.execute(
-                        `SELECT COUNT(*) AS count FROM information_schema.tables WHERE table_name = $1`,
-                        [dbTable]
-                    );
-                    tableExists = rows[0].count > 0;
-                } else {
+        // Create a connection pool for better performance
+        const connectionPool = new Map();
+        
+        try {
+            for (const endpoint of this.apiConfig) {
+                const { dbType, dbTable, columnDefinitions, dbConnection: connString } = endpoint;
+                consolelog.log("Working on endpoint", endpoint);
+
+                // Input validation
+                if (!dbType || !dbTable || !columnDefinitions) {
+                    console.warn(`Skipping invalid endpoint configuration:`, {
+                        dbType,
+                        dbTable,
+                        hasColumnDefs: !!columnDefinitions
+                    });
+                    continue;
+                }
+
+                // Validate database type
+                if (!['mysql', 'postgres'].includes(dbType)) {
                     console.warn(`Skipping ${dbTable}: Unsupported database type ${dbType}`);
                     continue;
                 }
+
+                // Reuse existing connection from pool if available
+                let connection = connectionPool.get(connString);
+                if (!connection) {
+                    connection = await getDbConnection(endpoint);
+                    if (!connection) {
+                        console.error(`Failed to connect to database for ${connString}`);
+                        continue;
+                    }
+                    connectionPool.set(connString, connection);
+                }
     
-                if (tableExists) {
-                    console.log(`Table ${dbTable} already exists. Skipping creation.`);
+                // Validate column definitions
+                if (!Object.keys(columnDefinitions).length) {
+                    console.warn(`Skipping ${dbTable}: Empty column definitions`);
+                    continue;
+                }
+
+                // Validate column names and types
+                const invalidColumns = Object.entries(columnDefinitions).filter(([name, type]) => {
+                    return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || !type.match(/^[a-zA-Z0-9\s()]+$/);
+                });
+
+                if (invalidColumns.length > 0) {
+                    console.error(`Invalid column definitions in ${dbTable}:`, invalidColumns);
                     continue;
                 }
     
-                // Build the CREATE TABLE query
-                const columns = Object.entries(columnDefinitions)
-                    .map(([column, type]) => `${column} ${type}`)
-                    .join(', ');
+                try {
+                    // Check if the table exists using a transaction
+                    await connection.beginTransaction();
+
+                    // Check if the table exists with proper error handling
+                    let tableExists = false;
+                    try {
+                        if (dbType === 'mysql') {
+                            const [rows] = await connection.execute(
+                                `SELECT COUNT(*) AS count FROM information_schema.tables 
+                                 WHERE table_schema = DATABASE() AND table_name = ?`,
+                                [dbTable]
+                            );
+                            tableExists = rows[0].count > 0;
+                        } else if (dbType === 'postgres') {
+                            const [rows] = await connection.execute(
+                                `SELECT COUNT(*) AS count FROM information_schema.tables 
+                                 WHERE table_name = $1`,
+                                [dbTable]
+                            );
+                            tableExists = rows[0].count > 0;
+                        }
+                    } catch (error) {
+                        console.error(`Error checking table existence for ${dbTable}:`, error);
+                        await connection.rollback();
+                        continue;
+                    }
     
-                const createTableQuery = `CREATE TABLE ${dbTable} (${columns})`;
-                console.log(`Executing query: ${createTableQuery}`);
-                await connection.execute(createTableQuery);
-                console.log(`Table ${dbTable} initialized successfully.`);
-            } catch (error) {
-                console.error(`Error initializing table ${dbTable}:`, error);
+                    if (tableExists) {
+                        console.log(`Table ${dbTable} already exists. Skipping creation.`);
+                        await connection.commit();
+                        continue;
+                    }
+    
+                    // Build and validate the CREATE TABLE query
+                    const columns = Object.entries(columnDefinitions)
+                        .map(([column, type]) => `${column} ${type}`)
+                        .join(', ');
+        
+                    const createTableQuery = `CREATE TABLE ${dbTable} (${columns})`;
+                    console.log(`Executing query: ${createTableQuery}`);
+
+                    try {
+                        await connection.execute(createTableQuery);
+                        await connection.commit();
+                        console.log(`Table ${dbTable} initialized successfully.`);
+                    } catch (error) {
+                        await connection.rollback();
+                        console.error(`Error creating table ${dbTable}:`, error);
+                        
+                        // Provide more detailed error information
+                        if (error.code === 'ER_DUP_FIELDNAME') {
+                            console.error('Duplicate column name detected');
+                        } else if (error.code === 'ER_PARSE_ERROR') {
+                            console.error('SQL syntax error in CREATE TABLE statement');
+                        }
+                    }
+                } catch (error) {
+                    console.error(`Error in table initialization process for ${dbTable}:`, error);
+                    if (connection) {
+                        await connection.rollback().catch(console.error);
+                    }
+                }
+            }
+        } finally {
+            // Close all connections in the pool
+            for (const connection of connectionPool.values()) {
+                try {
+                    await connection.end();
+                } catch (error) {
+                    console.error('Error closing database connection:', error);
+                }
             }
         }
     }
@@ -1475,15 +1710,67 @@ class Adaptus2Server {
 
 
     registerMiddleware() {
-        this.app.use(express.json());
-        this.app.use(morgan('combined'));
-        // this.businessRules.loadRules();
-        // this.app.use(this.businessRules.middleware());
+        // API Analytics middleware
+        this.app.use(this.apiAnalytics.middleware());
+
+        // Security middleware
+        this.app.use(helmet({
+            contentSecurityPolicy: {
+                directives: {
+                    defaultSrc: ["'self'"],
+                    scriptSrc: ["'self'", "'unsafe-inline'"],
+                    styleSrc: ["'self'", "'unsafe-inline'"],
+                    imgSrc: ["'self'", "data:", "https:"],
+                }
+            },
+            xssFilter: true,
+            noSniff: true,
+            referrerPolicy: { policy: 'same-origin' }
+        }));
+
+        // Request parsing with size limits
+        this.app.use(express.json({ limit: MAX_REQUEST_SIZE }));
+        this.app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_SIZE }));
+        
+        // Response compression
+        this.app.use(compression());
+
+        // Logging
+        this.app.use(morgan('combined', {
+            skip: (req, res) => res.statusCode < 400, // Only log errors
+            stream: {
+                write: message => logger.error(message.trim())
+            }
+        }));
+
+        // Error handling for malformed JSON
+        this.app.use((err, req, res, next) => {
+            if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+                return res.status(400).json({ 
+                    error: 'Invalid JSON payload',
+                    details: process.env.NODE_ENV === 'development' ? err.message : undefined
+                });
+            }
+            next(err);
+        });
+
+        // Rate limiting
         const rateLimit = new RateLimit(this.apiConfig, this.redis);
-        this.app.use(rateLimit.middleware());      
-        consolelog.log('Rule Engine for Middleware',ruleEngine);
+        this.app.use(rateLimit.middleware());
+
+        // Rule engine middleware
+        consolelog.log('Rule Engine for Middleware', ruleEngine);
         const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
         this.app.use(ruleEngineMiddleware.middleware());
+
+        // Global error handler
+        this.app.use((err, req, res, next) => {
+            logger.error('Unhandled error:', err);
+            res.status(err.status || 500).json({
+                error: 'Internal Server Error',
+                message: process.env.NODE_ENV === 'development' ? err.message : undefined
+            });
+        });
     }
 
     
@@ -1667,7 +1954,148 @@ class Adaptus2Server {
     }
     
     
+    // Set up WebSocket server and handlers
+    setupWebSocket() {
+        // Store connected clients
+        const clients = new Set();
+
+        // Handle new WebSocket connections
+        this.wss.on('connection', (ws, req) => {
+            // Add client to set
+            clients.add(ws);
+            
+            // Handle client messages
+            ws.on('message', async (message) => {
+                try {
+                    const data = JSON.parse(message);
+                    // Handle different message types
+                    switch (data.type) {
+                        case 'subscribe':
+                            ws.subscribedChannels = ws.subscribedChannels || new Set();
+                            ws.subscribedChannels.add(data.channel);
+                            break;
+                        case 'unsubscribe':
+                            if (ws.subscribedChannels) {
+                                ws.subscribedChannels.delete(data.channel);
+                            }
+                            break;
+                        default:
+                            console.warn('Unknown message type:', data.type);
+                    }
+                } catch (error) {
+                    console.error('WebSocket message error:', error);
+                    ws.send(JSON.stringify({
+                        type: WS_EVENTS.ERROR,
+                        error: 'Invalid message format'
+                    }));
+                }
+            });
+
+            // Handle client disconnection
+            ws.on('close', () => {
+                clients.delete(ws);
+            });
+
+            // Send initial connection success message
+            ws.send(JSON.stringify({
+                type: 'connected',
+                timestamp: new Date().toISOString()
+            }));
+        });
+
+        // Subscribe to Redis channels
+        redisSubscriber.subscribe(
+            REDIS_CHANNELS.DB_CHANGES,
+            REDIS_CHANNELS.CACHE_UPDATES,
+            REDIS_CHANNELS.CONFIG_CHANGES
+        );
+
+        // Handle Redis messages
+        redisSubscriber.on('message', (channel, message) => {
+            // Broadcast to relevant WebSocket clients
+            const data = JSON.parse(message);
+            clients.forEach(client => {
+                if (client.readyState === WebSocket.OPEN &&
+                    (!client.subscribedChannels || client.subscribedChannels.has(channel))) {
+                    client.send(JSON.stringify({
+                        type: this.getEventTypeForChannel(channel),
+                        channel,
+                        data
+                    }));
+                }
+            });
+        });
+    }
+
+    // Helper to map Redis channels to WebSocket event types
+    getEventTypeForChannel(channel) {
+        switch (channel) {
+            case REDIS_CHANNELS.DB_CHANGES:
+                return WS_EVENTS.DATABASE_CHANGE;
+            case REDIS_CHANNELS.CACHE_UPDATES:
+                return WS_EVENTS.CACHE_INVALIDATED;
+            case REDIS_CHANNELS.CONFIG_CHANGES:
+                return WS_EVENTS.CONFIG_UPDATED;
+            default:
+                return 'unknown';
+        }
+    }
+
+    // Method to publish database changes
+    async publishDatabaseChange(table, operation, data) {
+        try {
+            await redisPublisher.publish(REDIS_CHANNELS.DB_CHANGES, JSON.stringify({
+                table,
+                operation,
+                data,
+                timestamp: new Date().toISOString()
+            }));
+        } catch (error) {
+            console.error('Error publishing database change:', error);
+        }
+    }
+
+    // Method to publish cache updates
+    async publishCacheInvalidation(key, reason) {
+        try {
+            await redisPublisher.publish(REDIS_CHANNELS.CACHE_UPDATES, JSON.stringify({
+                key,
+                reason,
+                timestamp: new Date().toISOString()
+            }));
+        } catch (error) {
+            console.error('Error publishing cache invalidation:', error);
+        }
+    }
+
+    // Register analytics routes
+    registerAnalyticsRoutes() {
+        const analyticsRoutes = new AnalyticsRoutes(this.apiAnalytics);
+        this.app.use('/analytics', authenticateMiddleware(true), analyticsRoutes.getRouter());
+    }
+
+    // Register development tools routes (only in development environment)
+    registerDevTools() {
+        if (process.env.NODE_ENV === 'development') {
+            const devToolsRoutes = new DevToolsRoutes(this.devTools);
+            this.app.use('/dev', authenticateMiddleware(true), devToolsRoutes.getRouter());
+            console.log('Development tools enabled and routes registered');
+        }
+    }
+
     async start(callback) {
+        process.on('uncaughtException', (error) => {
+            logger.error('Uncaught Exception:', error);
+            // Perform graceful shutdown
+            this.shutdown(1);
+        });
+
+        process.on('unhandledRejection', (reason, promise) => {
+            logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
+            // Perform graceful shutdown
+            this.shutdown(1);
+        });
+
         try {
             // Extract command-line arguments
             const args = process.argv.slice(2);
@@ -1732,10 +2160,11 @@ class Adaptus2Server {
             // Set up other parts of the server
             this.setupDependencies();
             this.setupPluginLoader();
-            extendContext();
             autoloadPlugins(this.pluginManager);
+            this.registerAnalyticsRoutes();
+            this.registerDevTools();
             setupRag(this.apiConfig);
-            
+            extendContext();
             initializeRules();
             this.registerMiddleware();
             this.registerRoutes();
@@ -1756,9 +2185,9 @@ class Adaptus2Server {
             this.subscribeToPluginUpdates();
 
             
-            // Start the server
-            this.app.listen(this.port, () => {
-                consolelog.log(`API server running on port ${this.port}`);
+            // Start the HTTP server (which includes WebSocket)
+            this.httpServer.listen(this.port, () => {
+                consolelog.log(`API server running on port ${this.port} (HTTP/WebSocket)`);
                 if (callback) callback();
             });
     
@@ -1770,9 +2199,53 @@ class Adaptus2Server {
     
    
 
-    close() {
-        if (this.server) {
-            this.server.close();
+    async shutdown(code = 0) {
+        // Close WebSocket server
+        if (this.wss) {
+            await new Promise((resolve) => {
+                this.wss.close(() => {
+                    console.log('WebSocket server closed');
+                    resolve();
+                });
+            });
+        }
+        console.log('Shutting down gracefully...');
+        
+        try {
+            // Close all connections
+            const connections = await Promise.allSettled([
+                this.redis.quit(),
+                this.publisherRedis?.quit(),
+                this.subscriberRedis?.quit(),
+                redisPublisher.quit(),
+                redisSubscriber.quit()
+            ]);
+
+            connections.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                    console.error(`Failed to close connection ${index}:`, result.reason);
+                }
+            });
+
+            // Close the server
+            if (this.server) {
+                await new Promise((resolve) => {
+                    this.server.close(resolve);
+                });
+            }
+
+            // Close socket server if it exists
+            if (this.socketServer) {
+                await new Promise((resolve) => {
+                    this.socketServer.close(resolve);
+                });
+            }
+
+            console.log('Graceful shutdown completed');
+            process.exit(code);
+        } catch (error) {
+            console.error('Error during shutdown:', error);
+            process.exit(1);
         }
     }
 }
