@@ -7,8 +7,13 @@ const DSLParser = require('./dslparser');
 const crypto = require('crypto');
 const { getApiConfig } = require('./apiConfig');
 const { getContext, globalContext  } = require('./context'); // Shared global context
+const bcrypt = require('bcrypt');
+
 global.sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
-global.bcrypt = (value) => crypto.createHash('bcrypt').update(value).digest('hex');
+global.bcrypt = async (value) => {
+  const saltRounds = 10; 
+  return await bcrypt.hash(value, saltRounds);
+};
 /**
  * A single rule, representing:
  *   IF <event> <entity> WHEN <conditions> THEN <thenActions>
@@ -311,85 +316,81 @@ class Rule {
 
     // Handle specific action cases
     switch (action.action) {
-        case 'update':
-          if (action.expression && action.field) {
-            try {
-              consolelog.log("ExecuteActions ========================>:", action);
-              consolelog.log("Executing update action:", action);
+      case 'update':
+        if (action.expression && action.field) {
+          try {
+            consolelog.log("ExecuteActions ========================>:", action);
+             // Check if the expression contains a command marker
+             const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
+             let computedValue;
+ 
+             if (isCommand) {
+                    const command = isCommand[1].trim();
+                    consolelog.log(`Detected command: ${command}`);
 
-              // Check if the expression contains a command marker
-              const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
-              let computedValue;
-  
-              if (isCommand) {
-                const command = isCommand[1].trim();
-                consolelog.log(`Detected command: ${command}`);
+                      // Split at the first occurrence of "data:"
+                    const commandAction = this.parseCommandString(command);                            
 
-                 // Split at the first occurrence of "data:"
-                const commandAction = this.parseCommandString(command);                            
-
-                console.log("Command Action:",commandAction);
-                // Execute the command action using executeAction
-                await this._executeAction(actionContext, commandAction, data);
-                console.log("Returned result:",actionContext.data.response);
-                // Assume the command stores its result in `data[commandAction.outputKey]`
-                computedValue = actionContext.data.response;
-              } else {
-          
-                    // Check if the expression contains any global functions
-                  const globalFunctionNames = Object.keys(global);
-                  const containsGlobalFunction = globalFunctionNames.some((fnName) =>
-                    new RegExp(`\\b${fnName}\\b`).test(action.expression)
-                  );
-
-                  let interpolatedExpression;
-                  if (containsGlobalFunction) {
-                    // Do not stringify if global function is present
-                    interpolatedExpression = this._interpolatePlaceholders(action.expression, data);
-                  } else {
-                    // Stringify the interpolated object otherwise
-                    interpolatedExpression = JSON.stringify(this._interpolatePlaceholders(action.expression, data));
+                    console.log("Command Action:",commandAction);
+                    // Execute the command action using executeAction
+                    await this._executeAction(actionContext, commandAction, data);
+                    console.log("Returned result:",actionContext.data.response);
+                    // Assume the command stores its result in `data[commandAction.outputKey]`
+                    computedValue = actionContext.data.response;
+                  
+                  try{
+                    computedValue = JSON.parse(computedValue);
+                  } catch (err) {
+                    console.error(`Error parsing JSON:`, err.message);
                   }
-                
-                    consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
-                
-                    // Dynamically evaluate the expression
-                    const computedValue = new Function(
-                      'data',
-                      'globals',
-                      `
-                        with (data) {
-                          with (globals) {
-                            return ${interpolatedExpression};
-                          }
-                        }
-                      `
-                    )(data, global);
-              }
-              try{
-                computedValue = JSON.parse(computedValue);
-              } catch (err) {
-                console.error(`Error parsing JSON:`, err.message);
-              }
-              // Parse computedValue to JSON if it's a string
-              let parsedValue = typeof computedValue === 'string' ? JSON.parse(computedValue) : computedValue;
-
-              // Check if parsedValue is JSON and has a template property
-              if (typeof parsedValue === 'object' && parsedValue !== null && parsedValue.hasOwnProperty(action.field)) {
-                  data[action.field] = parsedValue[action.field]; // Assign value from JSON template property
-                  console.log(`Updated1: ${action.field} = `,data[action.field]);
+                  // Parse computedValue to JSON if it's a string
+                  let parsedValue = typeof computedValue === 'string' ? JSON.parse(computedValue) : computedValue;
               } else {
-                data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
-                console.log(`Updated2: ${action.field} = `,data[action.field]);
-              }
-              // Update the data object with the computed value              
-             
-            } catch (err) {
-              console.error(`Error updating field "${action.field}":`, err.message);
-            }
-          }
-            break;
+        
+                      // Check if the expression contains any global functions
+                    const globalFunctionNames = Object.keys(global);
+                    const containsGlobalFunction = globalFunctionNames.some((fnName) =>
+                      new RegExp(`\\b${fnName}\\b`).test(action.expression)
+                    );
 
+                    let interpolatedExpression;
+                    if (containsGlobalFunction) {
+                      // Do not stringify if global function is present
+                      interpolatedExpression = this._interpolatePlaceholders(action.expression, data);
+                    } else {
+                      // Stringify the interpolated object otherwise
+                      interpolatedExpression = JSON.stringify(this._interpolatePlaceholders(action.expression, data));
+                    }
+                  
+                      consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
+                  
+                      // Dynamically evaluate the expression
+                      computedValue = new Function(
+                        'data',
+                        'globals',
+                        `
+                          with (data) {
+                            with (globals) {
+                              return ${interpolatedExpression};
+                            }
+                          }
+                        `
+                      )(data, global);
+        
+            }
+              // Check if parsedValue is JSON and has a template property
+            if (typeof parsedValue === 'object' && parsedValue !== null && parsedValue.hasOwnProperty(action.field)) {
+                data[action.field] = parsedValue[action.field]; // Assign value from JSON template property
+                console.log(`Updated1: ${action.field} = `,data[action.field]);
+            } else {
+              data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
+              console.log(`Updated2: ${action.field} = `,data[action.field]);
+            }
+          } catch (err) {
+            console.error(`Error updating field "${action.field}":`, err.message);
+          }
+        }
+          break;
         case 'assign':
           if (action.field && action.expression) {
             try {
