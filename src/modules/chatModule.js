@@ -2,6 +2,10 @@ const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
 const { getDbConnection } = require("./db");
+const ollamaModule = require("./ollamaModule");
+
+// AI trigger prefix
+const AI_TRIGGER = "/ai";
 class ChatModule {
     constructor(httpServer, app, jwtSecret, dbConfig, corsOptions) {
         // Initialize Socket.IO
@@ -71,30 +75,58 @@ class ChatModule {
             // Event: One-to-one message
             socket.on("privateMessage", async ({ recipientId, message }) => {
                 console.log(`Private message from ${socket.user.username} to ${recipientId}: ${message}`);
-                try{
-                const recipientSocketId = this.connectedUsers.get(recipientId);
+                try {
+                    const recipientSocketId = this.connectedUsers.get(recipientId);
+                    const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
 
-                // Save message in the database
-                const messageData = {
-                    senderId: socket.user.username,
-                    recipientId,
-                    groupName: null,
-                    message,
-                    status: recipientSocketId ? "delivered" : "pending",
-                };
-                await this.saveMessage(messageData);
+                    // Save message in the database
+                    const messageData = {
+                        senderId: socket.user.username,
+                        recipientId,
+                        groupName: null,
+                        message,
+                        status: recipientSocketId ? "delivered" : "pending",
+                    };
+                    await this.saveMessage(messageData);
 
-                // Send the message if the recipient is online
-                if (recipientSocketId) {
-                    this.io.to(recipientSocketId).emit("privateMessage", {
-                        from: socket.user.username,
-                        to: recipientId,
-                        text: message,
-                        timestamp: new Date().toISOString(),
-                    });
-                } else {
-                    socket.emit("info", `User ${recipientId} is offline. Message saved.`);
-                }
+                    // Send the message if the recipient is online
+                    if (recipientSocketId) {
+                        this.io.to(recipientSocketId).emit("privateMessage", {
+                            from: socket.user.username,
+                            to: recipientId,
+                            text: message,
+                            timestamp: new Date().toISOString(),
+                        });
+                    } else {
+                        socket.emit("info", `User ${recipientId} is offline. Message saved.`);
+                    }
+
+                    // Process with Ollama only if AI is triggered
+                    if (isAiQuery) {
+                        const aiPrompt = message.slice(AI_TRIGGER.length).trim();
+                        const aiResponse = await ollamaModule.processMessage({
+                            ...messageData,
+                            message: aiPrompt
+                        });
+
+                        // Send AI response back to the sender
+                        socket.emit("privateMessage", {
+                            from: "AI_Assistant",
+                            to: socket.user.username,
+                            text: aiResponse.message,
+                            timestamp: new Date().toISOString(),
+                        });
+
+                        // If recipient is online, also send them the AI response
+                        if (recipientSocketId) {
+                            this.io.to(recipientSocketId).emit("privateMessage", {
+                                from: "AI_Assistant",
+                                to: recipientId,
+                                text: aiResponse.message,
+                                timestamp: new Date().toISOString(),
+                            });
+                        }
+                    }
             } catch (error) {
                 console.error("Error handling privateMessage event:", error.message);
                 socket.emit("error", "An error occurred while sending your message.");
@@ -117,6 +149,8 @@ class ChatModule {
             // Event: Group message
             socket.on("groupMessage", async ({ groupName, message }) => {
                 if (this.rooms.has(groupName)) {
+                    const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
+
                     // Save message in the database
                     const messageData = {
                         senderId: socket.user.username,
@@ -133,6 +167,22 @@ class ChatModule {
                         message,
                         timestamp: new Date().toISOString(),
                     });
+
+                    // Process with Ollama only if AI is triggered
+                    if (isAiQuery) {
+                        const aiPrompt = message.slice(AI_TRIGGER.length).trim();
+                        const aiResponse = await ollamaModule.processMessage({
+                            ...messageData,
+                            message: aiPrompt
+                        });
+
+                        // Broadcast AI response to group
+                        this.io.to(groupName).emit("groupMessage", {
+                            senderId: "AI_Assistant",
+                            message: aiResponse.message,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
                 } else {
                     socket.emit("error", `Group ${groupName} does not exist.`);
                 }

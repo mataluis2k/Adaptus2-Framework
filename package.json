@@ -66,6 +66,7 @@
     "natural": "^8.0.1",
     "node-fetch": "^3.3.2",
     "node-schedule": "^2.1.1",
+    "ollama": "^0.5.12",
     "openai": "^4.74.0",
     "passport": "^0.7.0",
     "passport-oauth2": "^1.8.0",

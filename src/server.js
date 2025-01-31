@@ -58,7 +58,8 @@ const { createHandler } = require('graphql-http/lib/use/express');
 const ChatModule = require('./modules/chatModule'); // Chat Module
 const generateSwaggerDoc = require('./modules/generateSwaggerDoc');
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
-const RuleEngine = require('./modules/ruleEngine');  
+const RuleEngine = require('./modules/ruleEngine');
+const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
 const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
 
 // Changes to enable clustering and plugin management
@@ -1761,6 +1762,18 @@ class Adaptus2Server {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        // Initialize Ollama Module
+        try {
+            ollamaModule.initialize().then(() => {
+                console.log('Ollama module initialized successfully');
+                ollamaModule.setupRoutes(app);
+            }).catch(error => {
+                console.error('Failed to initialize Ollama module:', error.message);
+            });
+        } catch (error) {
+            console.error('Failed to setup Ollama module:', error.message);
+        }
+
         // Initialize Chat Module
         if(process.env.CHAT_SERVER_PORT){
             const chat_port = process.env.CHAT_SERVER_PORT;
