@@ -44,7 +44,7 @@ const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to th
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 const Handlebars = require('handlebars');
-const bcrypt = require('bcrypt');
+const bcrypt = require('bcryptjs');
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -553,7 +553,7 @@ function registerRoutes(app, apiConfig) {
                     let isValidPassword = false;
 
                     if (encryption === "bcrypt") {
-                        isValidPassword = await bcrypt.compare(password, transformHash(user[authentication]));
+                       isValidPassword = validateBcryptPassword(password, user[authentication]);
                     } else if (encryption === "sha256") {
                         const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
                         isValidPassword = hashedPassword === user[authentication];
@@ -1716,11 +1716,25 @@ class Adaptus2Server {
     }
 }
 
-function transformHash(hash) {
-    if (hash.startsWith('$2y$')) {
-        return hash.replace(/^\$2y\$/, '$2b$');
-    }
-    return hash;
+function validateBcryptPassword(plainPassword, hashedPassword) {
+    if(!plainPassword || !hashedPassword)
+        throw new Error("Both plainPassword and hashedPassword are required.");
+
+    if(!validBcryptHash(hashedPassword))
+        throw new Error("Invalid bcrypt version or hash format.");
+
+    return bcrypt.compareSync(plainPassword, hashedPassword);
+}
+
+function validBcryptHash(hashedPassword) {
+    if( !hashedPassword.startsWith("$2a$") && 
+        !hashedPassword.startsWith("$2b$") && 
+        !hashedPassword.startsWith("$2x$") && 
+        !hashedPassword.startsWith("$2y$")) {
+            return false;
+        }
+
+        return true;
 }
 
 

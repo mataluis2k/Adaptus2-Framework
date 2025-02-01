@@ -10,7 +10,7 @@
   "bin": {
     "adaptus2-cli": "./cliClient.js",
     "adaptus2": "./index.js",
-    "adaptus2-setup": "./Adaptus2-install.js"    
+    "adaptus2-setup": "./Adaptus2-install.js"
   },
   "scripts": {
     "postinstall": "node scripts/copy-plugins.js",
@@ -38,6 +38,7 @@
     "aws-sdk": "^2.1692.0",
     "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "body-parser": "^1.20.3",
     "braintree": "^3.26.0",
     "cors": "^2.8.5",
