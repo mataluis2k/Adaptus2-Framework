@@ -98,3 +98,5 @@ dist/
 
 # Node-watcher
 *.swp
+
+package-lock.json
