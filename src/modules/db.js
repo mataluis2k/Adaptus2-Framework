@@ -184,6 +184,11 @@ async function update(config, entity, query, data) {
     if (Object.keys(validData).length === 0) {
         throw new Error(`No valid fields to update for ${entity}.`);
     }
+    
+    // Apply ownership check
+    if (modelConfig.owner && req.user) {
+        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField];
+    }
 
     try {
         const dbTable = modelConfig.dbTable || entity;
@@ -234,6 +239,11 @@ async function read(config, entity, query) {
    
     const allowedFields = modelConfig.allowRead || [];
     const dbTable = modelConfig.dbTable || entity;
+
+    if (modelConfig.owner && req.user) {
+        query = query || {};
+        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField]; // Enforce ownership check
+    }
 
     try {
         switch (config.dbType.toLowerCase()) {
@@ -339,6 +349,10 @@ async function deleteRecord(config, entity, query) {
         throw new Error(`Primary key (${primaryKey}) is required to delete records from ${entity}.`);
     }
 
+      // Apply ownership check
+    if (modelConfig.owner && req.user) {
+        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField];
+    }
     try {
         switch (config.dbType.toLowerCase()) {
             case 'mysql':

@@ -1,57 +1,128 @@
-# **Adaptus2 Framework**: The Highly Scalable and Configurable API Framework for Node.js
-*"Build robust, dynamic, and high-performance APIs with integrated AI features and effortless OpenGraph metadata configuration."*
+# Adaptus2 Framework
 
----
-## **1. Release Log**
-- Move templateparser to server to make it available in init
-- Move PluginManager to the top of the loading process to make available all actions in init
-- Improve business logic handler to daisy chain data from db to other modules
-- fix bugs related to template parsing and JSON structure.
-
-
-## **2. Overview**
-- **What it is**: A Node.js framework for scalable, configurable API services, with advanced features like AI-based retrieval-augmented generation (RAG), dynamic OpenGraph metadata handling, and extensive middleware support.
-- **Why it matters**: Simplifies API development with an architecture that enables rapid deployment, seamless extensibility, and efficient operations. Configuration-driven approaches via `apiConfig.json` reduce boilerplate code while enhancing flexibility.
+Adaptus2 is a flexible and modular API server framework built on Express. It integrates a variety of technologies and features to support robust API development, real-time updates, plugin management, and scalable microservices architecture.
 
 ---
 
-## **3. Features**
-### **Current Functionality**
-- **Dynamic Routing**: Define and manage API routes through `apiConfig.json` for unparalleled flexibility.
-- **Dynamic OpenGraph Configuration**: Easily set and manage OpenGraph metadata.
-- **Proxy API Support**: Create proxy endpoints with caching, query mapping, and response enrichment.
-- **GraphQL Integration**: Generate and expose dynamic GraphQL schemas from API configurations.
-- **Middleware System**: Built-in middleware for authentication, rate limiting, logging, and ACLs.
-- **Caching Support**: Redis-based caching for optimized performance.
-- **Rate Limiting**: Protect APIs with rate-limiting middleware.
-- **Dynamic Table Initialization**: Automatically initialize database tables based on configuration.
-- **Machine Learning Analytics**: Integration with ML models for analytics and RAG (Retrieval-Augmented Generation).
-- **Cluster and Plugin Management**: Manage plugins dynamically across clusters using Redis Pub/Sub.
-- **Real-Time Monitoring and Management**: CLI interface and dynamic module loading/unloading support.
-- **Business Rule Engine**: DSL-driven rule evaluation and execution framework.
+## Installation
 
-### **Upcoming Features**
-- Enhanced real-time WebSocket support.
-- Advanced API monitoring and logging.
-- Multi-tenancy capabilities for shared configurations.
-- Modular plugin architecture for user-defined extensions.
-- CLI tools for scaffolding, configuration management, and operational insights.
-- Comprehensive OpenGraph templating and customization options.
+1. **Clone the Repository:**
+   ```bash
+   git clone <repository-url>
+   cd Adaptus2-Framework
+   ```
+
+2. **Install Dependencies:**
+   Use npm to install all required packages:
+   ```bash
+   npm install
+   ```
+
+3. **Environment Configuration:**
+   - Create a `.env` file at the root directory, or copy the provided `env.sample` and update the necessary environment variables.
+   - Key variables include:
+     - `PORT`
+     - `REDIS_URL`
+     - `JWT_SECRET`
+     - `JWT_EXPIRY`
+     - `PLUGIN_MANAGER`
+     - `CLUSTER_NAME`
+     - Others as needed for your configuration.
+
+4. **Database Setup:**
+   - Ensure your database (MySQL or PostgreSQL) is running.
+   - Use the command-line flags to initialize tables if needed:
+     ```bash
+     npm run init
+     ```
+     (This uses the `--init` flag to setup database tables.)
+
+5. **Starting the Server:**
+   To start the server, simply run:
+   ```bash
+   npm start
+   ```
+   Additional commands:
+   - `npm run build` to build the API configuration from the database.
+   - `npm run swagger` to generate Swagger API documentation if configured.
 
 ---
 
-## **4. Why Adaptus2 Framework?**
-- Offers a **configuration-driven API server** to accelerate development.
-- Features **state-of-the-art AI integration** for RAG and analytics.
-- Incorporates robust **caching and performance optimization** tools.
-- Built-in support for **SEO-friendly OpenGraph metadata**.
-- Fully extensible with a **plugin management system**.
-- Comprehensive **middleware and ACL systems** for secure and reliable APIs.
-- Open-source and **community-driven** for long-term reliability and growth.
+## Overview
+
+The Adaptus2 Framework provides a highly configurable server architecture that supports:
+- RESTful APIs with dynamic routing and CRUD operations based on external API configurations.
+- Real-time communication via WebSocket integrated with Redis Pub/Sub.
+- GraphQL endpoint for advanced data querying.
+- Built-in support for authentication, authorization, rate limiting, caching, and security enhancements.
 
 ---
 
-## **5. Getting Started**
+## Key Features
+
+### Core Server & REST API
+- **Express-based Server:**  
+  Configured with essential middleware for JSON parsing, URL-encoded payloads, and response compression.
+- **Dynamic Routing:**  
+  Routes are dynamically registered from a categorized API configuration. Supports standard CRUD operations and proxy endpoints.
+- **Database Integration:**  
+  Uses a configurable database connection (MySQL or PostgreSQL) with automated table initialization and SQL injection prevention.
+- **Redis Caching & Pub/Sub:**  
+  Implements Redis for query caching as well as for broadcasting events (database changes, cache updates, configuration changes) to WebSocket clients.
+- **Robust Error Handling & Logging:**  
+  Integrated logging with Morgan and Winston with detailed error handlers for production-grade monitoring.
+
+### Real-Time Communication
+- **WebSocket Server:**  
+  Provides real-time notifications for database changes, cache invalidation, and configuration updates. Clients can subscribe/unsubscribe to specific channels.
+- **Socket CLI:**  
+  An administrative CLI over sockets allows on-the-fly operations like generating tokens, reloading configuration, listing routes, and managing plugins.
+
+### GraphQL Endpoint
+- **GraphQL Integration:**  
+  A dedicated `/graphql` endpoint enables advanced queries and mutations. Schema generation is handled dynamically based on API configurations and resolvers are flattened for ease of use.
+
+### Plugin Management & Cluster Support
+- **Plugin Manager:**  
+  A built-in Plugin Manager supports dynamic loading, unloading, and reloading of plugins. Plugins can be broadcasted across clusters via Redis if network mode is enabled.
+- **Network Plugin Synchronization:**  
+  In cluster environments, plugins are synchronized using Redis channels with support for version checking and dynamic reloading.
+
+### Advanced Middleware & Security
+- **Security Middleware:**  
+  Uses Helmet for security headers, and enables XSS filtering, content security policies, and protections against common vulnerabilities.
+- **Authentication & ACL:**  
+  JWT-based authentication with password validation using bcrypt or sha256. Custom authentication and ACL middlewares secure different API endpoints.
+- **Rate Limiting & Compression:**  
+  Integrated rate limiting protects API endpoints while response compression enhances performance.
+- **Global Business Rules Engine:**  
+  A rule engine processes business logic defined in DSL files. It facilitates dynamic business rule evaluation and configuration reloading.
+
+### Additional Modules
+- **Analytics Module:**  
+  Provides endpoints under `/analytics` for fetching endpoint analytics, slow queries reports, and overall API health metrics.
+- **Developer Tools:**  
+  Development-only endpoints (e.g., `/dev`) expose development tools and debugging information.
+- **Optional Modules:**  
+  - **Chat Module:** Enables real-time chat functionality if configured.
+  - **Streaming Server Module:** Supports streaming endpoints, typically for media content.
+  - **ML Analytics Module:** Integrates machine learning analytics, including model training and scheduled tasks.
+  - **Ollama Module:** Supports integrations with external tools for advanced processing.
+- **File Upload & Static Routes:**  
+  Dynamic registration of file upload endpoints and static routes based on configuration.
+
+### Command-Line Operations
+- **Build & Initialization Flags:**  
+  - `--build`: Build API configuration from the database.
+  - `--init`: Initialize database tables.
+  - `--generate-swagger`: Generate Swagger API documentation.
+- **Graceful Shutdown:**  
+  The server supports graceful shutdown on uncaught exceptions, unhandled rejections, and termination signals.
+
+---
+
+## Setup & Configuration
+
 ### **Installation**
 Make sure you have at least Node v18 or higher!
 ```bash
@@ -66,6 +137,34 @@ adaptus2 --build
 # Now you are ready to run the server 
 adaptus2 
 ```
+
+1. **Environment Variables:**  
+   Configure environment variables in a `.env` file for settings such as:
+   - `PORT`, `REDIS_URL`, `JWT_SECRET`, `JWT_EXPIRY`
+   - `PLUGIN_MANAGER`, `CLUSTER_NAME`, etc.
+2. **API Configuration:**  
+   Define API endpoints, proxy routes, dynamic routes, static routes, and file upload endpoints in a configuration file (e.g., `config/apiConfig.json`).
+3. **Database Setup:**  
+   Ensure the database is accessible and properly configured. Use the `--init` flag to initialize tables as defined in the configuration.
+4. **Plugins:**  
+   Place plugins in the `plugins` folder. Plugins can be loaded/unloaded dynamically via the Plugin Manager and synchronized across clusters if operating in network mode.
+5. **Running the Server:**  
+   Start the server normally (`node server.js`) or use command-line flags for building or initialization.
+
+---
+
+## Development & Debugging
+
+- **Developer Tools:**  
+  In development mode (`NODE_ENV=development`), additional routes (e.g., `/dev`) are available for debugging and performance monitoring.
+- **Socket CLI:**  
+  Connect via the configured socket CLI port to execute administrative commands like:
+  - Token generation (`userGenToken`, `appGenToken`)
+  - Plugin management (`load`, `unload`, `reload`)
+  - Reloading configuration (`configReload`)
+  - Listing current routes and actions.
+- **Live Updates:**  
+  The server listens for SIGHUP signals to reload the API configuration and updates routes and business rules accordingly.
 
 ### **Expanding the Logic**
 Adaptus2-Framework uses a pluginManager to expand it's capabilities. This modules can be deployed on the plugins folder relative to the folder that the application was install if by the previous example you install the server configs in adaptus2 folder , the plugins would be located on adaptus2/plugins folder. 
@@ -107,151 +206,14 @@ Here is an example of what a plugin file might look like.
     },
 };
 ```
+---
 
-# CLI Commands for Adaptus2Server using CLI tool "adaptus2-cli"
+## License
 
-This document provides an overview of the available CLI commands for interacting with the Adaptus2Server application via its socket-based CLI adaptus2-cli
-
-## Getting Started
-
-To access the CLI run the command adaptus2-cli
-
-### Example
-```bash
-adaptus2-cli
-```
-
-Once connected, you can issue the commands listed below.
+Distributed under the MIT License. See the [LICENSE](LICENSE) file for more information.
 
 ---
 
-## CLI Commands
+## Conclusion
 
-### General Commands
-
-| Command       | Description                                         | Usage Example  |
-|---------------|-----------------------------------------------------|----------------|
-| `help`        | Displays a list of available commands.             | `help`         |
-| `exit`        | Disconnects from the CLI.                          | `exit`         |
-
----
-
-### Token Management
-
-| Command          | Description                                          | Usage Example                      |
-|------------------|------------------------------------------------------|-----------------------------------|
-| `userGenToken`   | Generates a JWT for a user with a specified ACL.     | `userGenToken <username> <acl>`  |
-| `appGenToken`    | Generates a JWT for an application with table access and ACL. | `appGenToken <table> <acl>`      |
-
----
-
-### Configuration Management
-
-| Command          | Description                            | Usage Example  |
-|------------------|----------------------------------------|----------------|
-| `configReload`   | Reloads the API configuration.         | `configReload` |
-
----
-
-### Plugin Management
-
-| Command          | Description                                     | Usage Example             |
-|------------------|-------------------------------------------------|---------------------------|
-| `listPlugins`    | Lists all available plugins in the directory.   | `listPlugins`             |
-| `load`           | Loads a specified plugin.                      | `load <pluginName>`       |
-| `unload`         | Unloads a specified plugin.                    | `unload <pluginName>`     |
-| `reload`         | Reloads a specified plugin.                    | `reload <pluginName>`     |
-| `reloadall`      | Reloads all currently loaded plugins.           | `reloadall`               |
-| `list`           | Lists all currently loaded plugins.            | `list`                    |
-
----
-
-### Route and Action Management
-
-| Command          | Description                                     | Usage Example  |
-|------------------|-------------------------------------------------|----------------|
-| `routes`         | Displays a list of all registered API routes.  | `routes`       |
-| `listActions`    | Lists all available actions from the global context. | `listActions`  |
-
----
-
-## Notes
-
-- Commands are case-sensitive.
-- Ensure that the server is running and the socket server is active before attempting to connect.
-- For security, use proper access control for sensitive commands like token generation.
-
----
-
----
-
-## **6. Configuration**
-### **API Configuration**
-Define your API endpoints in `apiConfig.json`:
-```json
-[
-  {
-    "route": "/api/example",
-    "method": "GET",
-    "type": "proxy",
-    "targetUrl": "https://example.com",
-    "queryMapping": {
-      "localParam": "externalParam"
-    },
-    "responseMapping": {
-      "externalField": "localField"
-    },
-    "cache": {
-      "enabled": true,
-      "ttl": 3600
-    }
-  }
-]
-```
-### **OpenGraph Metadata**
-Example configuration for dynamic OpenGraph metadata:
-```json
-{
-  "route": "/api/metadata",
-  "method": "GET",
-  "type": "metadata",
-  "title": "Dynamic Title",
-  "description": "Automatically configured OpenGraph description",
-  "url": "https://yourdomain.com"
-}
-```
-
----
-
-## **7. Advanced Features**
-- **RAG Integration**: Supports AI-based Retrieval-Augmented Generation for intelligent responses.
-- **Dynamic Rule Engine**: Evaluate business rules written in DSL and perform actions accordingly.
-- **Universal API Client**: Standardized HTTP client for external API integrations.
-- **Dynamic Plugin Management**: Load and manage plugins across clusters in real-time.
-- **Extensive Logging and Monitoring**: Built-in tools for runtime insights.
-
-
-## **8. Roadmap**
-- Real-time WebSocket support.
-- Advanced OpenGraph customization.
-- Multi-tenancy support for shared configurations.
-- Enhanced CLI tools for debugging and performance monitoring.
-- Improved developer tools and scaffolding for faster development.
-
----
-
-## **9. Contribution Guidelines**
-- Fork the repository, make changes, and submit pull requests.
-- Report bugs or suggest features via GitHub Issues.
-
----
-
-## **10. License**
-- Open source under the MIT license.
-
----
-
-## **11. Support**
-- Links to documentation and community forums.
-- Contact via email or chat for technical support.
-
+Adaptus2 Framework combines the power of dynamic API configuration, real-time updates, plugin management, and robust middleware to create a scalable and secure platform for modern web applications. Explore the modules, extend the system with plugins, and leverage the real-time features to build responsive and resilient APIs.
