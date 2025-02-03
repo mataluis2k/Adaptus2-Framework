@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.25",
+  "version": "2.0.27",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -35,6 +35,7 @@
     "@langchain/core": "^0.3.19",
     "@langchain/openai": "^0.3.14",
     "@zilliz/milvus2-sdk-node": "^2.5.1",
+    "ajv": "^8.17.1",
     "aws-sdk": "^2.1692.0",
     "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
@@ -78,6 +79,7 @@
     "socket.io": "^4.8.1",
     "socket.io-client": "^4.8.1",
     "stripe": "^17.4.0",
+    "swagger-jsdoc": "^6.2.8",
     "uuid": "^11.0.3",
     "weaviate-client": "^3.2.5",
     "web-push": "^3.6.7"
