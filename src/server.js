@@ -44,6 +44,7 @@ const configFile = path.join(configDir, 'apiConfig.json');
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 const Handlebars = require('handlebars');
+const bcrypt = require("bcryptjs");
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -534,7 +535,31 @@ const registerFileUploadEndpoint = (app, config) => {
     });
 };
 
-  
+  /**
+ * Validates a user's password against a stored bcrypt hash.
+ * Automatically detects bcrypt versions: $2a$, $2b$, $2y$
+ * 
+ * @param {string} plainPassword - The user's plaintext password
+ * @param {string} hashedPassword - The bcrypt hashed password (from the database)
+ * @returns {string} - "Pass" if valid, "Failed" if invalid
+ */
+function validatePassword(plainPassword, hashedPassword) {
+    if (!plainPassword || !hashedPassword) {
+        throw new Error("Both plainPassword and hashedPassword are required.");
+    }
+
+    // Check if the hash starts with a valid bcrypt version
+    if (!hashedPassword.startsWith("$2a$") &&
+        !hashedPassword.startsWith("$2b$") &&
+        !hashedPassword.startsWith("$2y$")) {
+        throw new Error("Invalid bcrypt version or hash format.");
+    }
+
+    // Compare the password with the stored hash
+    const isMatch = bcrypt.compareSync(plainPassword, hashedPassword);
+
+    return isMatch;
+}
 
 
 function registerRoutes(app, apiConfig) {
@@ -595,7 +620,7 @@ function registerRoutes(app, apiConfig) {
                     let isValidPassword = false;
 
                     if (encryption === "bcrypt") {
-                        isValidPassword = await bcrypt.compare(password, user[authentication]);
+                        isValidPassword = validatePassword(password, user[authentication]);
                     } else if (encryption === "sha256") {
                         const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
                         isValidPassword = hashedPassword === user[authentication];

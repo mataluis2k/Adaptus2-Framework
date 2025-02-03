@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.25",
+  "version": "2.0.26",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -38,6 +38,7 @@
     "aws-sdk": "^2.1692.0",
     "axios": "^1.7.9",
     "bcrypt": "^5.1.1",
+    "bcryptjs": "^2.4.3",
     "body-parser": "^1.20.3",
     "braintree": "^3.26.0",
     "cors": "^2.8.5",
