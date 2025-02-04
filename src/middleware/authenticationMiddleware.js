@@ -1,6 +1,7 @@
 const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const consolelog = require('../modules/logger');
+const { setContext } = require('../modules/context');
 
 /**
  * ACL Middleware: Ensures user has one of the allowed roles.
@@ -41,6 +42,7 @@ const authenticateToken = (req, res, next) => {
         }
 
         req.user = user; // Attach user data to the request
+        setContext('user', user); // Store user in context
         next(); // Proceed to the next middleware or route handler
     });
 };

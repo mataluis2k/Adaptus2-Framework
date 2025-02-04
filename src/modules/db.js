@@ -3,7 +3,7 @@ const mysql = require('mysql2/promise');
 const { Client } = require('pg');
 const { MongoClient, ObjectId } = require('mongodb');
 const snowflake = require('snowflake-sdk');
-const { globalContext } = require('./context'); // Import the shared globalContext
+const { globalContext, getContext } = require('./context'); // Import the shared globalContext and getContext
 const { getApiConfig } = require('./apiConfig');
 const response = require('./response'); // Import the shared response object
 
@@ -186,8 +186,11 @@ async function update(config, entity, query, data) {
     }
     
     // Apply ownership check
-    if (modelConfig.owner && req.user) {
-        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField];
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField];
+        }
     }
 
     try {
@@ -240,9 +243,12 @@ async function read(config, entity, query) {
     const allowedFields = modelConfig.allowRead || [];
     const dbTable = modelConfig.dbTable || entity;
 
-    if (modelConfig.owner && req.user) {
-        query = query || {};
-        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField]; // Enforce ownership check
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query = query || {};
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField]; // Enforce ownership check
+        }
     }
 
     try {
@@ -350,8 +356,11 @@ async function deleteRecord(config, entity, query) {
     }
 
       // Apply ownership check
-    if (modelConfig.owner && req.user) {
-        query[modelConfig.owner.column] = req.user[modelConfig.owner.tokenField];
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField];
+        }
     }
     try {
         switch (config.dbType.toLowerCase()) {
@@ -442,4 +451,3 @@ function extendContext() {
 }
 
 module.exports = { getDbConnection, create, read, update, delete: deleteRecord, extendContext, query };
-
