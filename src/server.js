@@ -34,13 +34,36 @@ axios.interceptors.request.use(request => {
 
 axios.interceptors.response.use(
     response => {
-        const duration = Date.now() - response.config.startTime;
-        console.log(`Request to ${response.config.url} took ${duration}ms`);
-        return response;
+        try {
+            const consolelog = require('./modules/logger');
+            const duration = Date.now() - response.config.startTime;
+            consolelog.log('External API Request:', {
+                url: response.config.url,
+                method: response.config.method,
+                duration: `${duration}ms`,
+                status: response.status,
+                timestamp: new Date().toISOString()
+            });
+            return response;
+        } catch (error) {
+            console.error('Failed to log axios response:', error);
+            return response;
+        }
     },
     error => {
-        if (error.response) {
-            console.error(`API Error: ${error.response.status} - ${error.response.statusText}`);
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('External API Error:', {
+                url: error.config?.url,
+                method: error.config?.method,
+                status: error.response?.status,
+                statusText: error.response?.statusText,
+                error: error.stack || error.message,
+                timestamp: new Date().toISOString()
+            });
+        } catch (loggingError) {
+            console.error('Failed to log axios error:', loggingError);
+            console.error('Original error:', error);
         }
         return Promise.reject(error);
     }
@@ -103,9 +126,32 @@ const logger = winston.createLogger({
         winston.format.json()
     ),
     transports: [
-        new winston.transports.Console(),
-        new winston.transports.File({ filename: 'error.log', level: 'error' })
+        new winston.transports.Console({
+            handleExceptions: true,
+            handleRejections: true
+        }),
+        new winston.transports.File({
+            filename: 'error.log',
+            level: 'error',
+            handleExceptions: true,
+            handleRejections: true,
+            maxsize: 5242880, // 5MB
+            maxFiles: 5,
+            tailable: true,
+            eol: '\n',
+            options: { flags: 'a' }
+        })
     ],
+    exitOnError: false // Don't exit on handled exceptions
+});
+
+// Add error event handlers for the file transport
+logger.transports.forEach(transport => {
+    if (transport instanceof winston.transports.File) {
+        transport.on('error', (error) => {
+            console.error('Error in file transport:', error);
+        });
+    }
 });
 
 // Initialize a global context for request storage
@@ -126,11 +172,28 @@ const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379', {
 });
 
 redis.on('error', (err) => {
-    console.error('Redis Error:', err);
+    try {
+        const consolelog = require('./modules/logger');
+        consolelog.error('Redis Error:', {
+            error: err.stack || err.message,
+            timestamp: new Date().toISOString()
+        });
+    } catch (loggingError) {
+        console.error('Failed to log Redis error:', loggingError);
+        console.error('Original error:', err);
+    }
 });
 
 redis.on('connect', () => {
-    console.log('Successfully connected to Redis');
+    try {
+        const consolelog = require('./modules/logger');
+        consolelog.log('Redis Connection:', {
+            status: 'connected',
+            timestamp: new Date().toISOString()
+        });
+    } catch (error) {
+        console.error('Failed to log Redis connection:', error);
+    }
 });
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const JWT_EXPIRY = process.env.JWT_EXPIRY || '1h';
@@ -166,35 +229,72 @@ const { globalContext, middleware } = require('./modules/context');
 const e = require('express');
 
 globalContext.actions.log = (ctx, action) => {
-    let message = null; // Declare message in the outer scope
+    let message = null;
 
     try {
-        console.log(action);
+        const consolelog = require('./modules/logger');
+        consolelog.log('Action Log:', {
+            action: action,
+            timestamp: new Date().toISOString()
+        });
 
         if (action.message) {
-            message = action.message; // Assign message here
-            // Dynamically evaluate the message string with access to `ctx.data`
+            message = action.message;
             const evaluatedMessage = new Function('data', `with(data) { return \`${message}\`; }`)(ctx.data || {});
-            console.log(`[LOG]: ${evaluatedMessage}`);
-        } else {
-            console.log(`[LOG]: ${action}`);
+            consolelog.log('Evaluated Message:', {
+                message: evaluatedMessage,
+                timestamp: new Date().toISOString()
+            });
         }
-    } catch (err) {
-        console.error(`[LOG]: Error evaluating message "${message}": ${err.message}`);
+    } catch (error) {
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('Error in action.log:', {
+                error: error.stack || error.message,
+                message: message,
+                timestamp: new Date().toISOString()
+            });
+        } catch (loggingError) {
+            console.error('Failed to log action error:', loggingError);
+            console.error('Original error:', error);
+        }
     }
 };
 
 globalContext.actions.response = (ctx, action) => {
-    const { key = "data" } = action;
+    try {
+        const consolelog = require('./modules/logger');
+        const { key = "data" } = action;
 
-    if (!ctx.data[key]) {
-        ctx.data[key] = {};
-        console.log(`Initialized response object with key: ${key}`);
-    } else {
-        console.log(`Response object with key: ${key} already exists.`);
+        if (!ctx.data[key]) {
+            ctx.data[key] = {};
+            consolelog.log('Response Object:', {
+                status: 'initialized',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            consolelog.log('Response Object:', {
+                status: 'exists',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        }
+
+        return { success: true, message: `Response object is ready under key: ${key}` };
+    } catch (error) {
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('Error in action.response:', {
+                error: error.stack || error.message,
+                timestamp: new Date().toISOString()
+            });
+        } catch (loggingError) {
+            console.error('Failed to log response error:', loggingError);
+            console.error('Original error:', error);
+        }
+        throw error;
     }
-
-    return { success: true, message: `Response object is ready under key: ${key}` };
 };
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
@@ -1001,14 +1101,30 @@ function initializeRules() {
     }
 }
 
-// Catch unhandled promise rejections
+// Global error handlers with enhanced logging
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('Unhandled Rejection:', reason.message || reason);
+    try {
+        const consolelog = require('./modules/logger');
+        consolelog.error('Unhandled Rejection:', {
+            reason: reason instanceof Error ? reason.stack : reason,
+            promise: promise
+        });
+    } catch (error) {
+        console.error('Failed to log unhandled rejection:', error);
+    }
 });
 
-// Catch uncaught exceptions
 process.on('uncaughtException', (error) => {
-    console.error('Uncaught Exception:', error.message || error);    
+    try {
+        const consolelog = require('./modules/logger');
+        consolelog.error('Uncaught Exception:', {
+            error: error.stack || error.message,
+            timestamp: new Date().toISOString()
+        });
+    } catch (loggingError) {
+        console.error('Failed to log uncaught exception:', loggingError);
+        console.error('Original error:', error);
+    }
 });
 
 function setupRag(apiConfig) {
@@ -1694,11 +1810,18 @@ class Adaptus2Server {
         // Response compression
         this.app.use(compression());
 
-        // Logging
+        // Logging middleware with enhanced error handling
         this.app.use(morgan('combined', {
             skip: (req, res) => res.statusCode < 400, // Only log errors
             stream: {
-                write: message => logger.error(message.trim())
+                write: message => {
+                    try {
+                        const consolelog = require('./modules/logger');
+                        consolelog.error(message.trim());
+                    } catch (error) {
+                        console.error('Failed to log request:', error);
+                    }
+                }
             }
         }));
 
@@ -1722,12 +1845,28 @@ class Adaptus2Server {
         const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
         this.app.use(ruleEngineMiddleware.middleware());
 
-        // Global error handler
+        // Global error handler with enhanced logging
         this.app.use((err, req, res, next) => {
-            logger.error('Unhandled error:', err);
+            try {
+                const consolelog = require('./modules/logger');
+                consolelog.error('Unhandled error:', {
+                    error: err.stack || err.message,
+                    url: req.url,
+                    method: req.method,
+                    timestamp: new Date().toISOString(),
+                    requestId: req.id,
+                    userId: req.user?.id,
+                    body: process.env.NODE_ENV === 'development' ? req.body : undefined
+                });
+            } catch (loggingError) {
+                console.error('Failed to log error:', loggingError);
+                console.error('Original error:', err);
+            }
+
             res.status(err.status || 500).json({
                 error: 'Internal Server Error',
-                message: process.env.NODE_ENV === 'development' ? err.message : undefined
+                message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+                requestId: req.id
             });
         });
     }
@@ -2171,51 +2310,69 @@ class Adaptus2Server {
    
 
     async shutdown(code = 0) {
-        // Close WebSocket server
-        if (this.wss) {
-            await new Promise((resolve) => {
-                this.wss.close(() => {
-                    console.log('WebSocket server closed');
-                    resolve();
-                });
-            });
-        }
-        console.log('Shutting down gracefully...');
-        
         try {
-            // Close all connections
-            const connections = await Promise.allSettled([
-                this.redis.quit(),
-                this.publisherRedis?.quit(),
-                this.subscriberRedis?.quit(),
-                redisPublisher.quit(),
-                redisSubscriber.quit()
-            ]);
+            const consolelog = require('./modules/logger');
+            consolelog.log('Initiating graceful shutdown...');
 
-            connections.forEach((result, index) => {
-                if (result.status === 'rejected') {
-                    console.error(`Failed to close connection ${index}:`, result.reason);
+            // Close WebSocket server
+            if (this.wss) {
+                await new Promise((resolve) => {
+                    this.wss.close(() => {
+                        consolelog.log('WebSocket server closed');
+                        resolve();
+                    });
+                });
+            }
+            
+            try {
+                // Close all connections
+                const connections = await Promise.allSettled([
+                    this.redis.quit(),
+                    this.publisherRedis?.quit(),
+                    this.subscriberRedis?.quit(),
+                    redisPublisher.quit(),
+                    redisSubscriber.quit()
+                ]);
+
+                connections.forEach((result, index) => {
+                    if (result.status === 'rejected') {
+                        consolelog.error(`Failed to close connection ${index}:`, result.reason);
+                    }
+                });
+
+                // Close the server
+                if (this.server) {
+                    await new Promise((resolve) => {
+                        this.server.close(resolve);
+                    });
                 }
-            });
 
-            // Close the server
-            if (this.server) {
-                await new Promise((resolve) => {
-                    this.server.close(resolve);
-                });
+                // Close socket server if it exists
+                if (this.socketServer) {
+                    await new Promise((resolve) => {
+                        this.socketServer.close(resolve);
+                    });
+                }
+
+                consolelog.log('All connections closed successfully');
+
+                // Cleanup logger
+                if (consolelog.cleanup) {
+                    await consolelog.cleanup();
+                }
+
+                consolelog.log('Graceful shutdown completed');
+                
+                // Small delay to ensure final logs are written
+                await new Promise(resolve => setTimeout(resolve, 100));
+                
+                process.exit(code);
+            } catch (error) {
+                consolelog.error('Error during connection cleanup:', error);
+                process.exit(1);
             }
-
-            // Close socket server if it exists
-            if (this.socketServer) {
-                await new Promise((resolve) => {
-                    this.socketServer.close(resolve);
-                });
-            }
-
-            console.log('Graceful shutdown completed');
-            process.exit(code);
         } catch (error) {
-            console.error('Error during shutdown:', error);
+            console.error('Critical error during shutdown:', error);
             process.exit(1);
         }
     }

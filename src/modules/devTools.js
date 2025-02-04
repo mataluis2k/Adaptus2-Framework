@@ -49,14 +49,35 @@ class DevTools {
         };
     }
 
-    // Generate API documentation
+    // Generate API documentation from apiConfig.json
     async generateDocs() {
         try {
-            const specs = swaggerJsdoc(this.swaggerOptions);
+            // Read apiConfig.json
+            const apiConfigPath = path.join(process.cwd(), 'config', 'apiConfig.json');
+            const apiConfig = JSON.parse(await fs.readFile(apiConfigPath, 'utf8'));
+
+            // Generate swagger documentation
+            const generateSwaggerDoc = require('./generateSwaggerDoc');
+            // Create a temporary file to store JSON output
+            const tempJsonPath = path.join(process.cwd(), 'docs', 'temp-api-docs.json');
+            
+            // Generate swagger documentation
+            generateSwaggerDoc(apiConfig, tempJsonPath);
+            
+            // Read the generated JSON file
+            const swaggerJson = JSON.parse(await fs.readFile(tempJsonPath, 'utf8'));
+            
+            // Delete temporary file
+            await fs.unlink(tempJsonPath);
+            
+            const specs = swaggerJson;
+
+            // Write as YAML
             await fs.writeFile(
                 path.join(process.cwd(), 'docs', 'api-docs.yaml'),
                 yaml.dump(specs)
             );
+
             return specs;
         } catch (error) {
             this.logger.error('Error generating API documentation:', error);
