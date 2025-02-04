@@ -27,7 +27,7 @@ module.exports = {
 
             // Load configuration
             const mailgunBaseUrl =
-                    ctx.config.mailgunBaseUrl || process.env.MAILGUN_BASE_URL;
+                ctx.config.mailgunBaseUrl || process.env.MAILGUN_BASE_URL;
             const mailgunApiKey =
                 ctx.config.mailgunApiKey || process.env.MAILGUN_API_KEY;
             const mailgunDomain =

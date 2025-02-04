@@ -159,83 +159,415 @@ class MLAnalytics {
     }
 
     /**
-     * Train a sentiment analysis model.
+     * Train a sentiment analysis model with enhanced preprocessing and multilingual support.
      */
     trainSentimentModel(rows, endpoint) {
-        const textFields = endpoint.allowRead.filter((field) => typeof rows[0][field] === 'string');
-        if (textFields.length === 0) {
-            console.warn(`No suitable text fields for sentiment analysis in ${endpoint.dbTable}`);
+        const { handleMissingValues } = require('./ml_utils');
+        
+        if (!rows || rows.length === 0) {
+            console.warn(`No data provided for sentiment analysis in ${endpoint.dbTable}`);
             return null;
         }
 
-        const classifier = new natural.SentimentAnalyzer('English', natural.PorterStemmer, 'afinn');
-        const sentimentData = rows.map((row) => ({
-            id: row[endpoint.keys[0]],
-            sentiment: classifier.getSentiment(row[textFields[0]].split(' ')),
-        }));
-
-        console.log(`Sentiment model trained for ${endpoint.dbTable}`);
-        return sentimentData;
-    }
-
-    /**
-     * Train a recommendation model using clustering.
-     */
-    trainRecommendationModel(rows, endpoint) {
-        const numericFields = endpoint.allowRead.filter((field) => typeof rows[0][field] === 'number');
-        if (numericFields.length === 0) {
-            console.warn(`No suitable numeric fields for recommendations in ${endpoint.dbTable}`);
-            return null;
-        }
-    
-        const dataset = rows.map((row) => numericFields.map((field) => row[field]));
-    
-        // Adjust K to be smaller than the number of points
-        const numPoints = dataset.length;
-        const defaultK = 3; // Default number of clusters
-        const k = Math.min(defaultK, Math.max(1, numPoints - 1)); // Ensure K is valid
-    
-        if (numPoints < 2) {
-            console.warn(`Insufficient data points for k-means clustering in ${endpoint.dbTable}`);
-            return null;
-        }
-    
         try {
-            const clusters = kmeans(dataset, k); // Use the adjusted K
-            console.log(`Recommendation model trained for ${endpoint.dbTable}`);
-            return { clusters, numericFields };
-        } catch (error) {
-            console.error(`Error in k-means clustering for ${endpoint.dbTable}:`, error.message);
-            return null;
-        }
-    }
-    
+            // Get configuration for this endpoint
+            const mergedConfig = this.getMergedConfig(endpoint.dbTable);
+            const {
+                language = 'English',
+                textPreprocessing = true,
+                minTextLength = 3,
+                combineFields = false
+            } = mergedConfig?.sentimentConfig || {};
 
-    /**
-     * Train an anomaly detection model.
-     */
-    trainAnomalyModel(rows, endpoint) {
-        const numericFields = endpoint.allowRead.filter((field) => typeof rows[0][field] === 'number');
-        if (numericFields.length === 0) {
-            console.warn(`No suitable numeric fields for anomaly detection in ${endpoint.dbTable}`);
-            return null;
-        }
-    
-        const dataset = rows.map((row) => numericFields.map((field) => row[field]));
-        const dbscan = new DBSCAN();
-        const clusters = dbscan.run(dataset, 0.5, 2); // Example: eps=0.5, minPts=2
-    
-        if (!clusters || clusters.length === 0) {
-            console.warn(`No clusters formed for ${endpoint.dbTable}. Check dataset and parameters.`);
+            // Find all potential text fields
+            const textFields = endpoint.allowRead.filter(field => {
+                const value = rows[0][field];
+                return typeof value === 'string' || 
+                       (Array.isArray(value) && value.every(v => typeof v === 'string'));
+            });
+
+            if (textFields.length === 0) {
+                throw new Error(`No suitable text fields found in ${endpoint.dbTable}`);
+            }
+
+            const classifier = new natural.SentimentAnalyzer(
+                language, 
+                natural.PorterStemmer, 
+                'afinn'
+            );
+
+            // Process each row
+            const sentimentData = rows.map(row => {
+                try {
+                    // Combine text from all fields or use primary field
+                    let text;
+                    if (combineFields) {
+                        text = textFields
+                            .map(field => row[field])
+                            .filter(Boolean)
+                            .join(' ');
+                    } else {
+                        text = row[textFields[0]];
+                    }
+
+                    // Handle arrays of text
+                    if (Array.isArray(text)) {
+                        text = text.join(' ');
+                    }
+
+                    // Skip if text is too short
+                    if (!text || text.length < minTextLength) {
+                        return {
+                            id: row[endpoint.keys[0]],
+                            sentiment: null,
+                            error: 'Text too short or empty'
+                        };
+                    }
+
+                    // Text preprocessing if enabled
+                    if (textPreprocessing) {
+                        text = text.toLowerCase()
+                            .replace(/[^\w\s]/g, '') // Remove punctuation
+                            .replace(/\s+/g, ' ')    // Normalize whitespace
+                            .trim();
+                    }
+
+                    const words = text.split(' ').filter(Boolean);
+                    const sentiment = classifier.getSentiment(words);
+
+                    return {
+                        id: row[endpoint.keys[0]],
+                        sentiment,
+                        confidence: Math.abs(sentiment) / words.length, // Simple confidence score
+                        wordCount: words.length
+                    };
+                } catch (error) {
+                    console.error(`Error processing row ${row[endpoint.keys[0]]}:`, error);
+                    return {
+                        id: row[endpoint.keys[0]],
+                        sentiment: null,
+                        error: error.message
+                    };
+                }
+            });
+
+            // Filter out failed analyses
+            const validSentiments = sentimentData
+                .filter(data => data.sentiment !== null)
+                .map(data => data.sentiment);
+
+            if (validSentiments.length === 0) {
+                throw new Error('No valid sentiment analyses performed');
+            }
+
+            // Calculate statistics
+            const stats = {
+                total: sentimentData.length,
+                valid: validSentiments.length,
+                avgSentiment: validSentiments.reduce((a, b) => a + b, 0) / validSentiments.length,
+                distribution: {
+                    positive: validSentiments.filter(s => s > 0).length,
+                    neutral: validSentiments.filter(s => s === 0).length,
+                    negative: validSentiments.filter(s => s < 0).length
+                }
+            };
+
+            console.log(`Sentiment model trained for ${endpoint.dbTable}`);
             return {
-                clusters: [],
-                numericFields,
-                message: "No clusters or anomalies detected. Ensure the dataset has meaningful numeric data.",
+                data: sentimentData,
+                stats,
+                config: {
+                    language,
+                    textFields,
+                    textPreprocessing,
+                    minTextLength,
+                    combineFields
+                }
+            };
+        } catch (error) {
+            console.error(`Error in sentiment analysis for ${endpoint.dbTable}:`, error);
+            return {
+                error: error.message,
+                message: "Failed to train sentiment model"
             };
         }
+    }
+
+    /**
+     * Train a recommendation model using clustering with enhanced preprocessing.
+     */
+    trainRecommendationModel(rows, endpoint) {
+        const { scale, oneHotEncode, handleMissingValues } = require('./ml_utils');
+        
+        if (!rows || rows.length === 0) {
+            console.warn(`No data provided for recommendations in ${endpoint.dbTable}`);
+            return null;
+        }
+
+        try {
+            // Get configuration for this endpoint
+            const mergedConfig = this.getMergedConfig(endpoint.dbTable);
+            const {
+                k = 3,
+                scalingRange = [0, 1],
+                minClusterSize = 2,
+                missingValueStrategy = 'mean',
+                weightedFields = {},
+                similarityThreshold = 0.5
+            } = mergedConfig?.recommendationConfig || {};
+
+            // Process all fields that can be used for recommendations
+            const processedData = [];
+            const fieldProcessors = new Map();
+            const fields = endpoint.allowRead;
+
+            // First pass: analyze fields and set up processors
+            for (const field of fields) {
+                const values = rows.map(row => row[field]);
+                const sampleValue = values[0];
+                const weight = weightedFields[field] || 1;
+
+                if (typeof sampleValue === 'number') {
+                    // Handle missing values first
+                    const cleanValues = handleMissingValues(values, missingValueStrategy);
+                    // Scale numeric values
+                    const { scaled, scaleParams } = scale(cleanValues, scalingRange);
+                    fieldProcessors.set(field, {
+                        type: 'numeric',
+                        params: scaleParams,
+                        weight,
+                        processor: (val) => {
+                            const cleaned = handleMissingValues([val], missingValueStrategy)[0];
+                            return scale(cleaned, scalingRange, scaleParams).scaled * weight;
+                        }
+                    });
+                } else if (typeof sampleValue === 'string' || typeof sampleValue === 'boolean') {
+                    // One-hot encode categorical values
+                    const { categories } = oneHotEncode(sampleValue);
+                    values.forEach(val => {
+                        if (val !== null && val !== undefined) {
+                            const { encoded } = oneHotEncode(val, categories);
+                            if (encoded.some(v => v === 1)) {
+                                categories.push(val);
+                            }
+                        }
+                    });
+                    fieldProcessors.set(field, {
+                        type: 'categorical',
+                        params: categories,
+                        weight,
+                        processor: (val) => {
+                            const { encoded } = oneHotEncode(val, categories);
+                            return encoded.map(v => v * weight);
+                        }
+                    });
+                }
+            }
+
+            // Second pass: process all rows
+            for (const row of rows) {
+                const processedRow = [];
+                for (const [field, processor] of fieldProcessors) {
+                    const value = row[field];
+                    if (value !== null && value !== undefined) {
+                        const processed = processor.processor(value);
+                        if (Array.isArray(processed)) {
+                            processedRow.push(...processed);
+                        } else {
+                            processedRow.push(processed);
+                        }
+                    }
+                }
+                if (processedRow.length > 0) {
+                    processedData.push(processedRow);
+                }
+            }
+
+            if (processedData.length < minClusterSize) {
+                throw new Error(`Insufficient data points (${processedData.length}) for clustering. Minimum required: ${minClusterSize}`);
+            }
+
+            // Adjust K based on dataset size
+            const numPoints = processedData.length;
+            const adjustedK = Math.min(k, Math.max(2, Math.floor(numPoints / minClusterSize)));
+
+            // Run K-means clustering
+            const clusterResult = kmeans(processedData, adjustedK);
+
+            // Enhance cluster results with similarity scores
+            const enhancedClusters = clusterResult.clusters.map((cluster, idx) => {
+                const centroid = clusterResult.centroids[idx];
+                return {
+                    id: idx,
+                    points: cluster,
+                    centroid,
+                    size: cluster.length,
+                    similarities: cluster.map(pointIdx => {
+                        const point = processedData[pointIdx];
+                        // Calculate cosine similarity with centroid
+                        const dotProduct = point.reduce((sum, val, i) => sum + val * centroid[i], 0);
+                        const magnitude1 = Math.sqrt(point.reduce((sum, val) => sum + val * val, 0));
+                        const magnitude2 = Math.sqrt(centroid.reduce((sum, val) => sum + val * val, 0));
+                        return dotProduct / (magnitude1 * magnitude2);
+                    })
+                };
+            });
+
+            console.log(`Recommendation model trained for ${endpoint.dbTable}`);
+            return {
+                clusters: enhancedClusters,
+                fieldProcessors: Array.from(fieldProcessors.entries()),
+                config: {
+                    k: adjustedK,
+                    originalK: k,
+                    scalingRange,
+                    minClusterSize,
+                    missingValueStrategy,
+                    weightedFields,
+                    similarityThreshold
+                },
+                stats: {
+                    totalPoints: numPoints,
+                    dimensions: processedData[0].length,
+                    clusterSizes: enhancedClusters.map(c => c.size),
+                    averageSimilarity: enhancedClusters.reduce(
+                        (sum, c) => sum + c.similarities.reduce((a, b) => a + b, 0) / c.similarities.length,
+                        0
+                    ) / enhancedClusters.length
+                }
+            };
+        } catch (error) {
+            console.error(`Error in recommendation model for ${endpoint.dbTable}:`, error);
+            return {
+                error: error.message,
+                message: "Failed to train recommendation model"
+            };
+        }
+    }
     
-        console.log(`Anomaly detection model trained for ${endpoint.dbTable}`);
-        return { clusters, numericFields };
+
+    /**
+     * Train an anomaly detection model with robust data preprocessing.
+     */
+    trainAnomalyModel(rows, endpoint) {
+        const { scale, oneHotEncode } = require('./ml_utils');
+        
+        if (!rows || rows.length === 0) {
+            console.warn(`No data provided for anomaly detection in ${endpoint.dbTable}`);
+            return null;
+        }
+
+        try {
+            // Get configuration for this endpoint
+            const mergedConfig = this.getMergedConfig(endpoint.dbTable);
+            const {
+                eps = 0.5,
+                minPts = 2,
+                scalingRange = [0, 1]
+            } = mergedConfig?.anomalyConfig || {};
+
+            // Process all fields that can be used for anomaly detection
+            const processedData = [];
+            const fieldProcessors = new Map();
+            const fields = endpoint.allowRead;
+
+            // First pass: analyze fields and set up processors
+            for (const field of fields) {
+                const values = rows.map(row => row[field]);
+                const sampleValue = values[0];
+                
+                if (typeof sampleValue === 'number') {
+                    // Numeric field: scale to common range
+                    const { scaled, scaleParams } = scale(values, scalingRange);
+                    fieldProcessors.set(field, {
+                        type: 'numeric',
+                        params: scaleParams,
+                        processor: (val) => scale(val, scalingRange, scaleParams).scaled
+                    });
+                } else if (typeof sampleValue === 'string' || typeof sampleValue === 'boolean') {
+                    // Categorical field: one-hot encode
+                    const { categories } = oneHotEncode(sampleValue);
+                    values.forEach(val => {
+                        const { encoded } = oneHotEncode(val, categories);
+                        if (encoded.some(v => v === 1)) {
+                            categories.push(val);
+                        }
+                    });
+                    fieldProcessors.set(field, {
+                        type: 'categorical',
+                        params: categories,
+                        processor: (val) => oneHotEncode(val, categories).encoded
+                    });
+                }
+                // Skip other types (e.g., objects, arrays)
+            }
+
+            // Second pass: process all rows
+            for (const row of rows) {
+                const processedRow = [];
+                for (const [field, processor] of fieldProcessors) {
+                    const value = row[field];
+                    if (value !== null && value !== undefined) {
+                        const processed = processor.processor(value);
+                        if (Array.isArray(processed)) {
+                            processedRow.push(...processed);
+                        } else {
+                            processedRow.push(processed);
+                        }
+                    }
+                }
+                if (processedRow.length > 0) {
+                    processedData.push(processedRow);
+                }
+            }
+
+            if (processedData.length === 0) {
+                throw new Error('No valid data after preprocessing');
+            }
+
+            // Run DBSCAN on processed data
+            const dbscan = new DBSCAN();
+            const clusters = dbscan.run(processedData, eps, minPts);
+
+            if (!clusters || clusters.length === 0) {
+                console.warn(`No clusters formed for ${endpoint.dbTable}. Check dataset and parameters.`);
+                return {
+                    clusters: [],
+                    fieldProcessors: Array.from(fieldProcessors.entries()),
+                    message: "No clusters or anomalies detected. Consider adjusting eps and minPts parameters."
+                };
+            }
+
+            // Identify anomalies (points not assigned to any cluster)
+            const anomalies = [];
+            const allPoints = new Set(clusters.flat());
+            for (let i = 0; i < processedData.length; i++) {
+                if (!allPoints.has(i)) {
+                    anomalies.push({
+                        index: i,
+                        originalData: rows[i]
+                    });
+                }
+            }
+
+            console.log(`Anomaly detection model trained for ${endpoint.dbTable}`);
+            return {
+                clusters,
+                fieldProcessors: Array.from(fieldProcessors.entries()),
+                anomalies,
+                params: {
+                    eps,
+                    minPts,
+                    scalingRange
+                }
+            };
+        } catch (error) {
+            console.error(`Error in anomaly detection for ${endpoint.dbTable}:`, error);
+            return {
+                error: error.message,
+                message: "Failed to train anomaly detection model"
+            };
+        }
     }
 
     /**

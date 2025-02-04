@@ -1,6 +1,9 @@
 const consolelog = require('./logger');
 const parseCommand = require('./parser');
-
+const { Worker } = require('worker_threads');
+const path = require('path');
+const db = require('./db');
+const cron = require('node-cron');
 
 class WorkflowDSLParser {
   constructor(globalContext = {}) {
@@ -203,24 +206,155 @@ class WorkflowEngine {
         this.parser = new WorkflowDSLParser(globalContext);
         this.globalContext = globalContext;
         this.workflows = {};
+        this.dbConfig = {
+            dbType: 'mysql',
+            dbConnection: 'MYSQL_1'
+        };
     }
 
     loadWorkflows(dslText) {
         const workflowDefinitions = this.parser.parse(dslText);
         console.log('workflowDefinitions', workflowDefinitions);
         workflowDefinitions.forEach(wf => {
-            this.workflows[wf.name] = wf.steps;
+            this.workflows[wf.name] = wf;
         });
     }
 
-    async executeWorkflow(name, data, context = {}) {
+    /**
+     * Schedule a workflow to run
+     * @param {string} workflowName - Name of the workflow to schedule
+     * @param {Object} options - Scheduling options
+     * @param {string} options.scheduleType - 'once' or 'recurring'
+     * @param {string} options.cronExpression - Cron expression for recurring schedules
+     * @param {Date} options.nextRun - Next run date/time
+     * @param {Object} options.data - Data to pass to the workflow
+     */
+    async scheduleWorkflow(workflowName, options) {
+        if (!this.workflows[workflowName]) {
+            throw new Error(`Workflow ${workflowName} not found`);
+        }
+
+        const schedule = {
+            workflow_name: workflowName,
+            schedule_type: options.scheduleType,
+            cron_expression: options.cronExpression,
+            next_run: options.nextRun,
+            data: JSON.stringify(options.data || {}),
+            status: 'pending'
+        };
+
+        await db.create(this.dbConfig, 'workflow_schedules', schedule);
+    }
+
+    /**
+     * Execute a workflow
+     */
+    async executeWorkflow(name, data = {}, context = {}) {
         const workflow = this.workflows[name];
         if (!workflow) throw new Error(`Workflow ${name} not found.`);
-        for (const step of workflow) {
-            await this.globalContext.actions[step.action](context, step.params);
+
+        // Create a new worker thread to execute the workflow
+        return new Promise((resolve, reject) => {
+            const worker = new Worker(path.join(__dirname, 'workflow_worker.js'), {
+                workerData: {
+                    workflow,
+                    data,
+                    context: {
+                        ...context,
+                        actions: this.globalContext.actions
+                    }
+                }
+            });
+
+            worker.on('message', (result) => {
+                if (result.success) {
+                    resolve(result);
+                } else {
+                    reject(new Error(result.error));
+                }
+            });
+
+            worker.on('error', reject);
+            worker.on('exit', (code) => {
+                if (code !== 0) {
+                    reject(new Error(`Worker stopped with exit code ${code}`));
+                }
+            });
+        });
+    }
+
+    /**
+     * Process pending workflows that are due to run
+     */
+    async processPendingWorkflows() {
+        // Get pending workflows that are due
+        const pendingWorkflows = await db.read(this.dbConfig, 'workflow_schedules', {
+            status: 'pending',
+            next_run: { '<=': new Date() }
+        });
+
+        for (const workflow of pendingWorkflows) {
+            try {
+                // Update status to running
+                await db.update(this.dbConfig, 'workflow_schedules', 
+                    { id: workflow.id },
+                    { status: 'running' }
+                );
+
+                // Execute the workflow
+                await this.executeWorkflow(
+                    workflow.workflow_name,
+                    JSON.parse(workflow.data || '{}')
+                );
+
+                // Update status based on schedule type
+                if (workflow.schedule_type === 'once') {
+                    await db.update(this.dbConfig, 'workflow_schedules',
+                        { id: workflow.id },
+                        { status: 'completed' }
+                    );
+                } else {
+                    // For recurring workflows, calculate next run time based on cron expression
+                    const nextRun = this._calculateNextRun(workflow.cron_expression);
+                    await db.update(this.dbConfig, 'workflow_schedules',
+                        { id: workflow.id },
+                        { 
+                            status: 'pending',
+                            next_run: nextRun
+                        }
+                    );
+                }
+            } catch (error) {
+                console.error(`Error executing workflow ${workflow.workflow_name}:`, error);
+                await db.update(this.dbConfig, 'workflow_schedules',
+                    { id: workflow.id },
+                    { status: 'failed' }
+                );
+            }
+        }
+    }
+
+    /**
+     * Calculate next run time based on cron expression
+     */
+    _calculateNextRun(cronExpression) {
+        if (!cronExpression) {
+            // Default to 24 hours if no cron expression
+            const nextRun = new Date();
+            nextRun.setHours(nextRun.getHours() + 24);
+            return nextRun;
+        }
+
+        try {
+            return cron.schedule(cronExpression).nextDate().toDate();
+        } catch (error) {
+            console.error('Error parsing cron expression:', error);
+            // Fallback to 24 hours
+            const nextRun = new Date();
+            nextRun.setHours(nextRun.getHours() + 24);
+            return nextRun;
         }
     }
 }
 
 module.exports = { WorkflowDSLParser, WorkflowEngine };
-

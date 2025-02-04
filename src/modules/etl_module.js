@@ -6,6 +6,90 @@ const RuleEngine = require('./ruleEngine');
 const { getApiConfig } = require('./apiConfig');
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 
+// ETL Metrics tracking class
+class ETLMetrics {
+    constructor() {
+        this.startTime = Date.now();
+        this.recordsProcessed = 0;
+        this.errors = 0;
+        this.validationErrors = 0;
+    }
+
+    recordSuccess() {
+        this.recordsProcessed++;
+    }
+
+    recordError() {
+        this.errors++;
+    }
+
+    recordValidationError() {
+        this.validationErrors++;
+    }
+
+    getMetrics() {
+        const duration = Date.now() - this.startTime;
+        return {
+            duration,
+            recordsProcessed: this.recordsProcessed,
+            errors: this.errors,
+            validationErrors: this.validationErrors,
+            errorRate: this.errors / (this.recordsProcessed || 1),
+            throughput: (this.recordsProcessed / (duration / 1000)).toFixed(2)
+        };
+    }
+}
+
+// Data validation functions
+function validateField(value, schemaType) {
+    if (!value && !schemaType.allowNull) {
+        return false;
+    }
+    
+    switch(schemaType.type.toLowerCase()) {
+        case 'varchar':
+        case 'text':
+            return typeof value === 'string';
+        case 'int':
+        case 'bigint':
+            return Number.isInteger(Number(value));
+        case 'decimal':
+        case 'float':
+            return !isNaN(Number(value));
+        case 'datetime':
+        case 'timestamp':
+            return !isNaN(Date.parse(value));
+        case 'boolean':
+            return typeof value === 'boolean' || value === 0 || value === 1;
+        default:
+            return true;
+    }
+}
+
+function validateData(data, schema) {
+    const errors = [];
+    for (const [field, value] of Object.entries(data)) {
+        if (schema[field] && !validateField(value, schema[field])) {
+            errors.push(`Invalid value for field ${field}: ${value}`);
+        }
+    }
+    return errors;
+}
+
+// Transaction management
+async function processWithTransaction(connection, operations) {
+    await connection.beginTransaction();
+    try {
+        for (const op of operations) {
+            await op();
+        }
+        await connection.commit();
+    } catch (error) {
+        await connection.rollback();
+        throw error;
+    }
+}
+
 // Paths for additional configurations and state files
 const stateFilePath = path.join(configDir, 'etl_state.json');
 const etlConfigPath = path.join(configDir, 'etlConfig.json');
@@ -98,6 +182,7 @@ async function processLargeTableInBatches(
     state,
     config
 ) {
+    const metrics = new ETLMetrics();
     console.log(`Processing table ${sourceTable} in batches of ${batchSize}`);
 
     let hasMoreData = true;
@@ -106,8 +191,11 @@ async function processLargeTableInBatches(
         throw new Error(`No keys defined for table ${sourceTable} in the configuration.`);
     }
 
-    // Determine if updated_at exists in source schema
+    // Get source and target schemas for validation
     const sourceSchema = await getTableSchema(sourceConnection, sourceTable);
+    const targetSchema = await getTableSchema(targetConnection, targetTable);
+
+    // Determine if updated_at exists in source schema
     const hasUpdatedAt = Object.keys(sourceSchema).includes('updated_at');
 
     // Get business rules for the source table
@@ -139,20 +227,58 @@ async function processLargeTableInBatches(
         hasMoreData = rows.length > 0;
 
         for (const row of rows) {
+            // Validate data before transformation
+            const validationErrors = validateData(row, sourceSchema);
+            if (validationErrors.length > 0) {
+                console.error(`Validation errors for record in ${sourceTable}:`, validationErrors);
+                metrics.recordValidationError();
+                continue;
+            }
+
             let transformedData = { ...row };
-                      
-            ruleEngineInstance.processEvent('UPDATE', sourceTable, row);
-
-            // Build upsert query for target table
-            const fields = Object.keys(transformedData).join(', ');
-            const values = Object.values(transformedData).map(() => '?').join(', ');
-            const insertQuery = `INSERT INTO ${targetTable} (${fields}) VALUES (${values}) ON DUPLICATE KEY UPDATE ${fields.split(', ').map(f => `${f} = VALUES(${f})`).join(', ')}`;
-
+            
             try {
-                await targetConnection.execute(insertQuery, Object.values(transformedData));
+                ruleEngineInstance.processEvent('UPDATE', sourceTable, row);
+                
+                // Build upsert query for target table
+                const fields = Object.keys(transformedData).join(', ');
+                const values = Object.values(transformedData).map(() => '?').join(', ');
+                const insertQuery = `INSERT INTO ${targetTable} (${fields}) VALUES (${values}) ON DUPLICATE KEY UPDATE ${fields.split(', ').map(f => `${f} = VALUES(${f})`).join(', ')}`;
+
+                // Process with transaction
+                await processWithTransaction(targetConnection, [
+                    async () => {
+                        await targetConnection.execute(insertQuery, Object.values(transformedData));
+                    }
+                ]);
+
+                metrics.recordSuccess();
                 console.log(`Record from ${sourceTable} successfully transferred to ${targetTable}`);
             } catch (err) {
+                metrics.recordError();
                 console.error(`Error transferring record to ${targetTable}:`, err);
+                
+                // Implement retry logic for failed records
+                const maxRetries = 3;
+                let retryCount = 0;
+                while (retryCount < maxRetries) {
+                    try {
+                        await new Promise(resolve => setTimeout(resolve, 1000 * Math.pow(2, retryCount)));
+                        await processWithTransaction(targetConnection, [
+                            async () => {
+                                await targetConnection.execute(insertQuery, Object.values(transformedData));
+                            }
+                        ]);
+                        console.log(`Record retry successful after ${retryCount + 1} attempts`);
+                        metrics.recordSuccess();
+                        break;
+                    } catch (retryErr) {
+                        retryCount++;
+                        if (retryCount === maxRetries) {
+                            console.error(`Failed to transfer record after ${maxRetries} retries:`, retryErr);
+                        }
+                    }
+                }
             }
         }
 
@@ -169,13 +295,16 @@ async function processLargeTableInBatches(
         saveState(state);
     }
 
-    console.log(`Finished processing table ${sourceTable}`);
+    const finalMetrics = metrics.getMetrics();
+    console.log(`Finished processing table ${sourceTable}. Metrics:`, finalMetrics);
+    return finalMetrics;
 }
 
 
 
 // Perform ETL job
-async function executeEtlJob(job, state, businessRules,apiConfig) { 
+async function executeEtlJob(job, state, businessRules, apiConfig) {
+    const jobMetrics = new ETLMetrics(); 
     const { source_table, target_table } = job;
     
     const dbConnection1 = apiConfig.find(item => item.dbTable === source_table)?.dbConnection || null;
@@ -213,22 +342,51 @@ async function executeEtlJob(job, state, businessRules,apiConfig) {
     const lastJobRun = state[source_table]?.lastJobRun || null;
     const batchSize = 1000; // Configurable batch size
 
-    try {
-        await processLargeTableInBatches(
-            sourceConnection,
-            targetConnection,
-            source_table,
-            target_table,
-            batchSize,
-            businessRules,
-            lastProcessedKeyValues,
-            lastJobRun,
-            state,
-            job
-        );
-    } catch (err) {
-        console.error(`ETL job failed for ${source_table} -> ${target_table}:`, err);
+    const maxJobRetries = 3;
+    let jobRetryCount = 0;
+
+    while (jobRetryCount < maxJobRetries) {
+        try {
+            const batchMetrics = await processLargeTableInBatches(
+                sourceConnection,
+                targetConnection,
+                source_table,
+                target_table,
+                batchSize,
+                businessRules,
+                lastProcessedKeyValues,
+                lastJobRun,
+                state,
+                job
+            );
+
+            // Combine metrics
+            jobMetrics.recordsProcessed += batchMetrics.recordsProcessed;
+            jobMetrics.errors += batchMetrics.errors;
+            jobMetrics.validationErrors += batchMetrics.validationErrors;
+
+            // Job completed successfully
+            break;
+        } catch (err) {
+            jobRetryCount++;
+            console.error(`ETL job attempt ${jobRetryCount} failed for ${source_table} -> ${target_table}:`, err);
+            
+            if (jobRetryCount < maxJobRetries) {
+                // Exponential backoff before retry
+                const backoffTime = 1000 * Math.pow(2, jobRetryCount);
+                console.log(`Retrying job in ${backoffTime/1000} seconds...`);
+                await new Promise(resolve => setTimeout(resolve, backoffTime));
+            } else {
+                console.error(`ETL job failed after ${maxJobRetries} attempts`);
+                throw err;
+            }
+        }
     }
+
+    // Log final job metrics
+    const finalJobMetrics = jobMetrics.getMetrics();
+    console.log(`ETL job metrics for ${source_table} -> ${target_table}:`, finalJobMetrics);
+    return finalJobMetrics;
 }
 
 

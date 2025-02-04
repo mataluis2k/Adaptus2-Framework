@@ -40,13 +40,11 @@ The **Analytics Framework Module** is a component designed to add machine learni
 
 ## **Configuration**
 
-### **1. ML Configuration File**
-open the apiConfig.json file and to any object that you want to enable Machine Learning and they key "mlmodel" , 
-and using array syntax and any ml logic that you want to attach to that object. 
+### **1. ML Configuration**
 
-* The system will automatically select the corresponding columns to train the models. 
-* You can attached multiple ML logics to the same object.
+The ML module uses two configuration files:
 
+1. **apiConfig.json**: Define which tables get ML capabilities
 ```json
 [
     {
@@ -69,12 +67,54 @@ and using array syntax and any ml logic that you want to attach to that object.
 ]
 ```
 
+2. **mlConfig.json**: Configure ML model behavior
+```json
+{
+    "default": {
+        "batchSize": 1000,
+        "samplingRate": 1,
+        "parallelProcessing": false,
+        "incrementalTraining": false
+    },
+    "endpoints": {
+        "articles": {
+            "sentimentConfig": {
+                "language": "English",
+                "textPreprocessing": true,
+                "minTextLength": 3,
+                "combineFields": false
+            },
+            "recommendationConfig": {
+                "k": 3,
+                "scalingRange": [0, 1],
+                "minClusterSize": 2,
+                "missingValueStrategy": "mean",
+                "weightedFields": {
+                    "rating": 2,
+                    "views": 1.5
+                },
+                "similarityThreshold": 0.5
+            },
+            "anomalyConfig": {
+                "eps": 0.5,
+                "minPts": 2,
+                "scalingRange": [0, 1]
+            }
+        }
+    }
+}
+```
+
+Key Features:
+* Automatic data type detection and preprocessing
+* Support for mixed data types (numeric, categorical, text)
+* Configurable parameters per model type
+* Robust error handling and validation
+
 ## **Usage**
 
-
-
 ### **2. API Endpoints**
-Once configured, the module automatically creates ML endpoints. Example:
+Once configured, the module automatically creates ML endpoints with enhanced capabilities:
 
 #### **Sentiment Analysis**
 ```bash
@@ -83,10 +123,39 @@ GET /api/articles/sentiment
 Response:
 ```json
 {
-    "data": [
-        { "id": 1, "sentiment": 0.8 },
-        { "id": 2, "sentiment": -0.2 }
-    ]
+    "data": {
+        "data": [
+            {
+                "id": 1,
+                "sentiment": 0.8,
+                "confidence": 0.75,
+                "wordCount": 120
+            },
+            {
+                "id": 2,
+                "sentiment": -0.2,
+                "confidence": 0.65,
+                "wordCount": 85
+            }
+        ],
+        "stats": {
+            "total": 2,
+            "valid": 2,
+            "avgSentiment": 0.3,
+            "distribution": {
+                "positive": 1,
+                "neutral": 0,
+                "negative": 1
+            }
+        },
+        "config": {
+            "language": "English",
+            "textFields": ["content"],
+            "textPreprocessing": true,
+            "minTextLength": 3,
+            "combineFields": false
+        }
+    }
 }
 ```
 
@@ -98,8 +167,25 @@ Response:
 ```json
 {
     "data": {
-        "clusters": [[1, 2], [3, 4]],
-        "numericFields": ["price", "rating"]
+        "clusters": [
+            {
+                "id": 0,
+                "points": [1, 2],
+                "centroid": [0.5, 0.8],
+                "size": 2,
+                "similarities": [0.95, 0.88]
+            }
+        ],
+        "fieldProcessors": [
+            ["price", {"type": "numeric", "params": {"min": 0, "max": 100}}],
+            ["category", {"type": "categorical", "params": ["electronics", "books"]}]
+        ],
+        "stats": {
+            "totalPoints": 100,
+            "dimensions": 5,
+            "clusterSizes": [45, 55],
+            "averageSimilarity": 0.85
+        }
     }
 }
 ```
@@ -113,7 +199,25 @@ Response:
 {
     "data": {
         "clusters": [[1, 3], [2, 4]],
-        "numericFields": ["views", "shares"]
+        "fieldProcessors": [
+            ["price", {"type": "numeric", "params": {"min": 0, "max": 1000}}],
+            ["category", {"type": "categorical", "params": ["normal", "suspicious"]}]
+        ],
+        "anomalies": [
+            {
+                "index": 5,
+                "originalData": {
+                    "id": 5,
+                    "price": 999,
+                    "category": "suspicious"
+                }
+            }
+        ],
+        "params": {
+            "eps": 0.5,
+            "minPts": 2,
+            "scalingRange": [0, 1]
+        }
     }
 }
 ```
@@ -184,15 +288,46 @@ Your configuration file should follow this structure:
 
 ### Configuration Fields
 
-#### **`default` Section**
-Specifies global defaults applied to all endpoints unless overridden. Fields include:
+#### **Global Settings (`default` Section)**
+Specifies global defaults applied to all endpoints unless overridden:
 
 | Field               | Type    | Description                                                                                 | Default Value |
 |---------------------|---------|---------------------------------------------------------------------------------------------|---------------|
-| `batchSize`         | Integer | Number of rows processed in each batch during training.                                      | `1000`        |
-| `samplingRate`      | Float   | Fraction of rows to sample for training. `1` means all rows, `0.1` means 10% of rows.        | `1`           |
-| `parallelProcessing`| Boolean | Whether to train models for each endpoint in parallel.                                       | `false`       |
-| `incrementalTraining`| Boolean| Whether to update existing models incrementally instead of retraining from scratch.          | `false`       |
+| `batchSize`         | Integer | Number of rows processed in each batch during training                                       | `1000`        |
+| `samplingRate`      | Float   | Fraction of rows to sample for training (`1` = all rows, `0.1` = 10% of rows)               | `1`           |
+| `parallelProcessing`| Boolean | Whether to train models for each endpoint in parallel                                        | `false`       |
+| `incrementalTraining`| Boolean| Whether to update existing models incrementally instead of retraining from scratch           | `false`       |
+
+#### **Sentiment Analysis Configuration**
+Configure sentiment analysis behavior per endpoint:
+
+| Field              | Type    | Description                                                                                  | Default Value |
+|--------------------|---------|----------------------------------------------------------------------------------------------|---------------|
+| `language`         | String  | Language for sentiment analysis (e.g., "English")                                            | `"English"`   |
+| `textPreprocessing`| Boolean | Whether to apply text preprocessing (lowercase, punctuation removal, etc.)                    | `true`        |
+| `minTextLength`    | Integer | Minimum text length to analyze                                                               | `3`           |
+| `combineFields`    | Boolean | Whether to combine all text fields for analysis                                              | `false`       |
+
+#### **Recommendation Configuration**
+Configure recommendation system behavior:
+
+| Field                | Type    | Description                                                                                | Default Value |
+|---------------------|----------|--------------------------------------------------------------------------------------------|---------------|
+| `k`                 | Integer  | Number of clusters for k-means                                                             | `3`           |
+| `scalingRange`      | Array   | Range for scaling numeric values `[min, max]`                                              | `[0, 1]`      |
+| `minClusterSize`    | Integer | Minimum number of points required for a valid cluster                                      | `2`           |
+| `missingValueStrategy`| String | Strategy for handling missing values ("mean", "median", "mode", "zero", "remove")         | `"mean"`      |
+| `weightedFields`    | Object  | Field weights for importance in clustering                                                 | `{}`          |
+| `similarityThreshold`| Float   | Minimum similarity score for recommendations                                               | `0.5`         |
+
+#### **Anomaly Detection Configuration**
+Configure anomaly detection behavior:
+
+| Field          | Type    | Description                                                                                     | Default Value |
+|----------------|---------|--------------------------------------------------------------------------------------------------|---------------|
+| `eps`          | Float   | Maximum distance between points in a cluster (DBSCAN parameter)                                  | `0.5`         |
+| `minPts`       | Integer | Minimum points required to form a cluster (DBSCAN parameter)                                     | `2`           |
+| `scalingRange` | Array   | Range for scaling numeric values `[min, max]`                                                    | `[0, 1]`      |
 
 #### **`endpoints` Section**
 Overrides the default settings for specific endpoints. Each key in this section corresponds to a `dbTable` in your API configuration.
