@@ -12,6 +12,9 @@ const response = {
             return; // we don't want to override a status code that is already set
         }
         this.status = status;
+        if(status === 600){
+            return; // we don't want to override a status code that is already set
+        }
         this.message = message;
         this.error = error;
         this.data = data;

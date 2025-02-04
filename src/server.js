@@ -31,6 +31,7 @@ axios.interceptors.request.use(request => {
     request.startTime = Date.now();
     return request;
 });
+
 axios.interceptors.response.use(
     response => {
         const duration = Date.now() - response.config.startTime;
@@ -81,6 +82,7 @@ const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
 const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
+const response = require('./modules/response'); // Import the shared response object
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -234,6 +236,11 @@ globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
 };
 
+globalContext.actions.end = (ctx, params) => {
+    console.log('[END]: End of action sequence');
+    response.setResponse(600, null, null, null, 'END');
+    return response;
+};
 
 function flattenResolvers(resolvers) {
     const flatResolvers = {};

@@ -54,10 +54,13 @@ class RuleEngineMiddleware {
                         },
                     });
                                 
-                    if(response.status !== 200){
+                    if(response.status === 600){
+                        response.status = 200;
                         return res.status(response.status).json({ message: response.message, error: response.error, data: response.data, module: response.module });
                     }
+                     
                     return next();
+
                 } catch (err) {
                     console.error(`Error processing inbound ${eventType} rules:`, err.message);
                     return res.status(500).json({ error: `${eventType} rules processing failed` });
