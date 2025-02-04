@@ -85,6 +85,7 @@ const StreamingServer = require('./modules/streamingServer'); // Streaming Modul
 const RuleEngine = require('./modules/ruleEngine');
 const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
 const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
+const FirebaseService = require('./services/firebaseService'); // Firebase Service
 
 // Changes to enable clustering and plugin management
 const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
@@ -1933,6 +1934,14 @@ class Adaptus2Server {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        // Initialize Firebase Service
+        try {
+            new FirebaseService(); // Initialize Firebase
+            console.log('Firebase service initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize Firebase service:', error.message);
+        }
+
         // Initialize Ollama Module
         try {
             ollamaModule.initialize().then(() => {

@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.0.33",
+  "version": "2.0.34",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -48,7 +48,7 @@
     "dotenv": "^16.4.6",
     "express": "^4.21.1",
     "express-rate-limit": "^7.5.0",
-    "firebase-admin": "^13.0.1",
+    "firebase-admin": "^13.0.2",
     "fluent-ffmpeg": "^2.1.3",
     "fs": "^0.0.1-security",
     "graphql": "^16.9.0",

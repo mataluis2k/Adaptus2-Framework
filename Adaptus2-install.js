@@ -54,6 +54,29 @@ const groups = {
     "DEFAULT_DBCONNECTION",
     "PAYMENT_MODULE"
   ],
+  "LLM Configuration": [
+    "LLM_TYPE",
+    "OPENAI_API_KEY",
+    "OPENAI_MODEL",
+    "CLAUDE_API_KEY",
+    "CLAUDE_MODEL",
+    "OPENROUTER_API_KEY"
+  ],
+  "OAuth Configuration": [
+    "OAUTH_CLIENT_ID",
+    "OAUTH_CLIENT_SECRET",
+    "OAUTH_AUTH_URL",
+    "OAUTH_TOKEN_URL",
+    "OAUTH_CALLBACK_URL",
+    "TOKEN_DURATION"
+  ],
+  "GraphQL Configuration": [
+    "GRAPHQL_DBTYPE",
+    "GRAPHQL_DBCONNECTION"
+  ],
+  "Firebase Configuration": [
+    "GOOGLE_APPLICATION_CREDENTIALS"
+  ],
   "MySQL": ["MYSQL_1_HOST", "MYSQL_1_USER", "MYSQL_1_PASSWORD", "MYSQL_1_DB"],
   "Command Line Interface": ["SOCKET_CLI", "SOCKET_CLI_PORT"],
   "PostgreSQL": ["POSTGRES_1_HOST", "POSTGRES_1_USER", "POSTGRES_1_PASSWORD", "POSTGRES_1_DB"],
@@ -123,6 +146,25 @@ const defaultConfig = {
   DEFAULT_DBTYPE: "mysql",
   DEFAULT_DBCONNECTION: "MYSQL_1",
   PAYMENT_MODULE: "FALSE",
+  // LLM Configuration
+  LLM_TYPE: "ollama",
+  OPENAI_MODEL: "gpt-3.5-turbo",
+  CLAUDE_MODEL: "claude-2",
+  OPENAI_API_KEY: "your-openai-api-key",
+  CLAUDE_API_KEY: "your-claude-api-key",
+  OPENROUTER_API_KEY: "your-openrouter-api-key",
+  // OAuth Configuration
+  OAUTH_CLIENT_ID: "your-client-id",
+  OAUTH_CLIENT_SECRET: "your-client-secret",
+  OAUTH_AUTH_URL: "https://provider.com/oauth/authorize",
+  OAUTH_TOKEN_URL: "https://provider.com/oauth/token",
+  OAUTH_CALLBACK_URL: "http://localhost:3000/auth/callback",
+  TOKEN_DURATION: "1d",
+  // GraphQL Configuration
+  GRAPHQL_DBTYPE: "MYSQL_1",
+  GRAPHQL_DBCONNECTION: "MYSQL_1",
+  // Firebase Configuration
+  GOOGLE_APPLICATION_CREDENTIALS: "/path/to/your/firebase-credentials.json",
   MYSQL_1_HOST: "localhost",
   MYSQL_1_USER: "myUser99",
   MYSQL_1_PASSWORD: "localtest22_!",
