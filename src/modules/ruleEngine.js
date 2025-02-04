@@ -286,6 +286,7 @@ class Rule {
   async _executeAction(actionContext, action, data) {
     const req = getContext('req');
     const method = req.method.toUpperCase(); // "GET", "POST", etc.
+    data.user = req.user;
 
     // // // Only merge if it's POST/PUT/PATCH:
     // if (req?.headers && ['POST', 'PUT', 'PATCH'].includes(method)) {

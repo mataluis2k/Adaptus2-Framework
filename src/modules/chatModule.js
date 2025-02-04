@@ -2,7 +2,7 @@ const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
 const { getDbConnection } = require("./db");
-const ollamaModule = require("./ollamaModule");
+const llmModule = require("./llmModule");
 
 // AI trigger prefix
 const AI_TRIGGER = "/ai";
@@ -104,7 +104,7 @@ class ChatModule {
                     // Process with Ollama only if AI is triggered
                     if (isAiQuery) {
                         const aiPrompt = message.slice(AI_TRIGGER.length).trim();
-                        const aiResponse = await ollamaModule.processMessage({
+                        const aiResponse = await llmModule.processMessage({
                             ...messageData,
                             message: aiPrompt
                         });
@@ -171,7 +171,7 @@ class ChatModule {
                     // Process with Ollama only if AI is triggered
                     if (isAiQuery) {
                         const aiPrompt = message.slice(AI_TRIGGER.length).trim();
-                        const aiResponse = await ollamaModule.processMessage({
+                        const aiResponse = await llmModule.processMessage({
                             ...messageData,
                             message: aiPrompt
                         });
