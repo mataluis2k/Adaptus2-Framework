@@ -125,16 +125,21 @@ For more information, visit: https://ollama.ai/download
         }
     }
 
-    async generateResponse(prompt, context = []) {
+    async generateResponse(prompt, messages = []) {
         await this.ensureInitialized();
         try {
-            // Ensure context is an array
-            const formattedContext = Array.isArray(context) ? context : [];
+            // For Ollama, we'll concatenate previous messages into the prompt
+            const contextPrompt = messages.map(msg => 
+                `${msg.role}: ${msg.content}`
+            ).join('\n');
+            
+            const fullPrompt = contextPrompt ? 
+                `${contextPrompt}\nuser: ${prompt}` : 
+                prompt;
     
             const response = await this.ollama.generate({ 
                 model: this.model, 
-                prompt, 
-                context: formattedContext, 
+                prompt: fullPrompt,
                 stream: false 
             });
     
@@ -145,12 +150,12 @@ For more information, visit: https://ollama.ai/download
         }
     }
     // Method to handle chat messages
-    async processMessage(messageData) {
+    async processMessage(messageData, history = []) {
         const { senderId, recipientId, groupName, message } = messageData;
         
         try {
-            // Generate AI response
-            const aiResponse = await this.generateResponse(message);
+            // Pass history directly to generateResponse
+            const aiResponse = await this.generateResponse(message, history);
             
             // Prepare response data
             const responseData = {
@@ -205,12 +210,12 @@ For more information, visit: https://ollama.ai/download
             authenticateMiddleware(true),
             async (req, res) => {
                 try {
-                    const { prompt, context } = req.body;
+                    const { prompt, messages } = req.body;
                     if (!prompt) {
                         return res.status(400).json({ error: 'Prompt is required' });
                     }
 
-                    const response = await this.generateResponse(prompt, context || '');
+                    const response = await this.generateResponse(prompt, messages || []);
                     res.json({ response });
                 } catch (error) {
                     console.error('Error in generate endpoint:', error);
