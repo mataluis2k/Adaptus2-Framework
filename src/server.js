@@ -2319,8 +2319,8 @@ class Adaptus2Server {
    
 
     async shutdown(code = 0) {
+        const consolelog = require('./modules/logger');
         try {
-            const consolelog = require('./modules/logger');
             consolelog.log('Initiating graceful shutdown...');
 
             // Close WebSocket server
@@ -2333,55 +2333,62 @@ class Adaptus2Server {
                 });
             }
             
-            try {
-                // Close all connections
-                const connections = await Promise.allSettled([
-                    this.redis.quit(),
-                    this.publisherRedis?.quit(),
-                    this.subscriberRedis?.quit(),
-                    redisPublisher.quit(),
-                    redisSubscriber.quit()
-                ]);
+            // Close all connections
+            const connections = await Promise.allSettled([
+                this.redis.quit(),
+                this.publisherRedis?.quit(),
+                this.subscriberRedis?.quit(),
+                redisPublisher.quit(),
+                redisSubscriber.quit()
+            ]);
 
-                connections.forEach((result, index) => {
-                    if (result.status === 'rejected') {
-                        consolelog.error(`Failed to close connection ${index}:`, result.reason);
-                    }
+            connections.forEach((result, index) => {
+                if (result.status === 'rejected') {
+                    consolelog.error(`Failed to close connection ${index}:`, result.reason);
+                }
+            });
+
+            // Close the server
+            if (this.server) {
+                await new Promise((resolve) => {
+                    this.server.close(resolve);
                 });
-
-                // Close the server
-                if (this.server) {
-                    await new Promise((resolve) => {
-                        this.server.close(resolve);
-                    });
-                }
-
-                // Close socket server if it exists
-                if (this.socketServer) {
-                    await new Promise((resolve) => {
-                        this.socketServer.close(resolve);
-                    });
-                }
-
-                consolelog.log('All connections closed successfully');
-
-                // Cleanup logger
-                if (consolelog.cleanup) {
-                    await consolelog.cleanup();
-                }
-
-                consolelog.log('Graceful shutdown completed');
-                
-                // Small delay to ensure final logs are written
-                await new Promise(resolve => setTimeout(resolve, 100));
-                
-                process.exit(code);
-            } catch (error) {
-                consolelog.error('Error during connection cleanup:', error);
-                process.exit(1);
             }
+
+            // Close socket server if it exists
+            if (this.socketServer) {
+                await new Promise((resolve) => {
+                    this.socketServer.close(resolve);
+                });
+            }
+
+            consolelog.log('All connections closed successfully');
+            consolelog.log('Graceful shutdown completed');
+
+            // Ensure all logs are written before cleanup
+            await new Promise(resolve => setTimeout(resolve, 500));
+
+            // Cleanup logger as the final step
+            if (consolelog.cleanup) {
+                await consolelog.cleanup();
+            }
+
+            // Small delay to ensure logger cleanup is complete
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            process.exit(code);
         } catch (error) {
-            console.error('Critical error during shutdown:', error);
+            // Log error before cleanup
+            consolelog.error('Error during shutdown:', error);
+            
+            // Ensure error is logged before cleanup
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Cleanup logger
+            if (consolelog.cleanup) {
+                await consolelog.cleanup();
+            }
+            
             process.exit(1);
         }
     }

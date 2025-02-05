@@ -2,7 +2,7 @@
  * ML utility functions for data preprocessing and normalization
  */
 
-// Utility to scale numerical values with robust error handling
+// Utility to scale numerical values with robust error handling and default values
 function scale(value, range = [0, 1], existingParams = null) {
     try {
         // Input validation
@@ -17,21 +17,24 @@ function scale(value, range = [0, 1], existingParams = null) {
 
         // Handle single value vs array
         const values = Array.isArray(value) ? value : [value];
-        if (values.some(v => typeof v !== 'number' || isNaN(v))) {
-            throw new Error('All values must be valid numbers');
-        }
+        
+        // Filter out invalid values but don't throw error
+        const validValues = values.filter(v => typeof v === 'number' && !isNaN(v) && isFinite(v));
 
         let scaleParams;
         if (existingParams) {
             // Validate existing parameters
-            if (!existingParams.min || !existingParams.max) {
+            if (typeof existingParams.min !== 'number' || typeof existingParams.max !== 'number') {
                 throw new Error('Invalid scaling parameters');
             }
             scaleParams = existingParams;
         } else {
-            const validValues = values.filter(v => !isNaN(v) && isFinite(v));
             if (validValues.length === 0) {
-                throw new Error('No valid values to scale');
+                // Return default value if no valid values
+                return {
+                    scaled: Array.isArray(value) ? values.map(() => 0) : 0,
+                    scaleParams: { min: 0, max: 1 }
+                };
             }
             scaleParams = {
                 min: Math.min(...validValues),
@@ -41,15 +44,16 @@ function scale(value, range = [0, 1], existingParams = null) {
 
         // Handle edge case where min equals max
         if (scaleParams.min === scaleParams.max) {
+            const defaultValue = (min + max) / 2; // Use middle of range
             return {
-                scaled: Array.isArray(value) ? values.map(() => min) : min,
+                scaled: Array.isArray(value) ? values.map(() => defaultValue) : defaultValue,
                 scaleParams
             };
         }
 
-        // Perform scaling
+        // Perform scaling with default value for invalid inputs
         const scaleValue = (v) => {
-            if (isNaN(v) || !isFinite(v)) return null;
+            if (typeof v !== 'number' || isNaN(v) || !isFinite(v)) return 0;
             return (v - scaleParams.min) / (scaleParams.max - scaleParams.min) * (max - min) + min;
         };
 
@@ -61,19 +65,24 @@ function scale(value, range = [0, 1], existingParams = null) {
     }
 }
 
-// Utility to one-hot encode categorical values with enhanced functionality
+// Utility to one-hot encode categorical values with enhanced functionality and default values
 function oneHotEncode(value, existingCategories = null) {
     try {
-        // Handle null/undefined values
+        let categories = existingCategories ? [...existingCategories] : [];
+        
+        // Handle null/undefined values by returning zero vector
         if (value === null || value === undefined) {
-            throw new Error('Cannot encode null or undefined values');
+            return {
+                encoded: categories.length > 0 ? Array(categories.length).fill(0) : [0],
+                categories,
+                originalValue: null,
+                mapping: Object.fromEntries(categories.map((cat, idx) => [cat, idx]))
+            };
         }
 
         // Convert value to string for consistent handling
         const stringValue = String(value);
 
-        let categories = existingCategories ? [...existingCategories] : [];
-        
         // Handle new category
         if (!categories.includes(stringValue)) {
             categories.push(stringValue);
@@ -93,7 +102,13 @@ function oneHotEncode(value, existingCategories = null) {
         };
     } catch (error) {
         console.error('Error in oneHotEncode function:', error);
-        throw error;
+        // Return zero vector on error
+        return {
+            encoded: [0],
+            categories: [],
+            originalValue: null,
+            mapping: {}
+        };
     }
 }
 

@@ -38,21 +38,93 @@ class MLAnalytics {
         }
     }
 
+    /**
+     * Get merged configuration with sensible defaults for ML models
+     */
     getMergedConfig(dbTable) {
+        // System-wide defaults that apply if nothing is configured
+        const systemDefaults = {
+            // Global training defaults
+            batchSize: 1000,
+            samplingRate: 1.0,
+            parallelProcessing: false,
+            incrementalTraining: false,
+
+            // Sentiment analysis defaults
+            sentimentConfig: {
+                language: 'English',
+                textPreprocessing: true,
+                minTextLength: 3,
+                combineFields: false
+            },
+
+            // Recommendation system defaults
+            recommendationConfig: {
+                k: 3,
+                scalingRange: [0, 1],
+                minClusterSize: 2,
+                missingValueStrategy: 'mean',
+                weightedFields: {},
+                similarityThreshold: 0.5
+            },
+
+            // Anomaly detection defaults
+            anomalyConfig: {
+                eps: 0.5,
+                minPts: 2,
+                scalingRange: [0, 1],
+                missingValueStrategy: 'mean'
+            }
+        };
+
         const mainEndpoint = this.mainConfig.find((ep) => ep.dbTable === dbTable);
         if (!mainEndpoint) {
             console.warn(`Endpoint ${dbTable} not found in main configuration.`);
             return null;
         }
 
+        // Layer the configurations:
+        // 1. System defaults (lowest priority)
+        // 2. Global defaults from mlConfig.default
+        // 3. Table-specific config from mlConfig.endpoints[dbTable]
+        // 4. Main endpoint config (highest priority)
         const mlEndpoint = this.mlConfig.endpoints?.[dbTable] || {};
         const defaultMLConfig = this.mlConfig.default || {};
 
-        return {
+        const mergedConfig = {
+            ...systemDefaults,
             ...defaultMLConfig,
             ...mlEndpoint,
-            ...mainEndpoint, // Ensure main endpoint properties are included
+            ...mainEndpoint,
+            
+            // Merge nested configurations
+            sentimentConfig: {
+                ...systemDefaults.sentimentConfig,
+                ...(defaultMLConfig.sentimentConfig || {}),
+                ...(mlEndpoint.sentimentConfig || {})
+            },
+            recommendationConfig: {
+                ...systemDefaults.recommendationConfig,
+                ...(defaultMLConfig.recommendationConfig || {}),
+                ...(mlEndpoint.recommendationConfig || {})
+            },
+            anomalyConfig: {
+                ...systemDefaults.anomalyConfig,
+                ...(defaultMLConfig.anomalyConfig || {}),
+                ...(mlEndpoint.anomalyConfig || {})
+            }
         };
+
+        // Log the configuration being used
+        console.log(`Configuration for ${dbTable}:`, {
+            batchSize: mergedConfig.batchSize,
+            samplingRate: mergedConfig.samplingRate,
+            sentimentConfig: mergedConfig.sentimentConfig,
+            recommendationConfig: mergedConfig.recommendationConfig,
+            anomalyConfig: mergedConfig.anomalyConfig
+        });
+
+        return mergedConfig;
     }
 
     /**
@@ -320,11 +392,19 @@ class MLAnalytics {
             const processedData = [];
             const fieldProcessors = new Map();
             const fields = endpoint.allowRead;
+            const defaultValue = 0; // Default value for missing features
 
-            // First pass: analyze fields and set up processors
+            // First pass: analyze fields and collect all possible categories
+            const categoriesMap = new Map();
             for (const field of fields) {
                 const values = rows.map(row => row[field]);
-                const sampleValue = values[0];
+                const sampleValue = values.find(v => v !== null && v !== undefined);
+                
+                if (!sampleValue) {
+                    console.warn(`Field ${field} has no valid values, skipping`);
+                    continue;
+                }
+
                 const weight = weightedFields[field] || 1;
 
                 if (typeof sampleValue === 'number') {
@@ -337,26 +417,31 @@ class MLAnalytics {
                         params: scaleParams,
                         weight,
                         processor: (val) => {
+                            if (val === null || val === undefined) {
+                                return defaultValue;
+                            }
                             const cleaned = handleMissingValues([val], missingValueStrategy)[0];
                             return scale(cleaned, scalingRange, scaleParams).scaled * weight;
                         }
                     });
                 } else if (typeof sampleValue === 'string' || typeof sampleValue === 'boolean') {
-                    // One-hot encode categorical values
-                    const { categories } = oneHotEncode(sampleValue);
+                    // Collect all unique categories first
+                    const uniqueCategories = new Set();
                     values.forEach(val => {
                         if (val !== null && val !== undefined) {
-                            const { encoded } = oneHotEncode(val, categories);
-                            if (encoded.some(v => v === 1)) {
-                                categories.push(val);
-                            }
+                            uniqueCategories.add(String(val));
                         }
                     });
+                    const categories = Array.from(uniqueCategories).sort();
+                    
                     fieldProcessors.set(field, {
                         type: 'categorical',
                         params: categories,
                         weight,
                         processor: (val) => {
+                            if (val === null || val === undefined) {
+                                return Array(categories.length).fill(defaultValue);
+                            }
                             const { encoded } = oneHotEncode(val, categories);
                             return encoded.map(v => v * weight);
                         }
@@ -364,27 +449,45 @@ class MLAnalytics {
                 }
             }
 
-            // Second pass: process all rows
+            if (fieldProcessors.size === 0) {
+                throw new Error('No valid fields found for processing');
+            }
+
+            // Calculate feature dimension
+            const totalDimensions = Array.from(fieldProcessors.values()).reduce((sum, processor) => {
+                if (processor.type === 'numeric') return sum + 1;
+                if (processor.type === 'categorical') return sum + processor.params.length;
+                return sum;
+            }, 0);
+
+            // Second pass: process all rows with consistent dimensions
             for (const row of rows) {
                 const processedRow = [];
                 for (const [field, processor] of fieldProcessors) {
                     const value = row[field];
-                    if (value !== null && value !== undefined) {
-                        const processed = processor.processor(value);
-                        if (Array.isArray(processed)) {
-                            processedRow.push(...processed);
-                        } else {
-                            processedRow.push(processed);
-                        }
+                    const processed = processor.processor(value);
+                    if (Array.isArray(processed)) {
+                        processedRow.push(...processed);
+                    } else {
+                        processedRow.push(processed);
                     }
                 }
-                if (processedRow.length > 0) {
-                    processedData.push(processedRow);
+                // Ensure all rows have the same dimension
+                while (processedRow.length < totalDimensions) {
+                    processedRow.push(defaultValue);
                 }
+                processedData.push(processedRow);
             }
 
             if (processedData.length < minClusterSize) {
                 throw new Error(`Insufficient data points (${processedData.length}) for clustering. Minimum required: ${minClusterSize}`);
+            }
+
+            // Verify all rows have same dimensions
+            const firstRowDimension = processedData[0].length;
+            const invalidRows = processedData.filter(row => row.length !== firstRowDimension);
+            if (invalidRows.length > 0) {
+                throw new Error(`Inconsistent feature dimensions detected. Expected ${firstRowDimension} features.`);
             }
 
             // Adjust K based on dataset size
@@ -394,15 +497,21 @@ class MLAnalytics {
             // Run K-means clustering
             const clusterResult = kmeans(processedData, adjustedK);
 
+            // Organize points by their assigned clusters
+            const clusterPoints = new Array(adjustedK).fill(null).map(() => []);
+            clusterResult.clusters.forEach((clusterIdx, pointIdx) => {
+                clusterPoints[clusterIdx].push(pointIdx);
+            });
+
             // Enhance cluster results with similarity scores
-            const enhancedClusters = clusterResult.clusters.map((cluster, idx) => {
+            const enhancedClusters = clusterPoints.map((points, idx) => {
                 const centroid = clusterResult.centroids[idx];
                 return {
                     id: idx,
-                    points: cluster,
+                    points,
                     centroid,
-                    size: cluster.length,
-                    similarities: cluster.map(pointIdx => {
+                    size: points.length,
+                    similarities: points.map(pointIdx => {
                         const point = processedData[pointIdx];
                         // Calculate cosine similarity with centroid
                         const dotProduct = point.reduce((sum, val, i) => sum + val * centroid[i], 0);
@@ -450,7 +559,7 @@ class MLAnalytics {
      * Train an anomaly detection model with robust data preprocessing.
      */
     trainAnomalyModel(rows, endpoint) {
-        const { scale, oneHotEncode } = require('./ml_utils');
+        const { scale, oneHotEncode, handleMissingValues } = require('./ml_utils');
         
         if (!rows || rows.length === 0) {
             console.warn(`No data provided for anomaly detection in ${endpoint.dbTable}`);
@@ -463,66 +572,105 @@ class MLAnalytics {
             const {
                 eps = 0.5,
                 minPts = 2,
-                scalingRange = [0, 1]
+                scalingRange = [0, 1],
+                missingValueStrategy = 'mean'
             } = mergedConfig?.anomalyConfig || {};
 
             // Process all fields that can be used for anomaly detection
             const processedData = [];
             const fieldProcessors = new Map();
             const fields = endpoint.allowRead;
+            const defaultValue = 0; // Default value for missing features
 
-            // First pass: analyze fields and set up processors
+            // First pass: analyze fields and collect all possible categories
             for (const field of fields) {
                 const values = rows.map(row => row[field]);
-                const sampleValue = values[0];
+                const sampleValue = values.find(v => v !== null && v !== undefined);
                 
+                if (!sampleValue) {
+                    console.warn(`Field ${field} has no valid values, skipping`);
+                    continue;
+                }
+
                 if (typeof sampleValue === 'number') {
-                    // Numeric field: scale to common range
-                    const { scaled, scaleParams } = scale(values, scalingRange);
+                    // Handle missing values first
+                    const cleanValues = handleMissingValues(values, missingValueStrategy);
+                    // Scale numeric values
+                    const { scaled, scaleParams } = scale(cleanValues, scalingRange);
                     fieldProcessors.set(field, {
                         type: 'numeric',
                         params: scaleParams,
-                        processor: (val) => scale(val, scalingRange, scaleParams).scaled
-                    });
-                } else if (typeof sampleValue === 'string' || typeof sampleValue === 'boolean') {
-                    // Categorical field: one-hot encode
-                    const { categories } = oneHotEncode(sampleValue);
-                    values.forEach(val => {
-                        const { encoded } = oneHotEncode(val, categories);
-                        if (encoded.some(v => v === 1)) {
-                            categories.push(val);
+                        processor: (val) => {
+                            if (val === null || val === undefined) {
+                                return defaultValue;
+                            }
+                            const cleaned = handleMissingValues([val], missingValueStrategy)[0];
+                            return scale(cleaned, scalingRange, scaleParams).scaled;
                         }
                     });
+                } else if (typeof sampleValue === 'string' || typeof sampleValue === 'boolean') {
+                    // Collect all unique categories first
+                    const uniqueCategories = new Set();
+                    values.forEach(val => {
+                        if (val !== null && val !== undefined) {
+                            uniqueCategories.add(String(val));
+                        }
+                    });
+                    const categories = Array.from(uniqueCategories).sort();
+                    
                     fieldProcessors.set(field, {
                         type: 'categorical',
                         params: categories,
-                        processor: (val) => oneHotEncode(val, categories).encoded
+                        processor: (val) => {
+                            if (val === null || val === undefined) {
+                                return Array(categories.length).fill(defaultValue);
+                            }
+                            const { encoded } = oneHotEncode(val, categories);
+                            return encoded;
+                        }
                     });
                 }
-                // Skip other types (e.g., objects, arrays)
             }
 
-            // Second pass: process all rows
+            if (fieldProcessors.size === 0) {
+                throw new Error('No valid fields found for processing');
+            }
+
+            // Calculate feature dimension
+            const totalDimensions = Array.from(fieldProcessors.values()).reduce((sum, processor) => {
+                if (processor.type === 'numeric') return sum + 1;
+                if (processor.type === 'categorical') return sum + processor.params.length;
+                return sum;
+            }, 0);
+
+            // Second pass: process all rows with consistent dimensions
             for (const row of rows) {
                 const processedRow = [];
                 for (const [field, processor] of fieldProcessors) {
                     const value = row[field];
-                    if (value !== null && value !== undefined) {
-                        const processed = processor.processor(value);
-                        if (Array.isArray(processed)) {
-                            processedRow.push(...processed);
-                        } else {
-                            processedRow.push(processed);
-                        }
+                    const processed = processor.processor(value);
+                    if (Array.isArray(processed)) {
+                        processedRow.push(...processed);
+                    } else {
+                        processedRow.push(processed);
                     }
                 }
-                if (processedRow.length > 0) {
-                    processedData.push(processedRow);
+                // Ensure all rows have the same dimension
+                while (processedRow.length < totalDimensions) {
+                    processedRow.push(defaultValue);
                 }
+                processedData.push(processedRow);
             }
 
             if (processedData.length === 0) {
                 throw new Error('No valid data after preprocessing');
+            }
+
+            // Verify all rows have same dimensions
+            const firstRowDimension = processedData[0].length;
+            const invalidRows = processedData.filter(row => row.length !== firstRowDimension);
+            if (invalidRows.length > 0) {
+                throw new Error(`Inconsistent feature dimensions detected. Expected ${firstRowDimension} features.`);
             }
 
             // Run DBSCAN on processed data
@@ -545,7 +693,8 @@ class MLAnalytics {
                 if (!allPoints.has(i)) {
                     anomalies.push({
                         index: i,
-                        originalData: rows[i]
+                        originalData: rows[i],
+                        processedData: processedData[i]
                     });
                 }
             }
@@ -558,7 +707,15 @@ class MLAnalytics {
                 params: {
                     eps,
                     minPts,
-                    scalingRange
+                    scalingRange,
+                    missingValueStrategy
+                },
+                stats: {
+                    totalPoints: processedData.length,
+                    dimensions: firstRowDimension,
+                    numClusters: clusters.length,
+                    numAnomalies: anomalies.length,
+                    anomalyPercentage: (anomalies.length / processedData.length) * 100
                 }
             };
         } catch (error) {
@@ -582,6 +739,7 @@ class MLAnalytics {
                 return next();
             }
     
+            // ml/articles/recommendation/1
             const table = pathParts[1]; // e.g., "articles"
             const model = pathParts[2]; // e.g., "recommendation"
             const keyId = pathParts[3] ? parseInt(pathParts[3], 10) : null; // e.g., "1"
@@ -594,22 +752,37 @@ class MLAnalytics {
     
             // For recommendations, process the request with the key ID
             if (model === 'recommendation' && keyId !== null) {
-                const { clusters, numericFields } = modelData;
-    
-                // Find the cluster for the given key
-                const clusterIndex = clusters.clusters[keyId];
-                if (clusterIndex === undefined) {
-                    return res.status(404).json({ error: `Key ${keyId} not found in recommendations` });
+                if (modelData.error) {
+                    return res.status(500).json({ error: modelData.error });
                 }
-    
-                // Find all keys in the same cluster
-                const recommendedKeys = clusters.clusters
-                    .map((cluster, index) => (cluster === clusterIndex ? index : null))
-                    .filter((index) => index !== null && index !== keyId); // Exclude the original key
-    
+
+                // Find which cluster contains our target keyId
+                const targetCluster = modelData.clusters.find(cluster => 
+                    cluster.points.includes(keyId)
+                );
+
+                if (!targetCluster) {
+                    return res.status(404).json({ 
+                        error: `Key ${keyId} not found in any cluster` 
+                    });
+                }
+
+                // Get recommendations from the same cluster, excluding the target key
+                const recommendations = targetCluster.points
+                    .filter(pointIdx => pointIdx !== keyId)
+                    .map(pointIdx => ({
+                        id: pointIdx,
+                        similarity: targetCluster.similarities[
+                            targetCluster.points.indexOf(pointIdx)
+                        ]
+                    }))
+                    .sort((a, b) => b.similarity - a.similarity); // Sort by similarity descending
+
                 return res.json({
                     key: keyId,
-                    recommendations: recommendedKeys,
+                    cluster_id: targetCluster.id,
+                    cluster_size: targetCluster.size,
+                    recommendations
                 });
             }
     
