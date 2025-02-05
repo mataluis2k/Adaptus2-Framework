@@ -2,52 +2,6 @@
 
 Adaptus2 is a flexible and modular API server framework built on Express. It integrates a variety of technologies and features to support robust API development, real-time updates, plugin management, and scalable microservices architecture.
 
----
-
-## Installation
-
-1. **Clone the Repository:**
-   ```bash
-   git clone <repository-url>
-   cd Adaptus2-Framework
-   ```
-
-2. **Install Dependencies:**
-   Use npm to install all required packages:
-   ```bash
-   npm install
-   ```
-
-3. **Environment Configuration:**
-   - Create a `.env` file at the root directory, or copy the provided `env.sample` and update the necessary environment variables.
-   - Key variables include:
-     - `PORT`
-     - `REDIS_URL`
-     - `JWT_SECRET`
-     - `JWT_EXPIRY`
-     - `PLUGIN_MANAGER`
-     - `CLUSTER_NAME`
-     - Others as needed for your configuration.
-
-4. **Database Setup:**
-   - Ensure your database (MySQL or PostgreSQL) is running.
-   - Use the command-line flags to initialize tables if needed:
-     ```bash
-     npm run init
-     ```
-     (This uses the `--init` flag to setup database tables.)
-
-5. **Starting the Server:**
-   To start the server, simply run:
-   ```bash
-   npm start
-   ```
-   Additional commands:
-   - `npm run build` to build the API configuration from the database.
-   - `npm run swagger` to generate Swagger API documentation if configured.
-
----
-
 ## Overview
 
 The Adaptus2 Framework provides a highly configurable server architecture that supports:
