@@ -4,6 +4,9 @@ const ollamaModule = require('./ollamaModule');
 
 class LLMModule {
     constructor() {
+        // Initialize conversation history storage
+        this.conversationHistory = new Map();
+        this.maxContextLength = 10; // Maximum number of messages to keep in context
         this.llmType = process.env.LLM_TYPE || 'ollama';
         this.openaiApiKey = process.env.OPENAI_API_KEY;
         this.claudeApiKey = process.env.CLAUDE_API_KEY;
@@ -12,11 +15,40 @@ class LLMModule {
         this.claudeModel = process.env.CLAUDE_MODEL || 'claude-2';
     }
 
+    // Add message to conversation history
+    addToHistory(sessionId, message, role = 'user') {
+        if (!this.conversationHistory.has(sessionId)) {
+            this.conversationHistory.set(sessionId, []);
+        }
+        
+        const history = this.conversationHistory.get(sessionId);
+        history.push({ role, content: message });
+        
+        // Maintain context window
+        if (history.length > this.maxContextLength * 2) { // *2 because we store both user and assistant messages
+            history.splice(0, 2); // Remove oldest message pair
+        }
+        
+        this.conversationHistory.set(sessionId, history);
+    }
+
+    // Get conversation history for a session
+    getHistory(sessionId) {
+        return this.conversationHistory.get(sessionId) || [];
+    }
+
     async processMessage(messageData) {
         try {
+            // Add user message to history
+            this.addToHistory(messageData.senderId, messageData.message, 'user');
+            
+            let response;
             switch (this.llmType.toLowerCase()) {
                 case 'ollama':
-                    return await ollamaModule.processMessage(messageData);
+                    const ollamaHistory = this.getHistory(messageData.senderId);
+                    const ollamaResponse = await ollamaModule.processMessage(messageData, ollamaHistory);
+                    this.addToHistory(messageData.senderId, ollamaResponse.message, 'assistant');
+                    return ollamaResponse;
                 case 'openai':
                     return await this.processOpenAI(messageData);
                 case 'claude':
@@ -38,13 +70,12 @@ class LLMModule {
         }
 
         try {
+            const history = this.getHistory(messageData.senderId);
             const response = await axios.post(
                 'https://api.openai.com/v1/chat/completions',
                 {
                     model: this.openaiModel,
-                    messages: [
-                        { role: 'user', content: messageData.message }
-                    ]
+                    messages: history
                 },
                 {
                     headers: {
@@ -54,11 +85,15 @@ class LLMModule {
                 }
             );
 
+            const assistantMessage = response.data.choices[0].message.content;
+            // Add assistant's response to history
+            this.addToHistory(messageData.senderId, assistantMessage, 'assistant');
+
             return {
                 senderId: 'AI_Assistant',
                 recipientId: messageData.senderId,
                 groupName: messageData.groupName,
-                message: response.data.choices[0].message.content,
+                message: assistantMessage,
                 status: 'delivered'
             };
         } catch (error) {
@@ -73,13 +108,12 @@ class LLMModule {
         }
 
         try {
+            const history = this.getHistory(messageData.senderId);
             const response = await axios.post(
                 'https://api.anthropic.com/v1/messages',
                 {
                     model: this.claudeModel,
-                    messages: [
-                        { role: 'user', content: messageData.message }
-                    ],
+                    messages: history,
                     max_tokens: 1000
                 },
                 {
@@ -91,11 +125,15 @@ class LLMModule {
                 }
             );
 
+            const assistantMessage = response.data.content[0].text;
+            // Add assistant's response to history
+            this.addToHistory(messageData.senderId, assistantMessage, 'assistant');
+
             return {
                 senderId: 'AI_Assistant',
                 recipientId: messageData.senderId,
                 groupName: messageData.groupName,
-                message: response.data.content[0].text,
+                message: assistantMessage,
                 status: 'delivered'
             };
         } catch (error) {
@@ -110,13 +148,12 @@ class LLMModule {
         }
 
         try {
+            const history = this.getHistory(messageData.senderId);
             const response = await axios.post(
                 'https://openrouter.ai/api/v1/chat/completions',
                 {
                     model: 'openai/gpt-3.5-turbo',
-                    messages: [
-                        { role: 'user', content: messageData.message }
-                    ]
+                    messages: history
                 },
                 {
                     headers: {
@@ -126,11 +163,15 @@ class LLMModule {
                 }
             );
 
+            const assistantMessage = response.data.choices[0].message.content;
+            // Add assistant's response to history
+            this.addToHistory(messageData.senderId, assistantMessage, 'assistant');
+
             return {
                 senderId: 'AI_Assistant',
                 recipientId: messageData.senderId,
                 groupName: messageData.groupName,
-                message: response.data.choices[0].message.content,
+                message: assistantMessage,
                 status: 'delivered'
             };
         } catch (error) {

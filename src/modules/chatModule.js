@@ -109,6 +109,9 @@ class ChatModule {
                             message: aiPrompt
                         });
 
+                        // Remove all the text between <think> and </think> tags including the tags themselves
+                        aiResponse.message = aiResponse.message.replace(/<think(?:\s[^>]*)?>[^]*?<\/think>/g, '');
+
                         // Send AI response back to the sender
                         socket.emit("privateMessage", {
                             from: "AI_Assistant",
@@ -175,6 +178,11 @@ class ChatModule {
                             ...messageData,
                             message: aiPrompt
                         });
+
+                        // Remove all the text between <think> and </think> tags including the tags themselves
+                        aiResponse.message = aiResponse.message.replace(/<think(?:\s[^>]*)?>[^]*?<\/think>/g, '');
+
+
 
                         // Broadcast AI response to group
                         this.io.to(groupName).emit("groupMessage", {

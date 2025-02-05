@@ -551,7 +551,7 @@ class RuleEngine {
       }
     };
 
-    console.log(`Processing event: ${eventType} on entity: ${entityName} : data`);
+    console.log(`Processing event: ${eventType} on entity: ${entityName} :` , JSON.stringify(data));
 
     // If data is an array, handle each record
     if (Array.isArray(data)) {
