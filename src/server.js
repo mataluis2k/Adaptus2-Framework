@@ -108,6 +108,7 @@ const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
 
+
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
 const corsOptions = {
@@ -825,7 +826,9 @@ function registerRoutes(app, apiConfig) {
                     let isValidPassword = false;
 
                     if (encryption === "bcrypt") {
+
                         isValidPassword = validatePassword(password, user[authentication]);
+
                     } else if (encryption === "sha256") {
                         const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
                         isValidPassword = hashedPassword === user[authentication];
@@ -2394,7 +2397,26 @@ class Adaptus2Server {
     }
 }
 
+function validateBcryptPassword(plainPassword, hashedPassword) {
+    if(!plainPassword || !hashedPassword)
+        throw new Error("Both plainPassword and hashedPassword are required.");
 
+    if(!validBcryptHash(hashedPassword))
+        throw new Error("Invalid bcrypt version or hash format.");
+
+    return bcrypt.compareSync(plainPassword, hashedPassword);
+}
+
+function validBcryptHash(hashedPassword) {
+    if( !hashedPassword.startsWith("$2a$") && 
+        !hashedPassword.startsWith("$2b$") && 
+        !hashedPassword.startsWith("$2x$") && 
+        !hashedPassword.startsWith("$2y$")) {
+            return false;
+        }
+
+        return true;
+}
 
 
 // Export the FlexAPIServer class
