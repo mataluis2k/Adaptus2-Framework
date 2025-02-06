@@ -83,6 +83,9 @@ async function initializeRAG(apiConfig) {
 
 async function handleRAG(query) {
     const openAIApiKey = process.env.OPENAI_API_KEY;
+    const model = process.env.OPENAI_MODEL || "gpt-3.5-turbo-instruct";
+    const temperature = process.env.OPENAI_TEMPERATURE || 0.7;
+
     if (!openAIApiKey) {
       throw new Error("OpenAI API Key not found. Please set OPENAI_API_KEY environment variable.");
     }
@@ -94,8 +97,8 @@ async function handleRAG(query) {
       // Initialize the OpenAI model
       const model = new OpenAI({
         openAIApiKey: openAIApiKey,
-        temperature: 0.7,
-        modelName: "gpt-3.5-turbo-instruct",
+        temperature: temperature,
+        modelName: model,
       });
     
       const chain = RetrievalQAChain.fromLLM(

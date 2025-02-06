@@ -54,20 +54,91 @@ class RuleEngineMiddleware {
                         },
                     });
                                 
-                    if(response.status !== 200){
+                    if(response.status === 600){
+                        response.status = 200;
                         return res.status(response.status).json({ message: response.message, error: response.error, data: response.data, module: response.module });
                     }
+                     
                     return next();
+
                 } catch (err) {
                     console.error(`Error processing inbound ${eventType} rules:`, err.message);
                     return res.status(500).json({ error: `${eventType} rules processing failed` });
                 }
             } else if (['GET', 'DELETE'].includes(eventType)) {
-                console.log(`Processing outbound ${eventType} on ${entityName} data with data:${res.data}`);
-                
+                console.log(`Processing ${eventType} request on ${entityName}`);
+                let processed = false;
+                // Process incoming query parameters
+                if (req.query && Object.keys(req.query).length > 0) {
+                    console.log(`Processing inbound ${eventType} query parameters:`, req.query);
+                    try {
+                        await this.ruleEngine.processEvent(eventType, entityName, req.query, {
+                            ...globalContext,
+                            actions: {
+                                ...globalContext.actions,
+                                update: (ctx, entity, field, value) => {
+                                    req.query[field] = value;
+                                },
+                            },
+                        });
+                        processed = true;
+                    } catch (err) {
+                        console.error(`Error processing inbound ${eventType} query parameters:`, err.message);
+                        return res.status(500).json({ error: `${eventType} query parameter processing failed` });
+                    }
+                }
+                if(processed){
+                    return next();
+                }
                 const originalSend = res.send;
+                res.req = async (data) => {
+                    console.log(`Processing inbound ${eventType} on ${entityName} with data:`, data);
+                    try {
+                        // Parse response data if it's a string; handle invalid JSON gracefully
+                        let parsedData;
+                        try {
+                            parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+                        } catch (parseError) {
+                            console.warn(`Failed to parse response data for ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Ensure parsedData exists and has a `data` field
+                        if (!parsedData || !parsedData.data) {
+                            console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Check if rules exist for the entity
+                        const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
+                        if (!hasRules) {
+                            console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
+                            return originalSend.call(res, data);
+                        }
+                
+                        // Process rules
+                        await this.ruleEngine.processEvent(eventType, entityName, parsedData.data, {
+                            ...globalContext, // Merge globalContext into the rule processing context
+                            actions: {
+                                ...globalContext.actions, // Use global actions
+                                update: (ctx, entity, field, value) => {
+                                    parsedData[field] = value; // Modify response payload
+                                },
+                            },
+                        });
+                
+                        // Send the modified response
+                        originalSend.call(res, JSON.stringify(parsedData));
+                    } catch (err) {
+                        console.error(`Error processing outbound ${eventType} rules for entity: ${entityName}:`, err.message);
+                        // Fallback to original response if processing fails
+                        originalSend.call(res, data);
+                    }
+                }
 
+                // this handles the return payload on response
                 res.send = async (data) => {
+                    console.log(`Processing outbound ${eventType} on ${entityName} with data:`, data);
                     try {
                         // Parse response data if it's a string; handle invalid JSON gracefully
                         let parsedData;

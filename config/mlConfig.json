@@ -1,8 +1,0 @@
-{
-    "default": {
-        "batchSize": 1000,
-        "samplingRate": 1,
-        "parallelProcessing": false,
-        "incrementalTraining": false
-    }
-}

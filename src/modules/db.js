@@ -3,7 +3,7 @@ const mysql = require('mysql2/promise');
 const { Client } = require('pg');
 const { MongoClient, ObjectId } = require('mongodb');
 const snowflake = require('snowflake-sdk');
-const { globalContext } = require('./context'); // Import the shared globalContext
+const { globalContext, getContext } = require('./context'); // Import the shared globalContext and getContext
 const { getApiConfig } = require('./apiConfig');
 const response = require('./response'); // Import the shared response object
 
@@ -184,6 +184,14 @@ async function update(config, entity, query, data) {
     if (Object.keys(validData).length === 0) {
         throw new Error(`No valid fields to update for ${entity}.`);
     }
+    
+    // Apply ownership check
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField];
+        }
+    }
 
     try {
         const dbTable = modelConfig.dbTable || entity;
@@ -234,6 +242,14 @@ async function read(config, entity, query) {
    
     const allowedFields = modelConfig.allowRead || [];
     const dbTable = modelConfig.dbTable || entity;
+
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query = query || {};
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField]; // Enforce ownership check
+        }
+    }
 
     try {
         switch (config.dbType.toLowerCase()) {
@@ -339,6 +355,13 @@ async function deleteRecord(config, entity, query) {
         throw new Error(`Primary key (${primaryKey}) is required to delete records from ${entity}.`);
     }
 
+      // Apply ownership check
+    if (modelConfig.owner) {
+        const user = getContext('user');
+        if (user) {
+            query[modelConfig.owner.column] = user[modelConfig.owner.tokenField];
+        }
+    }
     try {
         switch (config.dbType.toLowerCase()) {
             case 'mysql':
@@ -428,4 +451,3 @@ function extendContext() {
 }
 
 module.exports = { getDbConnection, create, read, update, delete: deleteRecord, extendContext, query };
-

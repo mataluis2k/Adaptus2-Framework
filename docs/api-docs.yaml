@@ -1,0 +1,551 @@
+openapi: 3.0.0
+info:
+  title: API Documentation
+  version: 1.0.0
+  description: Generated API documentation
+servers:
+  - url: 'http://localhost:3000'
+    description: Local server
+paths:
+  /api/testTemplate:
+    get:
+      summary: Retrieve records from undefined
+      parameters:
+        - name: response
+          in: query
+          schema:
+            type: string
+          description: Filter by response
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    response:
+                      type: string
+  /api/testDB:
+    get:
+      summary: Retrieve records from undefined
+      parameters:
+        - name: response
+          in: query
+          schema:
+            type: string
+          description: Filter by response
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    response:
+                      type: string
+  /api/testmail:
+    get:
+      summary: Retrieve records from undefined
+      parameters:
+        - name: response
+          in: query
+          schema:
+            type: string
+          description: Filter by response
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    response:
+                      type: string
+  /api/xy:
+    get:
+      summary: Retrieve records from undefined
+      parameters: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: {}
+  /img:
+    get:
+      summary: Retrieve records from undefined
+      parameters: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: {}
+  /api/login:
+    post:
+      summary: Create a new record in users
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties: {}
+      responses:
+        '201':
+          description: Record created successfully
+  /proxy/search:
+    get:
+      summary: Retrieve records from undefined
+      parameters: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: {}
+  /api/trackevent:
+    post:
+      summary: Create a new record in events
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event_type:
+                  type: string
+                user_id:
+                  type: string
+                page_url:
+                  type: string
+                event_data:
+                  type: string
+                user_agent:
+                  type: string
+                ip_address:
+                  type: string
+      responses:
+        '201':
+          description: Record created successfully
+  /api/videos:
+    get:
+      summary: Retrieve records from video_catalog
+      parameters:
+        - name: videoID
+          in: query
+          schema:
+            type: string
+          description: Filter by videoID
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: Filter by name
+        - name: description
+          in: query
+          schema:
+            type: string
+          description: Filter by description
+        - name: source
+          in: query
+          schema:
+            type: string
+          description: Filter by source
+        - name: filename
+          in: query
+          schema:
+            type: string
+          description: Filter by filename
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    videoID:
+                      type: integer
+                    name:
+                      type: string
+                    description:
+                      type: string
+                    source:
+                      type: string
+                    filename:
+                      type: string
+  /api/upload:
+    post:
+      summary: Create a new record in uploads
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename:
+                  type: string
+                filepath:
+                  type: string
+                filetype:
+                  type: string
+                uploaded_by:
+                  type: string
+      responses:
+        '201':
+          description: Record created successfully
+  /proxy/meals:
+    get:
+      summary: Retrieve records from undefined
+      parameters: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: {}
+  /api/articles:
+    get:
+      summary: Retrieve records from articles
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+          description: Filter by id
+        - name: title
+          in: query
+          schema:
+            type: string
+          description: Filter by title
+        - name: content
+          in: query
+          schema:
+            type: string
+          description: Filter by content
+        - name: image_url
+          in: query
+          schema:
+            type: string
+          description: Filter by image_url
+        - name: author_id
+          in: query
+          schema:
+            type: string
+          description: Filter by author_id
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    title:
+                      type: string
+                    content:
+                      type: string
+                    image_url:
+                      type: string
+                    author_id:
+                      type: integer
+    post:
+      summary: Create a new record in articles
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                content:
+                  type: string
+                image_url:
+                  type: string
+                author_id:
+                  type: integer
+      responses:
+        '201':
+          description: Record created successfully
+  '/api/articles/{id}':
+    put:
+      summary: Update a record in articles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID of the record to update
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                content:
+                  type: string
+                image_url:
+                  type: string
+                author_id:
+                  type: integer
+      responses:
+        '200':
+          description: Record updated successfully
+    delete:
+      summary: Delete a record from articles
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID of the record to delete
+      responses:
+        '200':
+          description: Record deleted successfully
+  /api/products:
+    get:
+      summary: Retrieve records from products
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+          description: Filter by id
+        - name: product_name
+          in: query
+          schema:
+            type: string
+          description: Filter by product_name
+        - name: description
+          in: query
+          schema:
+            type: string
+          description: Filter by description
+        - name: image
+          in: query
+          schema:
+            type: string
+          description: Filter by image
+        - name: price
+          in: query
+          schema:
+            type: string
+          description: Filter by price
+        - name: category_id
+          in: query
+          schema:
+            type: string
+          description: Filter by category_id
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    product_name:
+                      type: string
+                    description:
+                      type: string
+                    image:
+                      type: string
+                    price:
+                      type: number
+                    category_id:
+                      type: integer
+  /api/authors:
+    get:
+      summary: Retrieve records from authors
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+          description: Filter by id
+        - name: name
+          in: query
+          schema:
+            type: string
+          description: Filter by name
+        - name: bio
+          in: query
+          schema:
+            type: string
+          description: Filter by bio
+        - name: profile_image
+          in: query
+          schema:
+            type: string
+          description: Filter by profile_image
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    name:
+                      type: string
+                    bio:
+                      type: string
+                    profile_image:
+                      type: string
+  /api/pending-messages:
+    get:
+      summary: Retrieve records from undefined
+      parameters: []
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties: {}
+  /api/register:
+    post:
+      summary: Create a new record in undefined
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                first_name:
+                  type: string
+                last_name:
+                  type: string
+                role:
+                  type: string
+      responses:
+        '201':
+          description: Record created successfully
+  undefined:
+    get:
+      summary: Retrieve records from listprice
+      parameters:
+        - name: id
+          in: query
+          schema:
+            type: string
+          description: Filter by id
+        - name: product_name
+          in: query
+          schema:
+            type: string
+          description: Filter by product_name
+        - name: description
+          in: query
+          schema:
+            type: string
+          description: Filter by description
+        - name: image
+          in: query
+          schema:
+            type: string
+          description: Filter by image
+        - name: price
+          in: query
+          schema:
+            type: string
+          description: Filter by price
+        - name: category_id
+          in: query
+          schema:
+            type: string
+          description: Filter by category_id
+        - name: discount
+          in: query
+          schema:
+            type: string
+          description: Filter by discount
+        - name: tax
+          in: query
+          schema:
+            type: string
+          description: Filter by tax
+        - name: updated_at
+          in: query
+          schema:
+            type: string
+          description: Filter by updated_at
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    id:
+                      type: integer
+                    product_name:
+                      type: string
+                    description:
+                      type: string
+                    image:
+                      type: string
+                    price:
+                      type: number
+                    category_id:
+                      type: integer
+                    discount:
+                      type: integer
+                    tax:
+                      type: integer
+                    updated_at:
+                      type: string

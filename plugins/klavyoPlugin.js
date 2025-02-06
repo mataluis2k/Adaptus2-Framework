@@ -31,10 +31,10 @@ module.exports = {
      * @param {object} data - Customer data (e.g., email, name, etc.).
      * @returns {object} - Response from Klaviyo or error object.
      */
-    async insertCustomerToKlaviyo(config, entity, data) {
+    async insertCustomerToKlaviyo(config, data) {
        
-        const apiKey = process.env('YOUR_KLAVIYO_API_KEY'); // Replace with your Klaviyo API Key
-        const listId = process.env('YOUR_LIST_ID');
+        const apiKey = process.env('KLAVIYO_API_KEY'); // Replace with your Klaviyo API Key
+        const listId = process.env('KLAVIYO_LIST_ID');
 
         // Need to make sure data is a valid object with at least email
         // Sanitize data if necessary.
@@ -73,8 +73,8 @@ module.exports = {
      */
     extendContext() {
         globalContext.actions.addCustomerToKlaviyo = async (ctx, params) => {
-            const { entity, data } = params;
-            return await this.insertCustomerToKlaviyo(ctx.config, entity, data);
+            const { data } = params;
+            return await this.insertCustomerToKlaviyo(ctx.config, data);
         };
     },
 };
