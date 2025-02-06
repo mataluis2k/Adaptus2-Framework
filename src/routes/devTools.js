@@ -5,6 +5,8 @@ class DevToolsRoutes {
     constructor(devTools) {
         this.devTools = devTools;
         this.router = router;
+        // Add body-parser middleware
+        this.router.use(express.json());
         this.setupRoutes();
     }
 

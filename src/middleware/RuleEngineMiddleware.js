@@ -44,7 +44,16 @@ class RuleEngineMiddleware {
                 console.log(`Processing inbound ${eventType} on ${entityName} with data:`, req.body);
 
                 try {
-                   await this.ruleEngine.processEvent(eventType, entityName,req.body, {
+                    // Only include user_agent and user_ip for rule processing
+                    const data = {
+                        ...req.body,
+                        user_agent: req.headers['user-agent'],
+                        user_ip: req.ip || req.connection.remoteAddress,
+                        method: req.method,
+                        path: req.path
+                    };
+
+                    await this.ruleEngine.processEvent(eventType, entityName, data, {
                         ...globalContext, // Merge globalContext into the rule processing context
                         actions: {
                             ...globalContext.actions, // Use global actions
@@ -72,7 +81,16 @@ class RuleEngineMiddleware {
                 if (req.query && Object.keys(req.query).length > 0) {
                     console.log(`Processing inbound ${eventType} query parameters:`, req.query);
                     try {
-                        await this.ruleEngine.processEvent(eventType, entityName, req.query, {
+                        // Only include user_agent and user_ip for rule processing
+                        const data = {
+                            ...req.query,
+                            user_agent: req.headers['user-agent'],
+                            user_ip: req.ip || req.connection.remoteAddress,
+                            method: req.method,
+                            path: req.path
+                        };
+
+                        await this.ruleEngine.processEvent(eventType, entityName, data, {
                             ...globalContext,
                             actions: {
                                 ...globalContext.actions,
@@ -91,94 +109,133 @@ class RuleEngineMiddleware {
                     return next();
                 }
                 const originalSend = res.send;
-                res.req = async (data) => {
-                    console.log(`Processing inbound ${eventType} on ${entityName} with data:`, data);
+                res.req = async (responseData) => {
+                    console.log(`Processing inbound ${eventType} on ${entityName} with data:`, responseData);
                     try {
                         // Parse response data if it's a string; handle invalid JSON gracefully
                         let parsedData;
                         try {
-                            parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+                            parsedData = typeof responseData === 'string' ? JSON.parse(responseData) : responseData;
                         } catch (parseError) {
                             console.warn(`Failed to parse response data for ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
                         // Ensure parsedData exists and has a `data` field
                         if (!parsedData || !parsedData.data) {
                             console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
                         // Check if rules exist for the entity
                         const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
                         if (!hasRules) {
                             console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
                         // Process rules
-                        await this.ruleEngine.processEvent(eventType, entityName, parsedData.data, {
+                        // Only process the data field without spreading additional context
+                        const ruleData = parsedData.data;
+                        await this.ruleEngine.processEvent(eventType, entityName, ruleData, {
                             ...globalContext, // Merge globalContext into the rule processing context
                             actions: {
                                 ...globalContext.actions, // Use global actions
                                 update: (ctx, entity, field, value) => {
-                                    parsedData[field] = value; // Modify response payload
+                                    if (typeof parsedData.data === 'object') {
+                                        parsedData.data[field] = value;
+                                    } else {
+                                        parsedData.data = { [field]: value };
+                                    }
                                 },
                             },
                         });
                 
-                        // Send the modified response
+                        // Recursively clean user data from the entire response
+                        const cleanUserData = (obj) => {
+                            if (!obj || typeof obj !== 'object') return;
+                            
+                            if (Array.isArray(obj)) {
+                                obj.forEach(item => cleanUserData(item));
+                            } else {
+                                delete obj.user;
+                                Object.values(obj).forEach(value => cleanUserData(value));
+                            }
+                        };
+
+                        if (parsedData.data) {
+                            cleanUserData(parsedData.data);
+                        }
                         originalSend.call(res, JSON.stringify(parsedData));
                     } catch (err) {
                         console.error(`Error processing outbound ${eventType} rules for entity: ${entityName}:`, err.message);
                         // Fallback to original response if processing fails
-                        originalSend.call(res, data);
+                        originalSend.call(res, responseData);
                     }
                 }
 
                 // this handles the return payload on response
-                res.send = async (data) => {
-                    console.log(`Processing outbound ${eventType} on ${entityName} with data:`, data);
+                res.send = async (responseData) => {
+                    console.log(`Processing outbound ${eventType} on ${entityName} with data:`, responseData);
                     try {
                         // Parse response data if it's a string; handle invalid JSON gracefully
                         let parsedData;
                         try {
-                            parsedData = typeof data === 'string' ? JSON.parse(data) : data;
+                            parsedData = typeof responseData === 'string' ? JSON.parse(responseData) : responseData;
                         } catch (parseError) {
                             console.warn(`Failed to parse response data for ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
                         // Ensure parsedData exists and has a `data` field
                         if (!parsedData || !parsedData.data) {
                             console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
                         // Check if rules exist for the entity
                         const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
                         if (!hasRules) {
                             console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, data);
+                            return originalSend.call(res, responseData);
                         }
                 
-                        // Process rules
-                        await this.ruleEngine.processEvent(eventType, entityName, parsedData.data, {
+                        // Only process the data field without spreading additional context
+                        const ruleData = parsedData.data;
+                        await this.ruleEngine.processEvent(eventType, entityName, ruleData, {
                             ...globalContext, // Merge globalContext into the rule processing context
                             actions: {
                                 ...globalContext.actions, // Use global actions
                                 update: (ctx, entity, field, value) => {
-                                    parsedData[field] = value; // Modify response payload
+                                    if (typeof parsedData.data === 'object') {
+                                        parsedData.data[field] = value;
+                                    } else {
+                                        parsedData.data = { [field]: value };
+                                    }
                                 },
                             },
                         });
                 
-                        // Send the modified response
+                        // Recursively clean user data from the entire response
+                        const cleanUserData = (obj) => {
+                            if (!obj || typeof obj !== 'object') return;
+                            
+                            if (Array.isArray(obj)) {
+                                obj.forEach(item => cleanUserData(item));
+                            } else {
+                                delete obj.user;
+                                Object.values(obj).forEach(value => cleanUserData(value));
+                            }
+                        };
+
+                        if (parsedData.data) {
+                            cleanUserData(parsedData.data);
+                        }
                         originalSend.call(res, JSON.stringify(parsedData));
                     } catch (err) {
                         console.error(`Error processing outbound ${eventType} rules for entity: ${entityName}:`, err.message);
                         // Fallback to original response if processing fails
-                        originalSend.call(res, data);
+                        originalSend.call(res, responseData);
                     }
                 };
             } else {

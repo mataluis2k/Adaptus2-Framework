@@ -7,7 +7,7 @@ module.exports = {
     initialize(dependencies) {
         const { customRequire } = dependencies;
         const { globalContext } = customRequire('../src/modules/context'); // Import shared globalContext
-        const { scale, oneHotEncode } = customRequire('../utils/normalizationUtils'); // Custom utility functions for scaling and encoding
+        const { scale, oneHotEncode } = customRequire('../utils/normalizationUtils'); // Custom utility functions for scaling and encoding       
         console.log('Initializing dataNormalizationPlugin...');
         this.extendContext();
     },

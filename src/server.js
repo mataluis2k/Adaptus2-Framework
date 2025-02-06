@@ -1581,9 +1581,131 @@ class Adaptus2Server {
                             socket.write("Goodbye!\n");
                             socket.end();
                             break;
+                        case "validate-config":
+                            try {
+                                if (!this.devTools) {
+                                    this.devTools = new DevTools();
+                                }
+                                const schema = {
+                                    type: "array",
+                                    items: {
+                                        type: "object",
+                                        required: ["routeType"],
+                                        allOf: [
+                                            {
+                                                if: {
+                                                    properties: { routeType: { const: "def" } }
+                                                },
+                                                then: {
+                                                    required: []
+                                                }
+                                            },
+                                            {
+                                                if: {
+                                                    properties: { routeType: { not: { const: "def" } } }
+                                                },
+                                                then: {
+                                                    required: ["route"]
+                                                }
+                                            }
+                                        ],
+                                        properties: {
+                                            routeType: {
+                                                type: "string",
+                                                enum: ["dynamic", "static", "database", "proxy", "def", "fileUpload"]
+                                            },
+                                            dbType: {
+                                                type: "string",
+                                                enum: ["mysql"]
+                                            },
+                                            dbConnection: {
+                                                type: "string"
+                                            },
+                                            route: {
+                                                type: "string",
+                                                pattern: "^/"
+                                            },
+                                            auth: {
+                                                type: "string"
+                                            },
+                                            acl: {
+                                                type: "array",
+                                                items: {
+                                                    type: "string"
+                                                }
+                                            },
+                                            allowMethods: {
+                                                type: "array",
+                                                items: {
+                                                    type: "string",
+                                                    enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                                                }
+                                            },
+                                            allowRead: {
+                                                type: "array",
+                                                items: {
+                                                    type: "string"
+                                                }
+                                            },
+                                            allowWrite: {
+                                                type: "array",
+                                                items: {
+                                                    type: "string"
+                                                }
+                                            },
+                                            columnDefinitions: {
+                                                type: "object",
+                                                additionalProperties: {
+                                                    type: "string"
+                                                }
+                                            }
+                                        }
+                                    }
+                                };
+
+                                const configPath = path.join(process.cwd(), 'config', 'apiConfig.json');
+                                const result = await this.devTools.validateConfig(configPath, schema);
+                                
+                                // Filter and format the results to only show objects with errors
+                                if (!result.valid && result.errors) {
+                                    const errorsByObject = {};
+                                    
+                                    result.errors.forEach(error => {
+                                        // Handle both array indices and property paths
+                                        const matches = error.instancePath.match(/\/(\d+)/);
+                                        if (matches) {
+                                            const index = matches[1];
+                                            if (!errorsByObject[index]) {
+                                                errorsByObject[index] = {
+                                                    object: result.config[index],
+                                                    errors: []
+                                                };
+                                            }
+                                            // Format the error message to be more descriptive
+                                            const property = error.instancePath.split('/').slice(2).join('/') || 'object';
+                                            const message = `${property}: ${error.message}`;
+                                            errorsByObject[index].errors.push(message);
+                                        }
+                                    });
+
+                                    const formattedResult = Object.entries(errorsByObject).map(([index, data]) => ({
+                                        index: parseInt(index),
+                                        object: data.object,
+                                        errors: data.errors
+                                    }));
+
+                                    socket.write(JSON.stringify(formattedResult, null, 2) + '\n');
+                                } else {
+                                    socket.write("Configuration is valid. No errors found.\n");
+                                }
+                            } catch (error) {
+                                socket.write(`Error validating config: ${error.message}\n`);
+                            }
+                            break;
+
                         case "help":                   
                         default:
-                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, exit.\n");               
+                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);
