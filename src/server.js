@@ -19,6 +19,7 @@ const compression = require('compression'); // Response compression
 require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
+const requestLogger = require('./middleware/requestLoggingMiddleware');
 
 // Constants for configuration
 const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
@@ -86,6 +87,7 @@ const RuleEngine = require('./modules/ruleEngine');
 const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
 const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
 const FirebaseService = require('./services/firebaseService'); // Firebase Service
+const CMSManager = require('./modules/cmsManager'); // CMS Module
 
 // Changes to enable clustering and plugin management
 const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
@@ -1436,6 +1438,12 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "requestLog":
+                            const requestId = args[0];
+                            // Look up complete log
+                            const log = await requestLogger.getRequestLog(requestId);
+                            socket.write(JSON.stringify(log));
+                            break;
                         case "SHUTDOWN":
                             console.log("Shutting down server...");
                             await this.shutdown();
@@ -1992,6 +2000,7 @@ class Adaptus2Server {
                 requestId: req.id
             });
         });
+        this.app.use(requestLogger.middleware());
     }
 
     
@@ -2056,6 +2065,19 @@ class Adaptus2Server {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        // Initialize CMS if enabled
+        if (process.env.ENABLE_CMS === 'true') {
+            try {
+                this.cmsManager = new CMSManager(globalContext, {
+                    dbType: process.env.DEFAULT_DBTYPE,
+                    dbConnection: process.env.DEFAULT_DBCONNECTION
+                });
+                console.log('CMS module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize CMS module:', error.message);
+            }
+        }
+
         // Initialize Firebase Service
         try {
             new FirebaseService(); // Initialize Firebase
@@ -2444,6 +2466,16 @@ class Adaptus2Server {
         const consolelog = require('./modules/logger');
         try {
             consolelog.log('Initiating graceful shutdown...');
+
+            // Cleanup CMS if initialized
+            if (this.cmsManager) {
+                try {
+                    await this.cmsManager.cleanup();
+                    consolelog.log('CMS module cleaned up successfully');
+                } catch (error) {
+                    consolelog.error('Error cleaning up CMS module:', error);
+                }
+            }
 
             // Close WebSocket server
             if (this.wss) {

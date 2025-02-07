@@ -24,6 +24,14 @@ function getApiConfig() {
     }
     return internalApiConfig;
 }
+
+function getConfigNode(table,routeType){ 
+    const apiConfig = getApiConfig();
+    return apiConfig.find(item => 
+      item.routeType === routeType &&
+      item.dbTable === table
+    );
+}
 /**
  * Loads custom route types from the `apiTypes.conf` configuration file.
  * @returns {Object} - An object mapping custom route types to their actions.
@@ -208,4 +216,4 @@ function registerResources(apiConfig, globalContext) {
     });
 }
 
-module.exports = { loadConfig, getApiConfig, categorizedConfig , categorizeApiConfig};
+module.exports = { loadConfig, getApiConfig, categorizedConfig , categorizeApiConfig, getConfigNode};

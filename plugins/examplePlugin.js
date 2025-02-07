@@ -8,8 +8,19 @@ module.exports = {
         const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
         const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware');
         // Perform initialization tasks
+
+        // Define a custom action
+        async function customAction(ctx, params) {
+            console.log('Executing custom action...');
+            // Perform custom action
+        }
+        // Register the function to the global context
+        if (!context.actions.customAction) {
+            context.actions.customAction = customAction;
+        }
     },
 
+    // If you need to create custom routes, must of the plugin will only expose the methods via the global context
     registerRoutes({ app }) {
         const routes = [];
         
@@ -23,6 +34,7 @@ module.exports = {
         // Return registered routes for cleanup later
         return routes;
     },
+
 
     async cleanup() {
         console.log('Cleaning up examplePlugin...');

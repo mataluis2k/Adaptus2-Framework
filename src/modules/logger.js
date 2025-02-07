@@ -63,6 +63,19 @@ class Logger {
             logger.info('Logging is disabled.');
         }
     }
+    
+    info(...args) {
+        if (this.isLoggingEnabled) {
+            try {
+                const message = args.map(arg => 
+                    typeof arg === 'object' ? JSON.stringify(arg, getCircularReplacer()) : String(arg)
+                ).join(' ');
+                logger.info(message);
+            } catch (error) {
+                logger.error('Error in log method:', error);
+            }
+        }
+    }
 
     log(...args) {
         if (this.isLoggingEnabled) {

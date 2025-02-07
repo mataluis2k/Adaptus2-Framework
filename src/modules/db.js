@@ -401,6 +401,57 @@ async function deleteRecord(config, entity, query) {
     }
 }
 
+async function exists(config, entity, params) {
+    const db = await getDbConnection(config);
+    const modelConfig = findDefUsersRoute(entity);
+
+    if (!modelConfig) {
+        throw new Error(`Entity ${entity} not defined in apiConfig.`);
+    }
+
+    try {
+        const dbTable = modelConfig.dbTable || entity;
+
+        switch (config.dbType.toLowerCase()) {
+            case 'mysql':
+            case 'postgres': {
+                const where = Object.keys(params)
+                    .map(key => `${key} = ?`)
+                    .join(' AND ');
+                const values = Object.values(params);
+
+                const sql = `SELECT EXISTS(SELECT 1 FROM ${dbTable} WHERE ${where}) as exists_flag`;
+                const [result] = await db.execute(sql, values);
+                return result[0].exists_flag === 1;
+            }
+            case 'mongodb': {
+                const collection = db.collection(dbTable);
+                const count = await collection.countDocuments(params);
+                return count > 0;
+            }
+            case 'snowflake': {
+                const where = Object.keys(params)
+                    .map(key => `${key} = ?`)
+                    .join(' AND ');
+                const values = Object.values(params);
+
+                const sql = `SELECT EXISTS(SELECT 1 FROM ${dbTable} WHERE ${where}) as exists_flag`;
+                return new Promise((resolve, reject) => {
+                    db.execute({ sqlText: sql, binds: values }, (err, result) => {
+                        if (err) return reject(err);
+                        resolve(result.rows[0].EXISTS_FLAG === true);
+                    });
+                });
+            }
+            default:
+                throw new Error(`Unsupported database type: ${config.dbType}`);
+        }
+    } catch (error) {
+        console.error(`Error checking existence in ${entity}:`, error);
+        throw error;
+    }
+}
+
 // Extend Global Context with CRUD Actions
 function extendContext() {
     if (!globalContext.actions) globalContext.actions = {};
@@ -423,6 +474,11 @@ function extendContext() {
     globalContext.actions.delete = async (ctx, params) => {
         const { entity, query } = params;
         return await deleteRecord(ctx.config, entity, query);
+    };
+
+    globalContext.actions.exists = async (ctx, params) => {
+        const { entity, query } = params;
+        return { exists: await exists(ctx.config, entity, query) };
     };
 
     globalContext.actions.rawQuery = async (ctx, params) => {
@@ -450,4 +506,184 @@ function extendContext() {
     };
 }
 
-module.exports = { getDbConnection, create, read, update, delete: deleteRecord, extendContext, query };
+async function createTable(config, tableName, columnDefinitions) {
+    const db = await getDbConnection(config);
+    if (!db) {
+        throw new Error(`Database connection for ${config.dbConnection} could not be established.`);
+    }
+
+    try {
+        switch (config.dbType.toLowerCase()) {
+            case 'mysql': {
+                const columns = [];
+                const indexes = [];
+
+                // Process column definitions
+                for (const [column, definition] of Object.entries(columnDefinitions)) {
+                    if (column === 'INDEX') {
+                        // Store indexes for later creation
+                        indexes.push(...definition);
+                    } else {
+                        columns.push(`${column} ${definition}`);
+                    }
+                }
+
+                // Create table
+                const createTableSql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(', ')})`;
+                await query(config, createTableSql);
+
+                // Create indexes for MySQL
+                for (const idx of indexes) {
+                    try {
+                        const match = idx.match(/idx_(\w+)\((\w+)\)/);
+                        if (match) {
+                            const indexName = `idx_${match[2]}`;
+                            const columnName = match[2];
+                            
+                            // Check if index exists
+                            const [indexExists] = await query(config, `
+                                SELECT 1 
+                                FROM information_schema.statistics 
+                                WHERE table_schema = DATABASE()
+                                AND table_name = ? 
+                                AND index_name = ?
+                            `, [tableName, indexName]);
+                            
+                            if (!indexExists || indexExists.length === 0) {
+                                await query(config, `ALTER TABLE ${tableName} ADD INDEX ${indexName} (${columnName})`);
+                            }
+                        }
+                    } catch (err) {
+                        if (!err.message.includes('Duplicate')) {
+                            throw err;
+                        }
+                    }
+                }
+                break;
+            }
+            case 'postgres': {
+                const columns = [];
+                const indexes = [];
+
+                // Process column definitions
+                for (const [column, definition] of Object.entries(columnDefinitions)) {
+                    if (column === 'INDEX') {
+                        // Store indexes for later creation
+                        indexes.push(...definition);
+                    } else {
+                        columns.push(`${column} ${definition}`);
+                    }
+                }
+
+                // Create table
+                const createTableSql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(', ')})`;
+                await query(config, createTableSql);
+
+                // Create indexes for PostgreSQL
+                for (const idx of indexes) {
+                    try {
+                        const match = idx.match(/idx_(\w+)\((\w+)\)/);
+                        if (match) {
+                            const indexName = `idx_${match[2]}`;
+                            const columnName = match[2];
+                            await query(config, `CREATE INDEX IF NOT EXISTS ${indexName} ON ${tableName} (${columnName})`);
+                        }
+                    } catch (err) {
+                        if (!err.message.includes('already exists')) {
+                            throw err;
+                        }
+                    }
+                }
+                break;
+            }
+            case 'mongodb': {
+                const collection = db.collection(tableName);
+                const indexes = [];
+
+                // Extract indexes from column definitions
+                if (columnDefinitions.INDEX) {
+                    for (const idx of columnDefinitions.INDEX) {
+                        const match = idx.match(/idx_(\w+)\((\w+)\)/);
+                        if (match) {
+                            const field = match[2];
+                            indexes.push({ [field]: 1 });
+                        }
+                    }
+                }
+
+                // Create indexes
+                for (const idx of indexes) {
+                    await collection.createIndex(idx);
+                }
+                break;
+            }
+            case 'snowflake': {
+                const columns = [];
+                const indexes = [];
+
+                // Process column definitions
+                for (const [column, definition] of Object.entries(columnDefinitions)) {
+                    if (column === 'INDEX') {
+                        indexes.push(...definition);
+                    } else {
+                        columns.push(`${column} ${definition}`);
+                    }
+                }
+
+                // Create table
+                const createTableSql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(', ')})`;
+                await query(config, createTableSql);
+
+                // Create indexes
+                for (const idx of indexes) {
+                    try {
+                        // For MySQL, we need to check if index exists first
+                        const checkIndexSql = `
+                            SELECT 1 
+                            FROM information_schema.statistics 
+                            WHERE table_schema = DATABASE()
+                            AND table_name = '${tableName}' 
+                            AND index_name = ?
+                        `;
+                        const match = idx.match(/idx_(\w+)\((\w+)\)/);
+                        if (match) {
+                            const indexName = `idx_${match[2]}`;
+                            const columnName = match[2];
+                            
+                            const [indexExists] = await query(config, checkIndexSql, [indexName]);
+                            
+                            if (!indexExists || indexExists.length === 0) {
+                                const createIndexSql = `CREATE INDEX ${indexName} ON ${tableName} (${columnName})`;
+                                await query(config, createIndexSql);
+                            }
+                        }
+                    } catch (err) {
+                        // Log error but continue with other indexes
+                        console.error(`Error creating index: ${err.message}`);
+                        if (!err.message.includes('Duplicate')) {
+                            throw err;
+                        }
+                    }
+                }
+                break;
+            }
+            default:
+                throw new Error(`Unsupported database type: ${config.dbType}`);
+        }
+    } catch (error) {
+        console.error(`Error creating table ${tableName}:`, error);
+        throw error;
+    }
+}
+
+module.exports = { 
+    getDbConnection, 
+    create, 
+    read, 
+    update, 
+    delete: deleteRecord, 
+    exists, 
+    createTable,
+    extendContext, 
+    query 
+};
