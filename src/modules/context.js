@@ -54,6 +54,11 @@ module.exports = {
         resources: {}, // Resources will be added dynamically
         actions: {},
     },
-    corsOptions,
+    corsOptions :{
+        origin: config.CORS_ORIGIN || '*', // Adjust based on your requirements
+        // methods: ['GET', 'POST', 'PUT', 'DELETE'],
+        // allowedHeaders: ['Content-Type', 'Authorization'],
+        credentials: true, // If applicable
+      },
 
 };

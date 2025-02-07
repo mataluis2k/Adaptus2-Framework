@@ -862,8 +862,6 @@ function registerRoutes(app, apiConfig) {
         }
 
 
-        // GET Endpoint with Redis Caching
-        // GET endpoint with improved error handling and performance
         app.get(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
             try {
                 console.log('Incoming GET request:', {
@@ -950,9 +948,44 @@ function registerRoutes(app, apiConfig) {
         
                 console.log('Cache miss or cache disabled. Executing queries.');
         
-                // Execute the count query
-                const [countResult] = await connection.execute(countQuery, params);
-                const totalCount = countResult[0]?.totalCount || 0;
+                let totalCount = 0;
+                if (whereClauseString.trim() === "") {
+                    try {
+                        // Check if the approximate count table exists using information_schema
+                        const [tables] = await connection.execute(
+                            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+                            ['table_stats']
+                        );
+                        if (tables.length > 0) {
+                            // Use approximate count from table_stats for large tables without filters
+                            const approxQuery = "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
+                            try {
+                                const [approxResult] = await connection.execute(approxQuery, [endpoint.dbTable]);
+                                totalCount = approxResult[0]?.totalCount || 0;
+                            } catch (err) {
+                                // If error indicates that table_stats doesn't exist, fallback to exact count
+                                if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.message.includes("doesn't exist"))) {
+                                    const [countResult] = await connection.execute(countQuery, params);
+                                    totalCount = countResult[0]?.totalCount || 0;
+                                } else {
+                                    throw err;
+                                }
+                            }
+                        } else {
+                            // Fallback to exact count if table_stats doesn't exist
+                            const [countResult] = await connection.execute(countQuery, params);
+                            totalCount = countResult[0]?.totalCount || 0;
+                        }
+                    } catch (err) {
+                        // On error, fallback to exact count
+                        const [countResult] = await connection.execute(countQuery, params);
+                        totalCount = countResult[0]?.totalCount || 0;
+                    }
+                } else {
+                    // Fallback to exact count when filtering is applied
+                    const [countResult] = await connection.execute(countQuery, params);
+                    totalCount = countResult[0]?.totalCount || 0;
+                }
         
                 // Execute the data query
                 const [results] = await connection.execute(dataQuery, params);
@@ -981,7 +1014,6 @@ function registerRoutes(app, apiConfig) {
                 res.status(500).json({ error: error.message });
             }
         });
-    
     
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)

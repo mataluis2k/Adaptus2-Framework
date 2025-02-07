@@ -219,7 +219,7 @@ class StreamingServer {
     registerRoutes() {
         // Stream video by ID
         const LOCAL_VIDEO_PATH = process.env.STREAMING_FILESYSTEM_PATH || "./videos";
-        this.app.get("/stream/:videoID", cors(corsOptions),async (req, res) => {
+        this.app.get("/stream/:videoID", async (req, res) => {
             const { videoID } = req.params;
             const video = await this.getVideoById(videoID);
             if (!video) return res.status(404).send("Video not found");
@@ -227,7 +227,7 @@ class StreamingServer {
             if (video.source === "local") {
                 const filePath = path.join(LOCAL_VIDEO_PATH, video.filename);
                 this.streamFromFileSystem(req, res, filePath);
-            } else if (video.Source === "S3") {
+            } else if (video.source === "S3") {
                 this.streamFromS3(req, res, S3_BUCKET_NAME, video.filename);
             } else {
                 res.status(400).send("Invalid video source");
@@ -235,7 +235,7 @@ class StreamingServer {
         });
 
             // Generate or Retrieve HLS from video ID
-        this.app.get("/hls/generate/:videoID",cors(corsOptions), async (req, res) => {
+        this.app.get("/hls/generate/:videoID", async (req, res) => {
             const { videoID } = req.params;
 
             try {
@@ -268,9 +268,9 @@ class StreamingServer {
             }
         });
 
-        const cors = require('cors'); // Import the cors middleware
+        
         // Serve HLS playlist and segments
-        this.app.use("/hls", cors(),express.static(path.join(__dirname, "hls_output")));
+        this.app.use("/hls", express.static(path.join(__dirname, "hls_output")));
     }
 }
 
