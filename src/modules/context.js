@@ -1,10 +1,21 @@
 const { AsyncLocalStorage } = require('async_hooks');
 const asyncLocalStorage = new AsyncLocalStorage();
+const { config } = require('dotenv');
+const path = require('path');
+
+config({ path: path.resolve(__dirname, '../.env') });
 
 const globalContext = {
     resources: {}, // Resources will be added dynamically
     actions: {},   // Actions will be added dynamically
 };
+
+const corsOptions = {
+    origin: config.CORS_ORIGIN || '*', // Adjust based on your requirements
+    // methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    // allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true, // If applicable
+  };
 
 module.exports = {
     /**
@@ -42,5 +53,7 @@ module.exports = {
     globalContext :{
         resources: {}, // Resources will be added dynamically
         actions: {},
-    }
+    },
+    corsOptions,
+
 };

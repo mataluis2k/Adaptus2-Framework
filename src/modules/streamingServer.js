@@ -8,7 +8,8 @@ const path = require("path");
 const fs = require("fs");
 const Redis = require("ioredis");
 const consolelog = require('./logger');
-
+const cors = require('cors'); // Import the cors middleware
+const { corsOptions } = require('./context');
 // Configure ffmpeg and ffprobe
 ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
 ffmpeg.setFfprobePath(require("@ffprobe-installer/ffprobe").path);
@@ -218,7 +219,7 @@ class StreamingServer {
     registerRoutes() {
         // Stream video by ID
         const LOCAL_VIDEO_PATH = process.env.STREAMING_FILESYSTEM_PATH || "./videos";
-        this.app.get("/stream/:videoID", async (req, res) => {
+        this.app.get("/stream/:videoID", cors(corsOptions),async (req, res) => {
             const { videoID } = req.params;
             const video = await this.getVideoById(videoID);
             if (!video) return res.status(404).send("Video not found");
@@ -234,7 +235,7 @@ class StreamingServer {
         });
 
             // Generate or Retrieve HLS from video ID
-        this.app.get("/hls/generate/:videoID", async (req, res) => {
+        this.app.get("/hls/generate/:videoID",cors(corsOptions), async (req, res) => {
             const { videoID } = req.params;
 
             try {

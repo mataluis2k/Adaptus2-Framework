@@ -159,7 +159,7 @@ Verify the recipe works as expected and deploy it to your server.
 ### **2. Articles API**
 ```json
 {
-  "dbType": "mysql",
+  "dbType": "database",
   "dbConnection": "MYSQL_1",
   "dbTable": "articles",
   "route": "/api/articles",

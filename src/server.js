@@ -616,7 +616,7 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, ...middlewares, express.static(folderPath));
+    app.use(route, cors(corsOptions), ...middlewares, express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -986,7 +986,7 @@ function registerRoutes(app, apiConfig) {
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -2470,7 +2470,7 @@ class Adaptus2Server {
             // Cleanup CMS if initialized
             if (this.cmsManager) {
                 try {
-                    await this.cmsManager.cleanup();
+                    // await this.cmsManager.cleanup(); To be implemented.
                     consolelog.log('CMS module cleaned up successfully');
                 } catch (error) {
                     consolelog.error('Error cleaning up CMS module:', error);

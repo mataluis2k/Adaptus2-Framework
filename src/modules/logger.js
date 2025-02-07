@@ -31,7 +31,7 @@ const logger = winston.createLogger({
         }),
         new winston.transports.File({
             filename: 'error.log',
-            level: 'error',
+            level: 'info',
             handleExceptions: true,
             handleRejections: true,
             maxsize: 5242880, // 5MB
