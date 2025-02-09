@@ -87,7 +87,7 @@ function generateCmsConfig() {
     cmsConfig.cms.tables[dbTable] = {
       dbTable,
       title: dbTable.replace(/_/g, " ").toUpperCase(),
-      route: `/cms${route}`,
+      route: `${route}`,
       permissions: {
         read: allowRead.length > 0,
         write: allowWrite.length > 0,
