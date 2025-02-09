@@ -10,7 +10,8 @@
   "bin": {
     "adaptus2-cli": "./cliClient.js",
     "adaptus2": "./index.js",
-    "adaptus2-setup": "./Adaptus2-install.js"
+    "adaptus2-setup": "./Adaptus2-install.js",
+    "adaptus2-cmsInit": "./cmsConfigGenerator.js"
   },
   "scripts": {
     "postinstall": "node scripts/copy-plugins.js",
