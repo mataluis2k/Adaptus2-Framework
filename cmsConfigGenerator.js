@@ -54,7 +54,7 @@ function generateCmsConfig() {
   const apiConfig = JSON.parse(fs.readFileSync(apiConfigPath, "utf8"));
   const cmsConfig = {
     cms: {
-      name: "CMS Configuration",
+      name: "Adaptus2 CMS",
       version: "1.0",
       theme: cmsTheme, // Adding the theme attribute
       tables: {},
