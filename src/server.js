@@ -112,12 +112,13 @@ const response = require('./modules/response'); // Import the shared response ob
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
+
 const corsOptions = {
-    origin: 'http://localhost:5173', // Replace with your frontend's origin
-    // methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    // allowedHeaders: ['Content-Type', 'Authorization'],
-    credentials: true, // If applicable
-  };
+    origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+    credentials: process.env.CORS_CREDENTIALS || true,
+};
 
 const consolelog = require('./modules/logger');
 const winston = require('winston');
@@ -614,9 +615,10 @@ function registerStaticRoute(app, endpoint) {
         middlewares.push(aclMiddleware(acl));
     }
 
+
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions), ...middlewares, express.static(folderPath));
+    app.use(route, cors(corsOptions),cors(corsOptions), ...middlewares, express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -634,7 +636,7 @@ const registerFileUploadEndpoint = (app, config) => {
 
     const fieldName = fileUpload.fieldName || 'file'; // Default to 'file' if not specified
     
-    app.post(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), upload.single(fieldName), async (req, res) => {
+    app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), upload.single(fieldName), async (req, res) => {
         const dbConnectionConfig = { dbType: config.dbType, dbConnection: config.dbConnection };
         console.log(req.body);
         // Extract file and metadata
@@ -698,6 +700,122 @@ function validatePassword(plainPassword, hashedPassword) {
     return isMatch;
 }
 
+// Pre-cache all GET endpoints (with cache enabled) using default (empty) filters.
+async function preCacheGetEndpoints(endpoints) {
+    // Iterate over each endpoint in the provided configuration array.
+    console.log("Pre-caching GET endpoints with caching enabled...");
+    for (const endpoint of endpoints) {
+      // Only pre-cache endpoints that:
+      // - Allow GET (i.e. allowMethods includes 'GET')
+      // - Have caching enabled (cache === 1)
+      if (
+        endpoint.allowMethods &&
+        endpoint.allowMethods.includes("GET") &&
+        endpoint.cache === 1 &&
+        endpoint.route
+      ) {
+        const route = endpoint.route;
+        // Use an empty query object so that JSON.stringify({}) is the cache key
+        const cacheKey = `cache:${route}:${JSON.stringify({})}`;
+        try {
+          const connection = await getDbConnection(endpoint);
+          if (!connection) {
+            console.error(
+              `Database connection failed for ${endpoint.dbConnection} at endpoint ${route}`
+            );
+            continue;
+          }
+          
+          // Use default pagination: limit 20, offset 0.
+          const limit = 20;
+          const offset = 0;
+  
+          // Build SELECT fields: use endpoint.allowRead (all allowed fields)
+          const fields = endpoint.allowRead
+            .map(field => `${endpoint.dbTable}.${field}`)
+            .join(", ");
+            
+          // Process any relationships (if defined)
+          let joinClause = "";
+          let relatedFields = "";
+          if (Array.isArray(endpoint.relationships)) {
+            endpoint.relationships.forEach(rel => {
+              joinClause += ` LEFT JOIN ${rel.relatedTable} ON ${endpoint.dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
+              relatedFields += `, ${rel.fields.map(field => `${rel.relatedTable}.${field}`).join(", ")}`;
+            });
+          }
+          const queryFields = `${fields}${relatedFields}`;
+  
+          // Since we are pre-caching the default (unfiltered) query,
+          // there is no WHERE clause.
+          const whereClauseString = "";
+          const dataQuery = `
+            SELECT ${queryFields}
+            FROM ${endpoint.dbTable}
+            ${joinClause}
+            ${whereClauseString}
+            LIMIT ${limit} OFFSET ${offset}
+          `;
+          const countQuery = `
+            SELECT COUNT(*) as totalCount
+            FROM ${endpoint.dbTable}
+            ${joinClause}
+            ${whereClauseString}
+          `;
+  
+          // Determine total count:
+          // For endpoints without any filter, try to use the approximate count
+          // from the table_stats table if it exists. If not, disable count.
+          let totalCount = 0;
+          try {
+            const [tables] = await connection.execute(
+              "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+              ["table_stats"]
+            );
+            if (tables.length > 0) {
+              // table_stats exists; try to use it.
+              const approxQuery = "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
+              try {
+                const [approxResult] = await connection.execute(approxQuery, [endpoint.dbTable]);
+                totalCount = approxResult[0]?.totalCount || 0;
+              } catch (err) {
+                console.error("Error executing approximate count query:", err);
+                totalCount = 0;
+              }
+            } else {
+              console.log(`table_stats table not found; disabling record count for endpoint ${route}.`);
+              totalCount = 0;
+            }
+          } catch (err) {
+            console.error("Error checking for table_stats:", err);
+            totalCount = 0;
+          }
+  
+          // Execute the data query (with no filter parameters)
+          const [results] = await connection.execute(dataQuery, []);
+  
+          // Build the response as in your GET route
+          const responsePayload = {
+            data: results,
+            metadata: {
+              totalRecords: totalCount,
+              limit,
+              offset,
+              totalPages: Math.ceil(totalCount / limit),
+            },
+          };
+  
+          // Cache the response using the same TTL as in your route (300 seconds)
+          await redis.set(cacheKey, JSON.stringify(responsePayload), "EX", 300);
+          console.log(`Pre-cached GET endpoint: ${route} with key: ${cacheKey}`);
+        } catch (error) {
+          console.error(`Error pre-caching endpoint ${endpoint.route}:`, error);
+        }
+      }
+    }
+    console.log("Pre-caching GET endpoints with caching enabled...");
+  }
+  
 
 function registerRoutes(app, apiConfig) {
     // Connection pool for database connections
@@ -862,158 +980,259 @@ function registerRoutes(app, apiConfig) {
         }
 
 
-        app.get(route, cors(corsOptions),authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
-            try {
-                console.log('Incoming GET request:', {
-                    route,
-                    query: req.query,
-                });
-        
-                const connection = await getDbConnection(endpoint);
-                if (!connection) {
-                    console.error(`Database connection failed for ${endpoint.dbConnection}`);
-                    return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-                }
-        
-                // Sanitize and validate query parameters
-                const sanitizedQuery = Object.fromEntries(
-                    Object.entries(req.query).map(([key, value]) => [key, value.replace(/^['"]|['"]$/g, '')])
-                );
-        
-                // Extract pagination parameters with defaults
-                const limit = parseInt(sanitizedQuery.limit, 10) || 20;
-                const offset = parseInt(sanitizedQuery.offset, 10) || 0;
-                if (limit < 0 || offset < 0) {
-                    console.error('Invalid pagination parameters:', { limit, offset });
-                    return res.status(400).json({ error: 'Limit and offset must be non-negative integers' });
-                }
-        
-                // Check for keys and build WHERE clause dynamically
-                const queryKeys = endpoint.keys
-                    ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
-                    : Object.keys(sanitizedQuery); // Use all query params if keys are not defined
-                const whereClause = queryKeys
-                    .map((key) => `${endpoint.dbTable}.${key} = ?`)
-                    .join(' AND ');
-                const params = queryKeys.map((key) => sanitizedQuery[key]);
-        
-                // Validate fields to select
-                const requestedFields = sanitizedQuery.fields
-                    ? sanitizedQuery.fields.split(',').filter((field) => endpoint.allowRead.includes(field))
-                    : endpoint.allowRead;
-                if (!requestedFields.length) {
-                    console.error('No valid fields requested:', sanitizedQuery.fields);
-                    return res.status(400).json({ error: 'No valid fields requested' });
-                }
-        
-                const fields = requestedFields.map((field) => `${endpoint.dbTable}.${field}`).join(', ');
-        
-                // Process relationships
-                let joinClause = '';
-                let relatedFields = '';
-                if (Array.isArray(endpoint.relationships)) {
-                    endpoint.relationships.forEach((rel) => {
-                        joinClause += ` LEFT JOIN ${rel.relatedTable} ON ${endpoint.dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
-                        relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(', ')}`;
-                    });
-                }
-        
-                const queryFields = `${fields}${relatedFields}`;
-        
-                // Generate the SQL query and cache key
-                const whereClauseString = whereClause ? `WHERE ${whereClause}` : '';
-                const dataQuery = `
-                    SELECT ${queryFields}
-                    FROM ${endpoint.dbTable}
-                    ${joinClause}
-                    ${whereClauseString}
-                    LIMIT ${limit} OFFSET ${offset}
-                `;
-                const countQuery = `
-                    SELECT COUNT(*) as totalCount
-                    FROM ${endpoint.dbTable}
-                    ${joinClause}
-                    ${whereClauseString}
-                `;
-                const cacheKey = `cache:${route}:${JSON.stringify(req.query)}`;
-        
-                // Caching logic
-                if (endpoint.cache === 1) {
-                    const cachedData = await redis.get(cacheKey);
-                    if (cachedData) {
-                        console.log('Cache hit for key:', cacheKey);
-                        return res.json(JSON.parse(cachedData));
-                    }
-                }
-        
-                console.log('Cache miss or cache disabled. Executing queries.');
-        
-                let totalCount = 0;
-                if (whereClauseString.trim() === "") {
-                    try {
-                        // Check if the approximate count table exists using information_schema
-                        const [tables] = await connection.execute(
-                            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
-                            ['table_stats']
-                        );
-                        if (tables.length > 0) {
-                            // Use approximate count from table_stats for large tables without filters
-                            const approxQuery = "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
-                            try {
-                                const [approxResult] = await connection.execute(approxQuery, [endpoint.dbTable]);
-                                totalCount = approxResult[0]?.totalCount || 0;
-                            } catch (err) {
-                                // If error indicates that table_stats doesn't exist, fallback to exact count
-                                if (err && (err.code === 'ER_NO_SUCH_TABLE' || err.message.includes("doesn't exist"))) {
-                                    const [countResult] = await connection.execute(countQuery, params);
-                                    totalCount = countResult[0]?.totalCount || 0;
-                                } else {
-                                    throw err;
-                                }
-                            }
-                        } else {
-                            // Fallback to exact count if table_stats doesn't exist
-                            const [countResult] = await connection.execute(countQuery, params);
-                            totalCount = countResult[0]?.totalCount || 0;
-                        }
-                    } catch (err) {
-                        // On error, fallback to exact count
-                        const [countResult] = await connection.execute(countQuery, params);
-                        totalCount = countResult[0]?.totalCount || 0;
-                    }
-                } else {
-                    // Fallback to exact count when filtering is applied
-                    const [countResult] = await connection.execute(countQuery, params);
-                    totalCount = countResult[0]?.totalCount || 0;
-                }
-        
-                // Execute the data query
-                const [results] = await connection.execute(dataQuery, params);
-        
-                // Prepare the response
-                const response = {
-                    data: results,
-                    metadata: {
-                        totalRecords: totalCount,
-                        limit,
-                        offset,
-                        totalPages: Math.ceil(totalCount / limit),
-                    },
-                };
-        
-                // Cache the response if caching is enabled
-                if (endpoint.cache === 1) {
-                    console.log('Caching response for key:', cacheKey);
-                    await redis.set(cacheKey, JSON.stringify(response), 'EX', 300); // Cache for 5 minutes
-                }
-        
-                // Send the response
-                res.json(response);
-            } catch (error) {
-                console.error(`Error in GET ${route}:`, error.stack);
-                res.status(500).json({ error: error.message });
+// A helper function that parses filter parameters and builds SQL clauses.
+function buildFilterClause(filterObj, dbTable) {
+    const whereParts = [];
+    const values = [];
+    for (const [field, filterValue] of Object.entries(filterObj)) {
+      // Expecting filterValue to be of the form "operator:value", e.g., "gte:100"
+      const [operator, ...rest] = filterValue.split(':');
+      const value = rest.join(':'); // in case the value itself contains a colon
+      let sqlOperator;
+      switch (operator.toLowerCase()) {
+        case 'gt':
+          sqlOperator = '>';
+          break;
+        case 'gte':
+          sqlOperator = '>=';
+          break;
+        case 'lt':
+          sqlOperator = '<';
+          break;
+        case 'lte':
+          sqlOperator = '<=';
+          break;
+        case 'ne':
+          sqlOperator = '!=';
+          break;
+        case 'like':
+          sqlOperator = 'LIKE';
+          break;
+        case 'eq':
+        default:
+          sqlOperator = '=';
+      }
+      whereParts.push(`${dbTable}.${field} ${sqlOperator} ?`);
+      values.push(value);
+    }
+    return {
+      clause: whereParts.join(' AND '),
+      values,
+    };
+  }
+  
+  // Define the route with an optional :id parameter
+  app.get(
+    `${route}/:id?`,
+    authenticateMiddleware(auth),
+    aclMiddleware(acl),
+    async (req, res) => {
+      try {
+        console.log("Incoming GET request:", {
+          route,
+          params: req.params,
+          query: req.query,
+        });
+  
+        const connection = await getDbConnection(endpoint);
+        if (!connection) {
+          console.error(
+            `Database connection failed for ${endpoint.dbConnection}`
+          );
+          return res
+            .status(500)
+            .json({ error: `Database connection failed for ${endpoint.dbConnection}` });
+        }
+  
+        // Sanitize query parameters (this example strips leading/trailing quotes)
+        const sanitizedQuery = Object.fromEntries(
+          Object.entries(req.query).map(([key, value]) => [
+            key,
+            String(value).replace(/^['"]|['"]$/g, ""),
+          ])
+        );
+  
+        // Extract pagination parameters (only used if not retrieving a single record)
+        const limit = parseInt(sanitizedQuery.limit, 10) || 20;
+        const offset = parseInt(sanitizedQuery.offset, 10) || 0;
+        if (limit < 0 || offset < 0) {
+          console.error("Invalid pagination parameters:", { limit, offset });
+          return res
+            .status(400)
+            .json({ error: "Limit and offset must be non-negative integers" });
+        }
+  
+        // Determine if a single record was requested via the URL parameter.
+        const id = req.params.id;
+        let whereClause = "";
+        let params = [];
+  
+        if (id) {
+          // Assume the first key in endpoint.keys is the primary key.
+          whereClause = `WHERE ${endpoint.dbTable}.${endpoint.keys[0]} = ?`;
+          params.push(id);
+        } else {
+          // Build filtering clause based on the industry standard "filter" query parameter.
+          // For example, the client can send: ?filter[title]=like:%funny%&filter[views]=gte:1000
+          let filterClause = "";
+          let filterValues = [];
+          if (sanitizedQuery.filter && typeof sanitizedQuery.filter === "object") {
+            const { clause, values } = buildFilterClause(sanitizedQuery.filter, endpoint.dbTable);
+            filterClause = clause;
+            filterValues = values;
+          }
+  
+          // Optionally, you can also support a free-text search on certain fields (if desired)
+          // e.g., if (sanitizedQuery.search) { ... }
+  
+          // If you have additional keys in the query (for equality checks), you can add them too:
+          const queryKeys = endpoint.keys
+            ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
+            : Object.keys(sanitizedQuery);
+          const equalityClause = queryKeys
+            .map((key) => `${endpoint.dbTable}.${key} = ?`)
+            .join(" AND ");
+          const equalityValues = queryKeys.map((key) => sanitizedQuery[key]);
+  
+          // Combine equality filtering and advanced filter clauses.
+          const clauses = [];
+          if (equalityClause) clauses.push(equalityClause);
+          if (filterClause) clauses.push(filterClause);
+          if (clauses.length) {
+            whereClause = `WHERE ${clauses.join(" AND ")}`;
+            params = [...equalityValues, ...filterValues];
+          }
+        }
+  
+        // Validate fields to select (and allow only permitted fields)
+        const requestedFields = sanitizedQuery.fields
+          ? sanitizedQuery.fields.split(",").filter((field) =>
+              endpoint.allowRead.includes(field)
+            )
+          : endpoint.allowRead;
+        if (!requestedFields.length) {
+          console.error("No valid fields requested:", sanitizedQuery.fields);
+          return res.status(400).json({ error: "No valid fields requested" });
+        }
+  
+        const fields = requestedFields
+          .map((field) => `${endpoint.dbTable}.${field}`)
+          .join(", ");
+  
+       // Process relationships (if any)
+        let joinClause = "";
+        let relatedFields = "";
+        if (Array.isArray(endpoint.relationships)) {
+        endpoint.relationships.forEach((rel) => {
+            // Use the joinType if provided, or default to LEFT JOIN
+            const joinType = rel.joinType || "LEFT JOIN";
+            joinClause += ` ${joinType} ${rel.relatedTable} ON ${endpoint.dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
+            
+            // Check if the 'fields' property exists and is an array before mapping
+            if (Array.isArray(rel.fields) && rel.fields.length > 0) {
+            relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(", ")}`;
             }
         });
+        }
+        const queryFields = `${fields}${relatedFields}`;
+  
+        // Build the SQL queries.
+        const paginationClause = id ? "" : `LIMIT ${limit} OFFSET ${offset}`;
+        const dataQuery = `
+          SELECT ${queryFields}
+          FROM ${endpoint.dbTable}
+          ${joinClause}
+          ${whereClause}
+          ${paginationClause}
+        `;
+        const countQuery = `
+          SELECT COUNT(*) as totalCount
+          FROM ${endpoint.dbTable}
+          ${joinClause}
+          ${whereClause}
+        `;
+  
+        // Generate a cache key (using both route and query/params)
+        const cacheKey = `cache:${route}:${JSON.stringify(req.params)}:${JSON.stringify(req.query)}`;
+  
+        // Caching logic (if enabled)
+        if (endpoint.cache === 1) {
+          const cachedData = await redis.get(cacheKey);
+          if (cachedData) {
+            console.log("Cache hit for key:", cacheKey);
+            return res.json(JSON.parse(cachedData));
+          }
+        }
+  
+        console.log("Cache miss or caching disabled. Executing queries.");
+  
+        // Compute total count (if not a single record request)
+        let totalCount = 0;
+        if (!id) {
+          if (whereClause.trim() === "") {
+            // Try to use approximate counts from table_stats if available.
+            const [tables] = await connection.execute(
+              "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
+              ["table_stats"]
+            );
+            if (tables.length > 0) {
+              const approxQuery =
+                "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
+              try {
+                const [approxResult] = await connection.execute(approxQuery, [endpoint.dbTable]);
+                totalCount = approxResult[0]?.totalCount || 0;
+              } catch (err) {
+                console.error("Error executing approximate count query:", err);
+                totalCount = 0;
+              }
+            } else {
+              console.log("table_stats table not found; disabling record count.");
+              totalCount = 0;
+            }
+          } else {
+            // Fallback to exact count when filtering is applied.
+            const [countResult] = await connection.execute(countQuery, params);
+            totalCount = countResult[0]?.totalCount || 0;
+          }
+        }
+  
+        // Execute the main data query.
+        const [results] = await connection.execute(dataQuery, params);
+  
+        // Prepare the response. If a single record was requested, return the record (or an error if not found).
+        let response;
+        if (id) {
+          if (!results.length) {
+            return res.status(404).json({ error: "Record not found" });
+          }
+          response = results[0];
+        } else {
+          response = {
+            data: results,
+            metadata: {
+              totalRecords: totalCount,
+              limit,
+              offset,
+              totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
+            },
+          };
+        }
+  
+        // Cache the response if caching is enabled.
+        if (endpoint.cache === 1) {
+          console.log("Caching response for key:", cacheKey);
+          await redis.set(cacheKey, JSON.stringify(response), "EX", 300); // Cache for 5 minutes
+        }
+  
+        // Send the response.
+        res.json(response);
+      } catch (error) {
+        console.error(`Error in GET ${route}:`, error.stack);
+        res.status(500).json({ error: error.message });
+      }
+    }
+  );
+  
     
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
@@ -1039,61 +1258,79 @@ function registerRoutes(app, apiConfig) {
             });
         }
         if (allowedMethods.includes("PUT")) {
-            app.put(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            // Now expecting the record key as a URL parameter (assumed single key for simplicity)
+            app.put(
+              `${route}/:id`,
+              authenticateMiddleware(auth),
+              aclMiddleware(acl),
+              async (req, res) => {
+                const recordId = req.params.id;
+                if (!recordId) {
+                  return res.status(400).json({ error: 'Record ID is missing in URL path' });
+                }
+          
+                // Determine which fields are allowed to be updated
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
-                    return res.status(400).json({ error: 'No writable fields provided' });
+                  return res.status(400).json({ error: 'No writable fields provided' });
                 }
-        
-                const recordKeys = keys; // The keys defined in the configuration
-                const keyValues = recordKeys.map((key) => req.body[key]);
-                if (keyValues.some((value) => value === undefined)) {
-                    return res.status(400).json({ error: 'Missing required key fields in request body' });
-                }
-        
+          
+                // Use only the writable fields for update; the key is taken from the URL, not the body.
                 const values = writableFields.map((key) => req.body[key]);
                 const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
-                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
-        
+          
+                // Assume that the primary key is defined as the first element in keys
+                const primaryKey = keys[0];
+                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+          
                 try {
-                    const connection = await getDbConnection(endpoint);
-                    await connection.execute(query, [...values, ...keyValues]);
-                    res.status(200).json({ message: 'Record updated' });
+                  const connection = await getDbConnection(endpoint);
+                  await connection.execute(query, [...values, recordId]);
+                  res.status(200).json({ message: 'Record updated' });
                 } catch (error) {
-                    console.error(`Error in PUT ${route}:`, error);
-                    res.status(500).json({ error: 'Internal Server Error' });
+                  console.error(`Error in PUT ${route}:`, error);
+                  res.status(500).json({ error: 'Internal Server Error' });
                 }
-            });
-        }
-        if (allowedMethods.includes("PATCH")) {
-            app.patch(`${route}`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+              }
+            );
+          }
+          
+          if (allowedMethods.includes("PATCH")) {
+            // PATCH endpoint also requires the record key in the URL
+            app.patch(
+              `${route}/:id`,
+              authenticateMiddleware(auth),
+              aclMiddleware(acl),
+              async (req, res) => {
+                const recordId = req.params.id;
+                if (!recordId) {
+                  return res.status(400).json({ error: 'Record ID is missing in URL path' });
+                }
+          
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
-                    return res.status(400).json({ error: 'No writable fields provided' });
+                  return res.status(400).json({ error: 'No writable fields provided' });
                 }
-        
-                const recordKeys = keys; // The keys defined in the configuration
-                const keyValues = recordKeys.map((key) => req.body[key]);
-                if (keyValues.some((value) => value === undefined)) {
-                    return res.status(400).json({ error: 'Missing required key fields in request body' });
-                }
-        
+          
                 const values = writableFields.map((key) => req.body[key]);
                 const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                const whereClause = recordKeys.map((key) => `${key} = ?`).join(' AND ');
-                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${whereClause}`;
-        
+          
+                // Use the primary key from the configuration (assumed to be the first key)
+                const primaryKey = keys[0];
+                const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+          
                 try {
-                    const connection = await getDbConnection(endpoint);
-                    await connection.execute(query, [...values, ...keyValues]);
-                    res.status(200).json({ message: 'Record partially updated' });
+                  const connection = await getDbConnection(endpoint);
+                  await connection.execute(query, [...values, recordId]);
+                  res.status(200).json({ message: 'Record partially updated' });
                 } catch (error) {
-                    console.error(`Error in PATCH ${route}:`, error);
-                    res.status(500).json({ error: 'Internal Server Error' });
+                  console.error(`Error in PATCH ${route}:`, error);
+                  res.status(500).json({ error: 'Internal Server Error' });
                 }
-            });
-        }
+              }
+            );
+          }
+          
                 
 
         if (allowedMethods.includes("DELETE")) {
@@ -1439,6 +1676,13 @@ class Adaptus2Server {
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
+        
+        if(process.env.CORS_ENABLED === 'true') {
+            this.app.use(cors(corsOptions));
+            // Enable preflight OPTIONS requests globally.
+            this.app.options('*', cors(corsOptions));
+        }
+
         this.redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
         
         // Attach Express app to HTTP server
@@ -1476,9 +1720,10 @@ class Adaptus2Server {
                             const log = await requestLogger.getRequestLog(requestId);
                             socket.write(JSON.stringify(log));
                             break;
-                        case "SHUTDOWN":
+                        case "shutdown":
                             console.log("Shutting down server...");
-                            await this.shutdown();
+                            socket.write(command);
+                            await this.shutdown();                            
                             break;
                         case "userGenToken":
                             if (args.length < 2) {
@@ -2468,6 +2713,9 @@ class Adaptus2Server {
             this.registerFileUploadEndpoints();
             this.registerStaticEndpoints();
             this.initializeOptionalModules(this.app);
+            
+            await preCacheGetEndpoints(this.categorizedConfig.databaseRoutes);
+       
             await this.setupGraphQL();
            
             this.setupReloadHandler(this.configPath);
@@ -2479,6 +2727,9 @@ class Adaptus2Server {
             await this.synchronizePluginsOnStartup();
             this.subscribeToPluginUpdates();
 
+            this.app.get('/ui', cors(corsOptions), (req, res) => {
+                res.sendFile(path.join(__dirname,'../ui/index.html'));
+              });
             
             // Start the HTTP server (which includes WebSocket)
             this.httpServer.listen(this.port, () => {

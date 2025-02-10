@@ -83,13 +83,19 @@ function beautifyOutput(data) {
     }
 }
 
+let exit = false;
 const socket = net.createConnection({ host: "localhost", port: 5000 }, () => {
     console.log(colors.bright + "Connected to CLI server. Type 'help' for available commands." + colors.reset);
     prompt();
 });
 
 socket.on("data", (data) => {
-    console.log(beautifyOutput(data));
+    console.log(beautifyOutput(data));    
+    if (data.toString() === "shutdown") {
+        console.log("Exiting CLI.");
+        socket.end();
+        process.exit(0);
+    }
     prompt();
 });
 
@@ -110,6 +116,9 @@ const rl = readline.createInterface({
 
 function prompt() {
     rl.question(colors.bright + "cli> " + colors.reset, (line) => {
+        if (line === "shutdown") {
+            exit = true;
+        }
         socket.write(line);
     });
 }
