@@ -3,6 +3,7 @@
 const net = require("net");
 const readline = require("readline");
 
+let exit = false;
 const socket = net.createConnection({ host: "localhost", port: 5000 }, () => {
     console.log("Connected to CLI server. Type 'help' for available commands.");
     prompt();
@@ -10,6 +11,11 @@ const socket = net.createConnection({ host: "localhost", port: 5000 }, () => {
 
 socket.on("data", (data) => {
     console.log(data.toString());
+    if (data.toString() === "shutdown") {
+        console.log("Exiting CLI.");
+        socket.end();
+        process.exit(0);
+    }
     prompt();
 });
 
@@ -30,6 +36,9 @@ const rl = readline.createInterface({
 
 function prompt() {
     rl.question("cli> ", (line) => {
+        if (line === "shutdown") {
+            exit = true;
+        }
         socket.write(line);
     });
 }
