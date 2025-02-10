@@ -1990,7 +1990,7 @@ class Adaptus2Server {
 
                         case "help":                   
                         default:
-                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, exit.\n");               
+                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);
