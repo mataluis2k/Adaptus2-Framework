@@ -2,6 +2,9 @@ const express = require('express');
 const cors = require('cors');
 const fs = require('fs');
 const path = require('path');
+const packageJson = require('../package.json');
+console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
+
 const morgan = require('morgan');
 const Redis = require('ioredis');
 const WebSocket = require('ws');
@@ -1770,6 +1773,10 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "version":
+                            console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
+                            socket.write(`Adaptus2-Framework Version: ${packageJson.version}\n`);
+                            break;
                         case "requestLog":
                             const requestId = args[0];
                             // Look up complete log
@@ -2046,7 +2053,7 @@ class Adaptus2Server {
 
                         case "help":                   
                         default:
-                            socket.write("Available commands:userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
+                            socket.write("Available commands: version, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);
