@@ -243,11 +243,14 @@ async function read(config, entity, query) {
     const allowedFields = modelConfig.allowRead || [];
     const dbTable = modelConfig.dbTable || entity;
 
+  
     if (modelConfig.owner) {
         const user = getContext('user');
+        
         if (user) {
             query = query || {};
             query[modelConfig.owner.column] = user[modelConfig.owner.tokenField]; // Enforce ownership check
+        
         }
     }
 

@@ -1104,6 +1104,24 @@ function buildFilterClause(filterObj, dbTable) {
           }
         }
   
+            // *** Enforce record ownership if configured ***
+        // Check if the endpoint (or model) defines an owner property.
+        if (endpoint.owner) {
+            // Retrieve the authenticated user (assumed set by the authenticateMiddleware).
+            const user = getContext('user');
+            if (!user) {
+            return res.status(401).json({ error: "Unauthorized" });
+            }
+            // Append the ownership condition to the existing whereClause.
+            if (whereClause) {
+            whereClause += ` AND ${endpoint.dbTable}.${endpoint.owner.column} = ?`;
+            } else {
+            whereClause = `WHERE ${endpoint.dbTable}.${endpoint.owner.column} = ?`;
+            }
+            // Add the user’s id (or the specified token field) to the parameter list.
+            params.push(user[endpoint.owner.tokenField]);
+        }
+
         // Validate fields to select (and allow only permitted fields)
         const requestedFields = sanitizedQuery.fields
           ? sanitizedQuery.fields.split(",").filter((field) =>
@@ -1282,6 +1300,18 @@ function buildFilterClause(filterObj, dbTable) {
                 // Assume that the primary key is defined as the first element in keys
                 const primaryKey = keys[0];
                 const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+
+                // Enforce record ownership if configured.
+                if (endpoint.owner) {
+                    // Ensure the user is authenticated (should be handled by middleware, but check anyway)
+                    const user = getContext('user');
+                    if (!user) {
+                    return res.status(401).json({ error: "Unauthorized" });
+                    }
+                    // Append ownership condition.
+                    query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                    params.push(user[endpoint.owner.tokenField]);
+                }
           
                 try {
                   const connection = await getDbConnection(endpoint);
@@ -1318,6 +1348,18 @@ function buildFilterClause(filterObj, dbTable) {
                 // Use the primary key from the configuration (assumed to be the first key)
                 const primaryKey = keys[0];
                 const query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+
+                // Enforce record ownership if configured.
+                if (endpoint.owner) {
+                    // Ensure the user is authenticated (should be handled by middleware, but check anyway)
+                    const user = getContext('user');
+                    if (!user) {
+                    return res.status(401).json({ error: "Unauthorized" });
+                    }
+                    // Append ownership condition.
+                    query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                    params.push(user[endpoint.owner.tokenField]);
+                }
           
                 try {
                   const connection = await getDbConnection(endpoint);
@@ -1336,6 +1378,18 @@ function buildFilterClause(filterObj, dbTable) {
         if (allowedMethods.includes("DELETE")) {
             app.delete(`${route}/:id`, authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
                 const query = `DELETE FROM ${dbTable} WHERE id = ?`;
+
+                 // Enforce record ownership if configured.
+                 if (endpoint.owner) {
+                    // Ensure the user is authenticated (should be handled by middleware, but check anyway)
+                    const user = getContext('user');
+                    if (!user) {
+                    return res.status(401).json({ error: "Unauthorized" });
+                    }
+                    // Append ownership condition.
+                    query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                    params.push(user[endpoint.owner.tokenField]);
+                } 
 
                 try {
                     const connection = await getDbConnection(endpoint);
