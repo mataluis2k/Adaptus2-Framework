@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.1.21",
+  "version": "2.1.22",
   "description": "The Highly Scalable and Configurable API Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -11,6 +11,7 @@
     "adaptus2-cli": "./cliClient.js",
     "adaptus2": "./index.js",
     "adaptus2-setup": "./Adaptus2-install.js",
+    "adaptus2-docker": "./Adaptus2-docker.js",
     "adaptus2-cmsInit": "./cmsConfigGenerator.js"
   },
   "scripts": {
