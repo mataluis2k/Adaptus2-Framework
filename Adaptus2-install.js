@@ -141,7 +141,7 @@ const defaultConfig = {
   ENABLE_LOGGING: "TRUE",
   CONFIG_DIR: "./config",
   CORS_ENABLED: "false",
-  CORS_ORIGIN: "http://localhost:5173",
+  CORS_ORIGIN: "*",
   CORS_METHODS: "GET,POST,PUT,DELETE",
   DEFAULT_DBTYPE: "mysql",
   DEFAULT_DBCONNECTION: "MYSQL_1",

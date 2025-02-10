@@ -229,7 +229,7 @@ const graphqlDbConnection = process.env.DEFAULT_DBCONNECTION;
 const mlAnalytics = new MLAnalytics();
 
 
-const { globalContext, middleware } = require('./modules/context');
+const { globalContext, middleware,getContext } = require('./modules/context');
 const e = require('express');
 
 globalContext.actions.log = (ctx, action) => {
@@ -1106,11 +1106,13 @@ function buildFilterClause(filterObj, dbTable) {
   
             // *** Enforce record ownership if configured ***
         // Check if the endpoint (or model) defines an owner property.
+       
         if (endpoint.owner) {
             // Retrieve the authenticated user (assumed set by the authenticateMiddleware).
             const user = getContext('user');
+       
             if (!user) {
-            return res.status(401).json({ error: "Unauthorized" });
+                return res.status(401).json({ error: "Unauthorized" });
             }
             // Append the ownership condition to the existing whereClause.
             if (whereClause) {
