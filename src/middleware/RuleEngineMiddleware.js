@@ -29,8 +29,10 @@ class RuleEngineMiddleware {
             }
 
             const eventType = req.method.toUpperCase(); // HTTP method: "GET", "POST", etc.
-            const entityName = req.path.split('/').filter(Boolean).pop();
-
+            // Normalize the entity name by removing any numeric IDs or UUIDs
+            let pathSegments = req.path.split('/').filter(Boolean);
+            let entityName = pathSegments.includes('api') ? pathSegments[pathSegments.indexOf('api') + 1] : pathSegments[0]; // Ensure we get the correct entity
+            
             const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
             if (!hasRules) {
                 console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
@@ -126,7 +128,7 @@ class RuleEngineMiddleware {
                             console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
                             return originalSend.call(res, responseData);
                         }
-                
+                        
                         // Check if rules exist for the entity
                         const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
                         if (!hasRules) {
@@ -136,7 +138,7 @@ class RuleEngineMiddleware {
                 
                         // Process rules
                         // Only process the data field without spreading additional context
-                        const ruleData = parsedData.data;
+                        const ruleData = Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data];
                         await this.ruleEngine.processEvent(eventType, entityName, ruleData, {
                             ...globalContext, // Merge globalContext into the rule processing context
                             actions: {
@@ -187,25 +189,30 @@ class RuleEngineMiddleware {
                             return originalSend.call(res, responseData);
                         }
                 
-                        // Ensure parsedData exists and has a `data` field
-                        if (!parsedData || !parsedData.data) {
+                        if (!parsedData) {
                             console.log(`No valid data available for entity: ${entityName}. Skipping rule processing.`);
                             return originalSend.call(res, responseData);
                         }
-                
+                        
+                        // Ensure parsedData.data exists by wrapping single objects in a `data` field
+                        if (!parsedData.data) {
+                            parsedData = { data: parsedData }; // Wrap the entire response
+                        }
+                        
                         // Check if rules exist for the entity
                         const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
                         if (!hasRules) {
                             console.log(`No rules defined for entity: ${entityName}. Skipping rule processing.`);
-                            return originalSend.call(res, responseData);
+                            return originalSend.call(res, JSON.stringify(parsedData));
                         }
-                
-                        // Only process the data field without spreading additional context
-                        const ruleData = parsedData.data;
+                        
+                        // Convert single object responses into an array for rule processing
+                        const ruleData = Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data];
+                        
                         await this.ruleEngine.processEvent(eventType, entityName, ruleData, {
-                            ...globalContext, // Merge globalContext into the rule processing context
+                            ...globalContext,
                             actions: {
-                                ...globalContext.actions, // Use global actions
+                                ...globalContext.actions,
                                 update: (ctx, entity, field, value) => {
                                     if (typeof parsedData.data === 'object') {
                                         parsedData.data[field] = value;
@@ -215,11 +222,10 @@ class RuleEngineMiddleware {
                                 },
                             },
                         });
-                
-                        // Recursively clean user data from the entire response
+                        
+                        // Recursively clean user data from the response
                         const cleanUserData = (obj) => {
                             if (!obj || typeof obj !== 'object') return;
-                            
                             if (Array.isArray(obj)) {
                                 obj.forEach(item => cleanUserData(item));
                             } else {
@@ -227,11 +233,12 @@ class RuleEngineMiddleware {
                                 Object.values(obj).forEach(value => cleanUserData(value));
                             }
                         };
-
                         if (parsedData.data) {
                             cleanUserData(parsedData.data);
                         }
+                        
                         originalSend.call(res, JSON.stringify(parsedData));
+                        
                     } catch (err) {
                         console.error(`Error processing outbound ${eventType} rules for entity: ${entityName}:`, err.message);
                         // Fallback to original response if processing fails

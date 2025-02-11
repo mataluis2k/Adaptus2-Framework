@@ -1,83 +1,72 @@
 const Joi = require('joi');
-
+const validationMapping = require('./validationMapping');
 /**
  * Generates a Joi validation schema from the apiConfig validation rules.
  * @param {Object} validationRules - Validation rules from apiConfig.
  * @returns {Object} - Joi schema for validation.
  */
 function generateValidationSchema(validationRules) {
-    const schema = {};
-
+    const schemaObj = {};
+  
     Object.entries(validationRules).forEach(([key, rules]) => {
-        let fieldSchema;
-
-        // Initialize schema based on rules
-        if (rules.isValidEmail) {
-            fieldSchema = Joi.string().email();
+      // Start with a default schema. You might default to Joi.any(), then override it if a type is specified.
+      let fieldSchema = Joi.any();
+  
+      // Process the 'type' first if it exists.
+      if (rules.type) {
+        fieldSchema = validationMapping.type(fieldSchema, rules.type);
+      }
+  
+      // Process the rest of the rules.
+      for (const rule in rules) {
+        if (rule === 'type') continue; // already processed
+        if (validationMapping[rule]) {
+          fieldSchema = validationMapping[rule](fieldSchema, rules[rule], key);
         } else {
-            fieldSchema = Joi.any(); // Fallback for unspecified rules
+          console.warn(`No mapping defined for rule: ${rule}`);
         }
-
-        // Apply additional rules
-        if (rules.notEmpty) {
-            fieldSchema = fieldSchema.required().not('').messages({
-                'any.required': `${key} is required.`,
-                'string.empty': `${key} cannot be empty.`
-            });
-        }
-
-        if (rules.minLength) {
-            if (fieldSchema.type === 'string') {
-                fieldSchema = fieldSchema.min(rules.minLength).messages({
-                    'string.min': `${key} must be at least ${rules.minLength} characters long.`
-                });
-            } else {
-                console.error(`${key}: minLength validation is only applicable to string fields.`);
-                //throw new Error(`${key}: minLength validation is only applicable to string fields.`);
-            }
-        }
-
-        if (rules.isISO3166CountryCode) {
-            if (fieldSchema.isJoi && fieldSchema._type === 'string') {
-                fieldSchema = fieldSchema.pattern(/^[A-Z]{2}$/).messages({
-                    'string.pattern.base': `${key} must be a valid ISO 3166-1 country code.`
-                });
-            } else {
-                console.error(`${key}: isISO3166CountryCode validation is only applicable to string fields.`);
-                
-            }
-        }
-
-        if (rules.isEnum) {
-            fieldSchema = fieldSchema.valid(...(rules.enumValues || [])).messages({
-                'any.only': `${key} must be one of ${rules.enumValues.join(', ')}.`
-            });
-        }
-
-        // Assign the field schema
-        schema[key] = fieldSchema;
+      }
+  
+      schemaObj[key] = fieldSchema;
     });
-
-    return Joi.object(schema);
-}
+  
+    return Joi.object(schemaObj);
+  }
+  
 
 /**
  * Middleware to validate incoming requests against apiConfig validation rules.
  * @param {Object} validationRules - Validation rules from apiConfig.
  */
 function validationMiddleware(validationRules) {
-    const schema = generateValidationSchema(validationRules);
-
+    const { schema, errorMapping } = generateValidationSchema(validationRules);
+  
     return (req, res, next) => {
-        const data = req.method === 'GET' ? req.query : req.body;
-        const { error } = schema.validate(data, { abortEarly: false }); // Validate all fields
-
-        if (error) {
-            return res.status(400).json({ error: error.details.map((e) => e.message) });
-        }
-
-        next();
+      const data = req.method === 'GET' ? req.query : req.body;
+      const { error } = schema.validate(data, { abortEarly: false });
+  
+      if (error) {
+        // Map each error detail to include custom error codes if available.
+        const formattedErrors = error.details.map(detail => {
+          // Assuming the field name is the first element in the error path.
+          const field = detail.path[0];
+          // Get custom error codes for this field if defined.
+          const customCodes = errorMapping[field] || {};
+          return {
+            message: detail.message,
+            ...customCodes
+          };
+        });
+  
+        // Use the first error's httpCode if available, otherwise default to 400.
+        const httpCode = formattedErrors[0].httpCode || 400;
+        return res.status(httpCode).json({ errors: formattedErrors });
+      }
+  
+      next();
     };
-}
+  }
+  
+  
 
 module.exports = validationMiddleware;

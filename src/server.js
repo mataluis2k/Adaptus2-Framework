@@ -625,7 +625,9 @@ function registerStaticRoute(app, endpoint) {
 }
 
 const registerFileUploadEndpoint = (app, config) => {
+    console.log(config);
     const { route, dbTable, allowWrite, fileUpload , acl, auth } = config;
+    console.log(fileUpload);
     const upload = multer({        
         storage: getMulterStorage(fileUpload.storagePath),
         fileFilter: (req, file, cb) => {
@@ -1822,7 +1824,38 @@ class Adaptus2Server {
                                     socket.write(`Error generating app token: ${error.message}\n`);
                                 }
                             }
-                            break;                               
+                            break;  
+                        case "showConfig":
+                            socket.write(JSON.stringify(this.apiConfig, null, 2));
+                            break;   
+                        case "showRules":
+                            socket.write(JSON.stringify(this.businessRules, null, 2));
+                            break;
+                        case "nodeInfo":
+                            if (args.length < 2) {
+                                socket.write("Usage: nodeInfo <route|table> <routeType>\n");
+                            } else {
+                                let configObject;
+                                console.log(args[0], args[1]);
+                                // need to show based on object name
+                                if (args[1] === 'def') {
+                                configObject = this.apiConfig.find(item => 
+                                    item.routeType === args[1] &&
+                                    item.dbTable === args[0]
+                                  );                   
+                                } else {
+                                configObject = this.apiConfig.find(item => 
+                                    item.route === args[0] &&
+                                    item.routeType === args[1]
+                                  );
+                                }            
+                                if (configObject) {
+                                    socket.write(JSON.stringify(configObject, null, 2));
+                                } else {
+                                    socket.write(`Config object ${args[0]} not found.\n`);
+                                }  
+                            }
+                            break;
                         case "configReload":
                             try {                               
                                 consolelog.log('Reloading configuration...');
@@ -1830,17 +1863,17 @@ class Adaptus2Server {
                                 this.apiConfig = await loadConfig();
                                 consolelog.log(this.apiConfig);
                                 this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
-                                // Clear existing routes
-                                this.app._router.stack = this.app._router.stack.filter((layer) => {
-                                    // Keep layers that are not associated with a route
-                                    if (!layer.route) return true;
-
-                                    // Check if the route is part of databaseRoutes
-                                    return !this.categorizedConfig.databaseRoutes.some((routeConfig) => {
-                                        return layer.route.path === routeConfig.route;
-                                    });
-                                });                              
-                                registerRoutes(this.app, this.categorizedConfig.databaseRoutes); 
+                        
+                                // CLEAR ALL ROUTES (Fixes issue)
+                                this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
+                                
+                                // RE-REGISTER ALL ROUTE TYPES
+                                registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
+                                registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
+                                this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
+                                this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app,route));
+                                this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
+                        
                                 if (PLUGIN_MANAGER === 'network') {
                                     await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
                                     subscribeToConfigUpdates((updatedConfig) => {
@@ -1854,7 +1887,7 @@ class Adaptus2Server {
                                 socket.write("API config reloaded successfully.");
                             } catch (error) {
                                 consolelog.error(`Error reloading API config: ${error.message}`);
-                                socket.write("Error reloading API config: ${error.message}");
+                                socket.write(`Error reloading API config: ${error.message}`);
                             }
                             break;
                         case "listPlugins":
@@ -2053,7 +2086,7 @@ class Adaptus2Server {
 
                         case "help":                   
                         default:
-                            socket.write("Available commands: version, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
+                            socket.write("Available commands: version, nodeInfo, showConfig, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);

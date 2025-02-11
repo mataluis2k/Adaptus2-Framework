@@ -99,21 +99,19 @@ class Rule {
    * @returns {boolean} true if top-level conditions match
    */
   match(eventType, entityName, data) {
-    // 1) eventType check
     if (this.eventType !== eventType) return false;
 
-    // 2) entity check
-    const ruleEntity = this.entity.includes(':')
-      ? this.entity.split(':')[1]
-      : this.entity;
-    if (ruleEntity !== entityName) return false;
+    // Normalize entity by removing numeric IDs or UUIDs (to match 'videos' for 'videos/:id')
+    const normalizedEntity = entityName.replace(/\/[^/]+$/, ''); // Removes the last segment if it's an ID
+ 
 
-    // 3) condition check
-    // If no conditions, automatically match
+    if (this.entity !== normalizedEntity) return false;
+
     if (!this.conditions.length) return true;
 
     return this._evaluateConditionArray(this.conditions, data);
-  }
+}
+
 
   /**
    * If main conditions fail, we check each elseIf in order.

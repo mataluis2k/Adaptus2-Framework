@@ -287,26 +287,27 @@ class DSLParser {
      */
     _parseIfLine(line) {
       const regex = new RegExp(
-        `^IF\\s+(\\w+)\\s+(\\w+)(?:\\s+${this.keywords.WHEN}\\s+(.*))?\\s+${this.keywords.THEN}$`,
-        'i'
-    );
+          `^IF\\s+(\\w+)\\s+([\\w/:]+)(?:\\s+${this.keywords.WHEN}\\s+(.*))?\\s+${this.keywords.THEN}$`,
+          'i'
+      );
       const match = line.match(regex);
       if (!match) {
-        throw new Error(`Invalid IF syntax: ${line}`);
+          throw new Error(`Invalid IF syntax: ${line}`);
       }
-      const [, event, resource, rawConditions] = match;
+      let [, event, resource, rawConditions] = match;
   
-      // Validate resource from globalContext if needed:
-      // (We do final check in the calling method.)
+      // Normalize dynamic routes (e.g., videos/:id -> videos)
+      resource = resource.replace(/\/[^/]+$/, ''); // Remove last segment if it's an ID
+
   
-      // Parse condition string if present
       let conditions = [];
       if (rawConditions) {
-        conditions = this._parseConditionString(rawConditions);
+          conditions = this._parseConditionString(rawConditions);
       }
   
       return { event, resource, conditions };
-    }
+  }
+  
   
     /**
      * Parse a raw condition string with optional parentheses, 
