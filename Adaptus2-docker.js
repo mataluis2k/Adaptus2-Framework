@@ -171,6 +171,7 @@ const defaultConfig = {
   MYSQL_1_USER: "root",
   MYSQL_1_PASSWORD: "root",
   MYSQL_1_DB: "adaptus2_db",
+  MYSQL_1_PORT: 3306,
   SOCKET_CLI: "TRUE",
   SOCKET_CLI_PORT: 5000,
   
@@ -178,7 +179,7 @@ const defaultConfig = {
   JWT_EXPIRY: "365d",
   PORT: 3000,
   CHAT_SERVER_PORT: 3007,
-  REDIS_URL: "redis://redis:6380",
+  REDIS_URL: "redis://redis:6379",
   
   STREAMING_FILESYSTEM_PATH: "./videos",
   STREAMING_DEFAULT_PROTOCOL: "hls",

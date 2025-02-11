@@ -1,7 +1,7 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.1.22",
-  "description": "The Highly Scalable and Configurable API Framework for Node.js",
+  "version": "2.1.26",
+  "description": "The Highly Scalable and Configurable API Express Framework for Node.js",
   "private": false,
   "preferGlobal": true,
   "engines": {
