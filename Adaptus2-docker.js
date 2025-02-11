@@ -4,6 +4,10 @@ const path = require('path');
 const readline = require('readline');
 const dotenv = require('dotenv');
 
+// Parse command line arguments
+const args = process.argv.slice(2);
+const AUTO_MODE = args.includes('--auto') || args.includes('-a');
+
 // Define paths
 const pluginDir = path.join(__dirname, './plugins'); // Adjust relative to the script
 const configDir = path.join(__dirname, './config'); // Adjust relative to the script
@@ -161,58 +165,25 @@ const defaultConfig = {
   OAUTH_CALLBACK_URL: "http://localhost:3000/auth/callback",
   TOKEN_DURATION: "1d",
   // GraphQL Configuration
-  GRAPHQL_DBTYPE: "MYSQL_1",
+  GRAPHQL_DBTYPE: "mysql",
   GRAPHQL_DBCONNECTION: "MYSQL_1",
-  // Firebase Configuration
-  GOOGLE_APPLICATION_CREDENTIALS: "/path/to/your/firebase-credentials.json",
   MYSQL_1_HOST: "mariadb",
   MYSQL_1_USER: "root",
   MYSQL_1_PASSWORD: "root",
   MYSQL_1_DB: "adaptus2_db",
   SOCKET_CLI: "TRUE",
   SOCKET_CLI_PORT: 5000,
-  POSTGRES_1_HOST: "localhost",
-  POSTGRES_1_USER: "postgres",
-  POSTGRES_1_PASSWORD: "password",
-  POSTGRES_1_DB: "mydatabase",
-  MONGODB_1_URI: "mongodb://localhost:27017",
-  MONGODB_1_DB: "mydatabase",
+  
   JWT_SECRET: "your-jwt-secret",
   JWT_EXPIRY: "365d",
   PORT: 3000,
   CHAT_SERVER_PORT: 3007,
   REDIS_URL: "redis://redis:6380",
-  OPENAI_API_KEY: "your-openai-api-key",
-  QDRANT_URL: "http://localhost:6333",
-  SENDGRID_API_KEY: "your-sendgrid-api-key",
-  MAILCHIMP_API_KEY: "your-mailchimp-api-key",
-  MAILGUN_BASE_URL: "https://api.mailgun.net/v3",
-  MAILGUN_API_KEY: "your-mailgun-api-key",
-  MAILGUN_DOMAIN: "your-mailgun-domain",
-  STRIPE_SECRET_KEY: "your-stripe-secret-key",
-  BRAINTREE_ENV: "sandbox",
-  BRAINTREE_MERCHANT_ID: "your-braintree-merchant-id",
-  BRAINTREE_PUBLIC_KEY: "your-braintree-public-key",
-  BRAINTREE_PRIVATE_KEY: "your-braintree-private-key",
-  AWS_ACCESS_KEY_ID: "your-aws-access-key-id",
-  AWS_SECRET_ACCESS_KEY: "your-aws-secret-access-key",
-  AWS_REGION: "us-east-1",
+  
   STREAMING_FILESYSTEM_PATH: "./videos",
   STREAMING_DEFAULT_PROTOCOL: "hls",
   STREAMING_MAX_BANDWIDTH: 5000000,
   VECTOR_DB: "milvus",
-  MILVUS_HOST: "localhost",
-  MILVUS_PORT: 19530,
-  ELASTICSEARCH_HOST: "http://localhost:9200",
-  ELASTICSEARCH_INDEX: "your-index",
-  SALESFORCE_BASE_URL: "https://your-salesforce-instance.salesforce.com",
-  SALESFORCE_API_TOKEN: "your-salesforce-token",
-  FACEBOOK_API_BASE_URL: "https://graph.facebook.com",
-  FACEBOOK_ACCESS_TOKEN: "your-facebook-token",
-  FACEBOOK_PIXEL_ID: "your-facebook-pixel",
-  GA4_API_BASE_URL: "https://www.google-analytics.com",
-  GA4_MEASUREMENT_ID: "your-ga4-id",
-  GA4_API_SECRET: "your-ga4-secret",
   PLUGIN_MANAGER: "network",
   CLUSTER_NAME: "devops7",
   SERVER_ID: "Server1",
@@ -292,37 +263,47 @@ async function configure() {
     ? dotenv.parse(fs.readFileSync(envPath))
     : { ...defaultConfig };
 
-  if (!fs.existsSync(envPath)) {
-    console.log("No existing configuration found. Configuring General Settings first...");
-    await configureGroup("GENERAL SETTINGS", groups["GENERAL SETTINGS"], currentConfig);
-  }
-
-  while (true) {
-    printMenu(groups, currentConfig);
-    const choice = await prompt("Select an option by number:", "1");
-    const optionIndex = parseInt(choice, 10) - 1;
-
-    if (optionIndex === Object.keys(groups).length) {
-      console.log("Saving configuration and exiting...");
-      break;
+  if (AUTO_MODE) {
+    console.log("Running in automated mode - using default configuration...");
+    currentConfig = { ...defaultConfig };
+    
+    // Ensure config directory exists
+    if (currentConfig.CONFIG_DIR) {
+      verifyAndCreateConfigDir(currentConfig.CONFIG_DIR);
+    }
+  } else {
+    if (!fs.existsSync(envPath)) {
+      console.log("No existing configuration found. Configuring General Settings first...");
+      await configureGroup("GENERAL SETTINGS", groups["GENERAL SETTINGS"], currentConfig);
     }
 
-    const selectedGroup = Object.keys(groups)[optionIndex];
-    if (selectedGroup) {
-      const action = await prompt(
-        `Do you want to (1) Configure or (2) Disable ${selectedGroup}?`,
-        "1"
-      );
+    while (true) {
+      printMenu(groups, currentConfig);
+      const choice = await prompt("Select an option by number:", "1");
+      const optionIndex = parseInt(choice, 10) - 1;
 
-      if (action === "1") {
-        await configureGroup(selectedGroup, groups[selectedGroup], currentConfig);
-      } else if (action === "2") {
-        await disableGroup(selectedGroup, groups[selectedGroup], currentConfig);
-      } else {
-        console.log("Invalid action. Please try again.");
+      if (optionIndex === Object.keys(groups).length) {
+        console.log("Saving configuration and exiting...");
+        break;
       }
-    } else {
-      console.log("Invalid selection. Please try again.");
+
+      const selectedGroup = Object.keys(groups)[optionIndex];
+      if (selectedGroup) {
+        const action = await prompt(
+          `Do you want to (1) Configure or (2) Disable ${selectedGroup}?`,
+          "1"
+        );
+
+        if (action === "1") {
+          await configureGroup(selectedGroup, groups[selectedGroup], currentConfig);
+        } else if (action === "2") {
+          await disableGroup(selectedGroup, groups[selectedGroup], currentConfig);
+        } else {
+          console.log("Invalid action. Please try again.");
+        }
+      } else {
+        console.log("Invalid selection. Please try again.");
+      }
     }
   }
 
