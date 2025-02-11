@@ -167,7 +167,7 @@ const defaultConfig = {
   // GraphQL Configuration
   GRAPHQL_DBTYPE: "mysql",
   GRAPHQL_DBCONNECTION: "MYSQL_1",
-  MYSQL_1_HOST: "mariadb",
+  MYSQL_1_HOST: "mysql",
   MYSQL_1_USER: "root",
   MYSQL_1_PASSWORD: "root",
   MYSQL_1_DB: "adaptus2_db",
