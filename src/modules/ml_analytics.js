@@ -15,6 +15,38 @@ class MLAnalytics {
         this.mlConfigPath = path.resolve(process.cwd(), mlConfigPath);
         this.mainConfig = [];
         this.mlConfig = {};
+        this.modelsPath = path.join(process.cwd(), 'models');
+        
+        // Create models directory if it doesn't exist
+        if (!fs.existsSync(this.modelsPath)) {
+            fs.mkdirSync(this.modelsPath, { recursive: true });
+        }
+    }
+
+    // Save model state to disk
+    saveModel(modelKey, modelData) {
+        try {
+            const modelPath = path.join(this.modelsPath, `${modelKey}.json`);
+            fs.writeFileSync(modelPath, JSON.stringify(modelData), 'utf-8');
+            console.log(`Model ${modelKey} saved successfully`);
+        } catch (error) {
+            console.error(`Error saving model ${modelKey}:`, error);
+        }
+    }
+
+    // Load model state from disk
+    loadModel(modelKey) {
+        try {
+            const modelPath = path.join(this.modelsPath, `${modelKey}.json`);
+            if (fs.existsSync(modelPath)) {
+                const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf-8'));
+                console.log(`Model ${modelKey} loaded successfully`);
+                return modelData;
+            }
+        } catch (error) {
+            console.error(`Error loading model ${modelKey}:`, error);
+        }
+        return null;
     }
 
     /**
@@ -130,6 +162,22 @@ class MLAnalytics {
     /**
      * Train models for all endpoints in the configuration.
      */
+    // Stream data in batches using cursor-based pagination
+    async streamDataInBatches(connection, dbTable, batchSize, callback) {
+        let lastId = 0;
+        let rows;
+        do {
+            [rows] = await connection.query(
+                `SELECT * FROM ${dbTable} WHERE id > ? ORDER BY id LIMIT ?`,
+                [lastId, batchSize]
+            );
+            if (rows.length > 0) {
+                lastId = rows[rows.length - 1].id;
+                await callback(rows);
+            }
+        } while (rows.length === batchSize);
+    }
+
     async trainModels() {
         for (const endpoint of this.mainConfig) {
             const { dbTable, mlmodel } = endpoint;
@@ -159,6 +207,18 @@ class MLAnalytics {
             } = mergedConfig;
 
             try {
+                // Load existing models if available
+                for (const modelType of mlmodel) {
+                    const modelKey = `${dbTable}_${modelType}`;
+                    if (incrementalTraining) {
+                        const existingModel = this.loadModel(modelKey);
+                        if (existingModel) {
+                            this.models[modelKey] = existingModel;
+                            console.log(`Loaded existing model for ${modelKey}`);
+                        }
+                    }
+                }
+
                 // Sampling logic
                 if (samplingRate > 0) {
                     console.log(`Sampling ${samplingRate * 100}% of data for ${dbTable}`);
@@ -170,23 +230,22 @@ class MLAnalytics {
                     continue; // Skip batch processing if sampling is enabled
                 }
 
-                // Batch processing logic
-                let offset = 0;
-                let rows;
-
+                // Stream data in batches using cursor-based pagination
                 console.log(`Training models for ${dbTable} in batches of ${batchSize}...`);
-                do {
-                    const [batch] = await connection.query(
-                        `SELECT * FROM ${dbTable} LIMIT ? OFFSET ?`,
-                        [batchSize, offset]
-                    );
+                await this.streamDataInBatches(connection, dbTable, batchSize, 
+                    async (rows) => {
+                        console.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
+                        await this.processRows(rows, mlmodel, endpoint, parallelProcessing, incrementalTraining);
+                    }
+                );
 
-                    rows = batch;
-                    offset += batchSize;
-
-                    console.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
-                    await this.processRows(rows, mlmodel, endpoint, parallelProcessing, incrementalTraining);
-                } while (rows.length === batchSize);
+                // Save final model states
+                for (const modelType of mlmodel) {
+                    const modelKey = `${dbTable}_${modelType}`;
+                    if (this.models[modelKey]) {
+                        this.saveModel(modelKey, this.models[modelKey]);
+                    }
+                }
             } catch (error) {
                 console.error(`Error training models for ${dbTable}:`, error.message);
             }
@@ -211,22 +270,227 @@ class MLAnalytics {
     /**
      * Train a specific model type.
      */
-    trainModel(modelType, rows, endpoint) {
+    updateSentimentModel(existingModel, rows, endpoint) {
+        if (!existingModel || !existingModel.data) {
+            return this.trainSentimentModel(rows, endpoint);
+        }
+
+        try {
+            const newModel = this.trainSentimentModel(rows, endpoint);
+            if (!newModel || newModel.error) {
+                return existingModel;
+            }
+
+            // Merge data from both models
+            const mergedData = [...existingModel.data, ...newModel.data];
+
+            // Recalculate statistics
+            const validSentiments = mergedData
+                .filter(data => data.sentiment !== null)
+                .map(data => data.sentiment);
+
+            const stats = {
+                total: mergedData.length,
+                valid: validSentiments.length,
+                avgSentiment: validSentiments.reduce((a, b) => a + b, 0) / validSentiments.length,
+                distribution: {
+                    positive: validSentiments.filter(s => s > 0).length,
+                    neutral: validSentiments.filter(s => s === 0).length,
+                    negative: validSentiments.filter(s => s < 0).length
+                }
+            };
+
+            return {
+                data: mergedData,
+                stats,
+                config: newModel.config // Use latest config
+            };
+        } catch (error) {
+            console.error('Error in incremental sentiment update:', error);
+            return existingModel; // Return existing model on error
+        }
+    }
+
+    updateRecommendationModel(existingModel, rows, endpoint) {
+        if (!existingModel || !existingModel.clusters) {
+            return this.trainRecommendationModel(rows, endpoint);
+        }
+
+        try {
+            const newModel = this.trainRecommendationModel(rows, endpoint);
+            if (!newModel || newModel.error) {
+                return existingModel;
+            }
+
+            // Merge clusters from both models
+            const mergedClusters = [...existingModel.clusters];
+
+            // Add new points to existing clusters based on similarity
+            newModel.clusters.forEach(newCluster => {
+                const mostSimilarCluster = mergedClusters.reduce((best, cluster) => {
+                    const similarity = this.calculateClusterSimilarity(newCluster.centroid, cluster.centroid);
+                    return similarity > best.similarity ? { cluster, similarity } : best;
+                }, { similarity: -1 }).cluster;
+
+                if (mostSimilarCluster && mostSimilarCluster.similarity > newModel.config.similarityThreshold) {
+                    // Update cluster with new points
+                    mostSimilarCluster.points.push(...newCluster.points);
+                    mostSimilarCluster.similarities.push(...newCluster.similarities);
+                    mostSimilarCluster.size = mostSimilarCluster.points.length;
+
+                    // Update centroid (weighted average)
+                    const totalPoints = mostSimilarCluster.size;
+                    mostSimilarCluster.centroid = mostSimilarCluster.centroid.map((val, idx) => {
+                        const newVal = newCluster.centroid[idx];
+                        return (val * (totalPoints - newCluster.size) + newVal * newCluster.size) / totalPoints;
+                    });
+                } else {
+                    // Add as new cluster if no similar cluster found
+                    mergedClusters.push(newCluster);
+                }
+            });
+
+            return {
+                clusters: mergedClusters,
+                fieldProcessors: newModel.fieldProcessors, // Use latest processors
+                config: newModel.config, // Use latest config
+                stats: {
+                    ...newModel.stats,
+                    totalPoints: mergedClusters.reduce((sum, c) => sum + c.size, 0),
+                    clusterSizes: mergedClusters.map(c => c.size),
+                    averageSimilarity: mergedClusters.reduce(
+                        (sum, c) => sum + c.similarities.reduce((a, b) => a + b, 0) / c.similarities.length,
+                        0
+                    ) / mergedClusters.length
+                }
+            };
+        } catch (error) {
+            console.error('Error in incremental recommendation update:', error);
+            return existingModel; // Return existing model on error
+        }
+    }
+
+    updateAnomalyModel(existingModel, rows, endpoint) {
+        if (!existingModel || !existingModel.clusters) {
+            return this.trainAnomalyModel(rows, endpoint);
+        }
+
+        try {
+            const newModel = this.trainAnomalyModel(rows, endpoint);
+            if (!newModel || newModel.error) {
+                return existingModel;
+            }
+
+            // Merge clusters and anomalies
+            const mergedClusters = [...existingModel.clusters];
+            const mergedAnomalies = [...existingModel.anomalies];
+
+            // Add new clusters if they're significantly different from existing ones
+            newModel.clusters.forEach(newCluster => {
+                const newClusterCenter = this.calculateClusterCenter(newCluster, newModel.processedData);
+                const isUnique = !mergedClusters.some(existingCluster => {
+                    const existingCenter = this.calculateClusterCenter(existingCluster, existingModel.processedData);
+                    const distance = this.calculateEuclideanDistance(newClusterCenter, existingCenter);
+                    return distance < existingModel.params.eps;
+                });
+
+                if (isUnique) {
+                    mergedClusters.push(newCluster);
+                }
+            });
+
+            // Add new anomalies, avoiding duplicates based on similarity
+            newModel.anomalies.forEach(newAnomaly => {
+                const isDuplicate = mergedAnomalies.some(existingAnomaly => 
+                    this.calculateEuclideanDistance(
+                        newAnomaly.processedData,
+                        existingAnomaly.processedData
+                    ) < existingModel.params.eps
+                );
+
+                if (!isDuplicate) {
+                    mergedAnomalies.push(newAnomaly);
+                }
+            });
+
+            return {
+                clusters: mergedClusters,
+                fieldProcessors: newModel.fieldProcessors, // Use latest processors
+                anomalies: mergedAnomalies,
+                params: newModel.params, // Use latest parameters
+                processedData: [...existingModel.processedData, ...newModel.processedData],
+                stats: {
+                    totalPoints: existingModel.stats.totalPoints + newModel.stats.totalPoints,
+                    dimensions: newModel.stats.dimensions,
+                    numClusters: mergedClusters.length,
+                    numAnomalies: mergedAnomalies.length,
+                    anomalyPercentage: (mergedAnomalies.length / (existingModel.stats.totalPoints + newModel.stats.totalPoints)) * 100
+                }
+            };
+        } catch (error) {
+            console.error('Error in incremental anomaly update:', error);
+            return existingModel; // Return existing model on error
+        }
+    }
+
+    calculateEuclideanDistance(point1, point2) {
+        return Math.sqrt(
+            point1.reduce((sum, val, idx) => sum + Math.pow(val - point2[idx], 2), 0)
+        );
+    }
+
+    calculateClusterCenter(cluster, processedData) {
+        const points = cluster.map(idx => processedData[idx]);
+        const dimensions = points[0].length;
+        return Array(dimensions).fill(0).map((_, dim) => 
+            points.reduce((sum, point) => sum + point[dim], 0) / points.length
+        );
+    }
+
+    trainModel(modelType, rows, endpoint, incrementalTraining) {
         const { dbTable } = endpoint;
+        const modelKey = `${dbTable}_${modelType}`;
+
+        // Load existing model if doing incremental training
+        let existingModel = incrementalTraining ? this.models[modelKey] : null;
+
         switch (modelType) {
             case 'sentiment':
-                this.models[`${dbTable}_sentiment`] = this.trainSentimentModel(rows, endpoint);
+                if (existingModel) {
+                    // Update existing sentiment model
+                    this.models[modelKey] = this.updateSentimentModel(existingModel, rows, endpoint);
+                } else {
+                    // Train new sentiment model
+                    this.models[modelKey] = this.trainSentimentModel(rows, endpoint);
+                }
                 break;
             case 'recommendation':
-                this.models[`${dbTable}_recommendation`] = this.trainRecommendationModel(rows, endpoint);
+                if (existingModel) {
+                    // Update existing recommendation model
+                    this.models[modelKey] = this.updateRecommendationModel(existingModel, rows, endpoint);
+                } else {
+                    // Train new recommendation model
+                    this.models[modelKey] = this.trainRecommendationModel(rows, endpoint);
+                }
                 break;
             case 'anomaly':
-                this.models[`${dbTable}_anomaly`] = this.trainAnomalyModel(rows, endpoint);
+                if (existingModel) {
+                    // Update existing anomaly model
+                    this.models[modelKey] = this.updateAnomalyModel(existingModel, rows, endpoint);
+                } else {
+                    // Train new anomaly model
+                    this.models[modelKey] = this.trainAnomalyModel(rows, endpoint);
+                }
                 break;
             case 'rag':
                 break;
             default:
                 console.warn(`Unsupported ML model type: ${modelType}`);
+        }
+
+        // Save updated model state
+        if (this.models[modelKey]) {
+            this.saveModel(modelKey, this.models[modelKey]);
         }
     }
 
