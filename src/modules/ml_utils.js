@@ -2,6 +2,38 @@
  * ML utility functions for data preprocessing and normalization
  */
 
+// Utility to normalize data for TensorFlow.js models
+function normalizeData(data, min = 0, max = 1) {
+    try {
+        if (!Array.isArray(data)) {
+            throw new Error('Data must be an array');
+        }
+
+        const validData = data.filter(v => typeof v === 'number' && !isNaN(v) && isFinite(v));
+        if (validData.length === 0) {
+            return Array(data.length).fill(0);
+        }
+
+        const minValue = Math.min(...validData);
+        const maxValue = Math.max(...validData);
+
+        // Handle edge case where all values are the same
+        if (minValue === maxValue) {
+            return data.map(() => (min + max) / 2);
+        }
+
+        return data.map(value => {
+            if (typeof value !== 'number' || isNaN(value) || !isFinite(value)) {
+                return (min + max) / 2; // Return middle of range for invalid values
+            }
+            return (value - minValue) / (maxValue - minValue) * (max - min) + min;
+        });
+    } catch (error) {
+        console.error('Error in normalizeData function:', error);
+        throw error;
+    }
+}
+
 // Utility to scale numerical values with robust error handling and default values
 function scale(value, range = [0, 1], existingParams = null) {
     try {
@@ -161,8 +193,55 @@ function handleMissingValues(data, strategy = 'mean') {
     }
 }
 
+// Utility to check and create database indexes
+async function ensureIndexExists(connection, tableName, indexName, indexDefinition) {
+    try {
+        const [existingIndexes] = await connection.query(
+            `SHOW INDEX FROM ${tableName} WHERE Key_name = ?`,
+            [indexName]
+        );
+        
+        if (existingIndexes.length === 0) {
+            console.log(`Creating index ${indexName} on ${tableName}`);
+            await connection.query(
+                `CREATE INDEX ${indexName} ON ${tableName} (${indexDefinition})`
+            );
+            return true;
+        }
+        return false;
+    } catch (error) {
+        console.error(`Error checking/creating index ${indexName}:`, error);
+        return false;
+    }
+}
+
+// Utility to log training metrics
+function logTrainingMetrics(modelKey, metrics) {
+    try {
+        const logDir = path.join(process.cwd(), 'logs');
+        if (!fs.existsSync(logDir)) {
+            fs.mkdirSync(logDir, { recursive: true });
+        }
+
+        const logPath = path.join(logDir, 'training_logs.json');
+        const logEntry = {
+            timestamp: new Date().toISOString(),
+            modelKey,
+            ...metrics
+        };
+
+        // Append to log file
+        fs.appendFileSync(logPath, JSON.stringify(logEntry) + '\n');
+    } catch (error) {
+        console.error('Error logging training metrics:', error);
+    }
+}
+
 module.exports = {
     scale,
     oneHotEncode,
-    handleMissingValues
+    handleMissingValues,
+    normalizeData,
+    ensureIndexExists,
+    logTrainingMetrics
 };

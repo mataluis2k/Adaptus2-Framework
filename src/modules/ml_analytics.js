@@ -3,24 +3,142 @@ const path = require('path');
 const schedule = require('node-schedule');
 const natural = require('natural'); // Sentiment analysis
 const { kmeans } = require('ml-kmeans'); // Correct import for KMeans
+const tf = require('@tensorflow/tfjs-node'); // TensorFlow.js with Node.js backend
 
 const { DBSCAN } = require('density-clustering'); // Anomaly detection
 const { getDbConnection } = require(path.join(__dirname,'db'));
 require('dotenv').config();
 
+// TensorFlow.js model architectures
+const MODEL_ARCHITECTURES = {
+    sentiment: (inputShape) => {
+        const model = tf.sequential();
+        model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [inputShape] }));
+        model.add(tf.layers.dropout({ rate: 0.2 }));
+        model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: 1, activation: 'tanh' }));
+        model.compile({
+            optimizer: 'adam',
+            loss: 'meanSquaredError',
+            metrics: ['accuracy']
+        });
+        return model;
+    },
+    recommendation: (inputShape) => {
+        const model = tf.sequential();
+        model.add(tf.layers.dense({ units: 128, activation: 'relu', inputShape: [inputShape] }));
+        model.add(tf.layers.dropout({ rate: 0.3 }));
+        model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+        model.compile({
+            optimizer: 'adam',
+            loss: 'cosineProximity',
+            metrics: ['accuracy']
+        });
+        return model;
+    },
+    anomaly: (inputShape) => {
+        const model = tf.sequential();
+        // Encoder
+        model.add(tf.layers.dense({ units: 64, activation: 'relu', inputShape: [inputShape] }));
+        model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: 16, activation: 'relu' }));
+        // Decoder
+        model.add(tf.layers.dense({ units: 32, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: 64, activation: 'relu' }));
+        model.add(tf.layers.dense({ units: inputShape, activation: 'sigmoid' }));
+        model.compile({
+            optimizer: 'adam',
+            loss: 'meanSquaredError'
+        });
+        return model;
+    }
+};
+
 class MLAnalytics {
     constructor(mainConfigPath = 'config/apiConfig.json', mlConfigPath = 'config/mlConfig.json') {
         this.models = {};
+        this.tfModels = {}; // TensorFlow.js models
         this.mainConfigPath = path.resolve(process.cwd(), mainConfigPath);
         this.mlConfigPath = path.resolve(process.cwd(), mlConfigPath);
         this.mainConfig = [];
         this.mlConfig = {};
         this.modelsPath = path.join(process.cwd(), 'models');
+        this.tfModelsPath = path.join(process.cwd(), 'models', 'tensorflow');
         
-        // Create models directory if it doesn't exist
-        if (!fs.existsSync(this.modelsPath)) {
-            fs.mkdirSync(this.modelsPath, { recursive: true });
+        // Create model directories if they don't exist
+        [this.modelsPath, this.tfModelsPath].forEach(dir => {
+            if (!fs.existsSync(dir)) {
+                fs.mkdirSync(dir, { recursive: true });
+            }
+        });
+    }
+
+    // TensorFlow.js model management
+    async saveTFModel(modelKey, model) {
+        try {
+            const modelPath = `file://${path.join(this.tfModelsPath, modelKey)}`;
+            await model.save(modelPath);
+            console.log(`TensorFlow.js model ${modelKey} saved successfully`);
+        } catch (error) {
+            console.error(`Error saving TensorFlow.js model ${modelKey}:`, error);
+            throw error;
         }
+    }
+
+    async loadTFModel(modelKey) {
+        try {
+            const modelPath = `file://${path.join(this.tfModelsPath, modelKey)}`;
+            if (fs.existsSync(path.join(this.tfModelsPath, modelKey, 'model.json'))) {
+                const model = await tf.loadLayersModel(modelPath);
+                console.log(`TensorFlow.js model ${modelKey} loaded successfully`);
+                return model;
+            }
+        } catch (error) {
+            console.error(`Error loading TensorFlow.js model ${modelKey}:`, error);
+        }
+        return null;
+    }
+
+    async updateTFModel(model, newData, config = {}) {
+        const { epochs = 5, batchSize = 32 } = config;
+        
+        // Convert data to tensors
+        const inputTensor = tf.tensor2d(newData.inputs);
+        const labelTensor = tf.tensor2d(newData.labels);
+
+        try {
+            // Train the model incrementally
+            await model.fit(inputTensor, labelTensor, {
+                epochs,
+                batchSize,
+                shuffle: true,
+                callbacks: {
+                    onEpochEnd: (epoch, logs) => {
+                        console.log(`Epoch ${epoch + 1}: loss = ${logs.loss.toFixed(4)}`);
+                    }
+                }
+            });
+
+            // Clean up tensors
+            inputTensor.dispose();
+            labelTensor.dispose();
+
+            return model;
+        } catch (error) {
+            console.error('Error updating TensorFlow.js model:', error);
+            // Clean up tensors on error
+            inputTensor.dispose();
+            labelTensor.dispose();
+            throw error;
+        }
+    }
+
+    createTFModel(modelType, inputShape) {
+        if (!MODEL_ARCHITECTURES[modelType]) {
+            throw new Error(`Unsupported model type: ${modelType}`);
+        }
+        return MODEL_ARCHITECTURES[modelType](inputShape);
     }
 
     // Save model state to disk
@@ -162,20 +280,73 @@ class MLAnalytics {
     /**
      * Train models for all endpoints in the configuration.
      */
-    // Stream data in batches using cursor-based pagination
+    // Stream data in batches using cursor-based pagination with parallel processing
     async streamDataInBatches(connection, dbTable, batchSize, callback) {
+        const { ensureIndexExists, logTrainingMetrics } = require('./ml_utils');
+
+        // Ensure index exists
+        await ensureIndexExists(connection, dbTable, 'idx_id_created', 'id, created_at');
+
         let lastId = 0;
+        let lastCreatedAt = new Date(0).toISOString();
         let rows;
+        let totalProcessed = 0;
+        const startTime = Date.now();
+
         do {
+            // Use both id and created_at for reliable pagination even with gaps
             [rows] = await connection.query(
-                `SELECT * FROM ${dbTable} WHERE id > ? ORDER BY id LIMIT ?`,
-                [lastId, batchSize]
+                `SELECT * FROM ${dbTable} 
+                 WHERE (id > ? OR (id = ? AND created_at > ?))
+                 ORDER BY id ASC, created_at ASC 
+                 LIMIT ?`,
+                [lastId, lastId, lastCreatedAt, batchSize]
             );
+
             if (rows.length > 0) {
-                lastId = rows[rows.length - 1].id;
-                await callback(rows);
+                const lastRow = rows[rows.length - 1];
+                lastId = lastRow.id;
+                lastCreatedAt = lastRow.created_at;
+                
+                // Process rows in parallel using Promise.all
+                const batchPromises = [];
+                const batchSize = 100; // Sub-batch size for parallel processing
+                
+                for (let i = 0; i < rows.length; i += batchSize) {
+                    const batch = rows.slice(i, i + batchSize);
+                    batchPromises.push(callback(batch));
+                }
+                
+                await Promise.all(batchPromises);
+                
+                totalProcessed += rows.length;
+                
+                // Log progress and metrics
+                const elapsedTime = (Date.now() - startTime) / 1000;
+                const throughput = totalProcessed / elapsedTime;
+                
+                logTrainingMetrics(dbTable, {
+                    batchSize,
+                    recordsProcessed: totalProcessed,
+                    elapsedTime,
+                    throughput,
+                    lastId,
+                    lastCreatedAt
+                });
+                
+                console.log(`Processed batch of ${rows.length} records from ${dbTable}, ` +
+                          `total: ${totalProcessed}, throughput: ${throughput.toFixed(2)} records/sec`);
             }
         } while (rows.length === batchSize);
+
+        // Log final metrics
+        const totalTime = (Date.now() - startTime) / 1000;
+        logTrainingMetrics(dbTable, {
+            status: 'completed',
+            totalRecords: totalProcessed,
+            totalTime,
+            averageThroughput: totalProcessed / totalTime
+        });
     }
 
     async trainModels() {
