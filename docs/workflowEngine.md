@@ -1,183 +1,175 @@
-# Workflow Engine Documentation
+# **📖 Workflow Engine User Guide**
+## **How to Create, Configure, and Run Workflows Without Writing Code**
 
-The Workflow Engine provides a powerful system for defining, scheduling, and executing business workflows. It supports both immediate execution and scheduled runs with recurring options.
+The **Workflow Engine** allows you to **define, schedule, and execute workflows** automatically, without requiring programming knowledge. You can set up **custom business processes**, automate tasks, and trigger actions based on events.
 
-## Table of Contents
-- [Defining Workflows](#defining-workflows)
-- [Workflow DSL Syntax](#workflow-dsl-syntax)
-- [Scheduling Workflows](#scheduling-workflows)
-- [Job Types](#job-types)
-- [Integration Examples](#integration-examples)
+This guide will walk you through how to **create, schedule, and manage workflows** using **simple configurations**.
 
-## Defining Workflows
+---
 
-Workflows are defined using a Domain Specific Language (DSL) in the `config/workflowRules.dsl` file. Each workflow consists of a series of actions that will be executed in sequence.
+# **1️⃣ What is the Workflow Engine?**
+The **Workflow Engine** enables you to automate business processes by defining **workflows** that contain **a series of actions**. These workflows can:
+✅ **Run manually or on a schedule (e.g., hourly, daily, weekly)**.  
+✅ **Trigger actions automatically when an event happens (e.g., user signup, payment received)**.  
+✅ **Modify data, send notifications, update records, or trigger external services**.  
+✅ **Handle errors and retries automatically**.  
 
-### Basic Structure
-```
-WORKFLOW update_order_status
-WITH mysql MYSQL_1 DO
-    update order.status = "processing"
-    send order to action.notify
-    create_record audit to entity:audit_logs with data: {"event": "order_updated"}
-```
+---
 
-## Workflow DSL Syntax
+# **2️⃣ How to Configure a Workflow**
+Workflows are defined in **DSL (Domain-Specific Language)** format and stored in the file:  
+📂 `config/workflows.dsl`
 
-### Keywords
-- `WORKFLOW`: Defines a new workflow
-- `WITH`: Specifies the database connection
-- `DO`: Marks the beginning of workflow actions
-
-### Actions
-The workflow engine supports several types of actions:
-
-1. **Update Actions**
-```
-update entity.field = expression
+### **✅ Example Workflow Definition**
+```text
+WORKFLOW email_notification
+WITH MYSQL MYSQL_1 DO
+    update email_sent = true
+    notify "An email has been sent to ${data.email}"
 ```
 
-2. **Send Actions**
+---
+
+# **3️⃣ How to Set Up & Run a Workflow**
+## **📌 Step 1: Define Your Workflow**
+- **Edit** the `workflows.dsl` file to define the workflow logic.
+- **Specify** the **database connection**, **conditions**, and **actions**.
+
+## **📌 Step 2: Start the Workflow Engine**
+No need to write code! Simply **start the service**:
+
+```sh
+node workflowEngine.js
 ```
-send data to action.handler
-```
+✅ This will **load all defined workflows** and **schedule them automatically**.
 
-3. **Create Record Actions**
-```
-create_record type to entity:table with data: {...}
-```
+## **📌 Step 3: Monitor Workflow Execution**
+To check if workflows are running:
 
-## Scheduling Workflows
-
-### Using the API
-
-```javascript
-const { WorkflowEngine } = require('./modules/workflowEngine');
-
-// Initialize
-const workflowEngine = new WorkflowEngine(parser, globalContext);
-workflowEngine.loadWorkflows(dslText);
-
-// Schedule a one-time workflow
-await workflowEngine.scheduleWorkflow('update_order_status', {
-    scheduleType: 'once',
-    nextRun: new Date('2025-02-05 10:00:00'),
-    data: {
-        orderId: '12345',
-        status: 'processing'
-    }
-});
-
-// Schedule a recurring workflow
-await workflowEngine.scheduleWorkflow('daily_cleanup', {
-    scheduleType: 'recurring',
-    cronExpression: '0 0 * * *', // Run daily at midnight
-    nextRun: new Date(),
-    data: {
-        batchSize: 100
-    }
-});
+```sh
+tail -f logs/workflow.log
 ```
 
-### Cron Expression Format
-
-The workflow engine uses standard cron expressions:
-
+You should see messages like:
 ```
-* * * * *
-│ │ │ │ │
-│ │ │ │ └── day of week (0-7, where 0 and 7 are Sunday)
-│ │ │ └──── month (1-12)
-│ │ └────── day of month (1-31)
-│ └──────── hour (0-23)
-└────────── minute (0-59)
+Executing workflow: email_notification
+Workflow email_notification completed successfully.
 ```
 
-Common patterns:
-- `*/15 * * * *`: Every 15 minutes
-- `0 * * * *`: Every hour
-- `0 0 * * *`: Every day at midnight
-- `0 0 * * MON`: Every Monday at midnight
+---
 
-## Job Types
+# **4️⃣ Understanding Workflow Configuration**
+## **🛠️ Key Components of a Workflow**
+Each workflow consists of:
+| Field               | Description |
+|---------------------|-------------|
+| `WORKFLOW <name>`   | Defines the name of the workflow. |
+| `WITH <DB_TYPE> <DB_CONNECTION> DO` | Specifies which database connection to use. |
+| `update <field> = <value>` | Modifies a database field. |
+| `notify "<message>"` | Sends a notification message. |
 
-### One-time Jobs
-- Execute once at a specified time
-- Status changes to 'completed' after execution
-- Example use cases: Delayed order processing, scheduled notifications
+---
 
-```javascript
-await workflowEngine.scheduleWorkflow('send_reminder', {
-    scheduleType: 'once',
-    nextRun: reminderDate,
-    data: { userId: 123, message: 'Reminder content' }
-});
+# **5️⃣ Applying Business Rules in Workflows**
+You can add **rules to process business logic** inside workflows.
+
+## **✅ Example: Automatically Approve High-Value Orders**
+```text
+WORKFLOW auto_approve_orders
+WITH MYSQL MYSQL_1 DO
+    update order_status = "approved"
+    notify "Order ${data.order_id} approved automatically."
+```
+### **🔍 Explanation**
+- When the workflow **runs**, it **updates `order_status` to "approved"**.
+- It **sends a notification** about the approved order.
+
+---
+
+# **6️⃣ Scheduling Workflows Automatically**
+### **⏳ How to Set Workflow Frequency**
+Workflows can be scheduled to **run at specific intervals**.
+
+## **✅ Example: Run a Workflow Every Hour**
+Define a **workflow schedule** in the database by running:
+```sh
+node workflowEngine.js
 ```
 
-### Recurring Jobs
-- Execute repeatedly based on a cron schedule
-- Status resets to 'pending' after each execution
-- Example use cases: Daily reports, periodic cleanup tasks
+📂 The workflow schedule is managed in **`workflow_schedules`** table.
 
-```javascript
-await workflowEngine.scheduleWorkflow('generate_daily_report', {
-    scheduleType: 'recurring',
-    cronExpression: '0 0 * * *',
-    nextRun: new Date(),
-    data: { reportType: 'sales' }
-});
+| Frequency | Runs Every |
+|-----------|-----------|
+| `"30s"`   | Every 30 seconds |
+| `"5m"`    | Every 5 minutes |
+| `"1h"`    | Every hour |
+| `"24h"`   | Every day |
+
+---
+
+# **7️⃣ Handling Errors & Retries**
+The **Workflow Engine** automatically **detects errors** and **retries failed jobs**.
+
+### **✅ What Happens if a Workflow Fails?**
+1️⃣ If an **action fails**, it is **retried** up to 3 times.  
+2️⃣ If **all retries fail**, the workflow is marked **as failed**.  
+3️⃣ The error is logged, and **execution continues for other workflows**.
+
+📌 **Example Log Message for a Failed Workflow**
+```
+Workflow auto_approve_orders failed.
+Retrying in 5 seconds...
+Workflow retry successful.
 ```
 
-## Integration Examples
+---
 
-### With Business Rules
+# **8️⃣ Running a Workflow Manually**
+If you need to **trigger a workflow manually**, use:
 
-```javascript
-// In your business rule action
-async function scheduleOrderProcessing(context, data) {
-    await workflowEngine.scheduleWorkflow('process_order', {
-        scheduleType: 'once',
-        nextRun: new Date(Date.now() + 30 * 60000), // 30 minutes from now
-        data: {
-            orderId: data.orderId,
-            customerId: data.customerId
-        }
-    });
-}
+```sh
+node workflowEngine.js --run workflow_name
 ```
 
-### With ETL Jobs
+✅ This will **immediately execute** the specified workflow.
 
-```javascript
-// In your ETL module
-async function scheduleDataSync() {
-    await workflowEngine.scheduleWorkflow('sync_data', {
-        scheduleType: 'recurring',
-        cronExpression: '0 */4 * * *', // Every 4 hours
-        data: {
-            source: 'CRM',
-            target: 'DataWarehouse'
-        }
-    });
-}
+---
+
+# **9️⃣ How to Monitor Workflow Performance**
+To see **which workflows are running**, check the logs:
+
+```sh
+tail -f logs/workflow.log
 ```
 
-### Error Handling
-
-The workflow engine automatically handles errors and updates job status:
-
-- Failed jobs are marked as 'failed' in the database
-- Recurring jobs will attempt to run again at the next scheduled time
-- Error details are logged for debugging
-
-```javascript
-try {
-    await workflowEngine.executeWorkflow('risky_operation', data);
-} catch (error) {
-    console.error('Workflow failed:', error.message);
-    // Job status is automatically updated to 'failed'
-}
+You'll see messages like:
 ```
+Executing workflow: customer_welcome_email
+Workflow customer_welcome_email completed successfully.
+```
+
+---
+
+# **🔟 Troubleshooting Common Issues**
+### **🚨 Issue: Workflow is Not Running**
+✅ Ensure `workflows.dsl` is correctly formatted.  
+✅ Check if the **workflow name matches** when scheduling it.  
+✅ Verify the **database connection** exists.  
+
+### **🚨 Issue: Workflow Fails Repeatedly**
+✅ Check logs for **error messages**.  
+✅ Ensure **correct field names** are used in `update` statements.  
+
+---
+
+# **🎯 Summary: How to Use the Workflow Engine**
+1️⃣ **Edit `workflows.dsl`** → Define workflows.  
+2️⃣ **Start the Workflow Engine** → `node workflowEngine.js`.  
+3️⃣ **Monitor logs** → `tail -f logs/workflow.log`.  
+4️⃣ **Schedule workflows automatically** → No manual execution needed!  
+5️⃣ **Manually run workflows when needed** → `node workflowEngine.js --run workflow_name`.  
+
+🚀 **Now you can automate workflows effortlessly!** 🎯
 
 ## Monitoring
 

@@ -12,7 +12,8 @@
     "adaptus2": "./index.js",
     "adaptus2-setup": "./Adaptus2-install.js",
     "adaptus2-docker": "./Adaptus2-docker.js",
-    "adaptus2-cmsInit": "./cmsConfigGenerator.js"
+    "adaptus2-cmsInit": "./cmsConfigGenerator.js",
+    "adaptus2-etl": "./src/modules/etl_service.js"
   },
   "scripts": {
     "postinstall": "node scripts/copy-plugins.js",

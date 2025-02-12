@@ -1,266 +1,186 @@
-# ETL System Documentation
+# **📖 ETL Service User Guide**
+## **How to Configure and Run ETL Jobs Without Writing Code**
 
-## Table of Contents
-- [Overview](#overview)
-- [Features](#features)
-- [Setup](#setup)
-- [Configuration](#configuration)
-- [Usage](#usage)
-- [Monitoring & Metrics](#monitoring--metrics)
-- [Error Handling](#error-handling)
-- [Best Practices](#best-practices)
-- [Troubleshooting](#troubleshooting)
+The **ETL (Extract, Transform, Load) Service** allows you to **move data between databases**, **apply transformations**, and **automate jobs**—all without coding. This guide explains how to **configure, schedule, and manage ETL jobs** using simple configuration files.
 
-## Overview
+---
 
-The ETL (Extract, Transform, Load) system is a robust solution for data integration and transformation between different databases. It supports incremental loading, data validation, transformation rules, and provides comprehensive monitoring capabilities.
+# **1️⃣ What is the ETL Service?**
+The **ETL Service** extracts data from a source (e.g., MySQL, PostgreSQL), transforms it (applying business rules), and loads it into a target database. It can also:
+✅ Synchronize schemas between databases.  
+✅ Apply **business rules** to transform data.  
+✅ Process large datasets in **batches** to prevent slowdowns.  
+✅ Run jobs **on a schedule** (e.g., every 5 minutes, hourly, daily).  
+✅ Handle **errors and retries** automatically.
 
-### Key Components
-- ETL Module: Core ETL functionality
-- ETL Service: Job scheduling and management
-- ETL Worker: Parallel processing of ETL jobs
-- Business Rules Engine: Data transformation rules
-- Metrics System: Performance monitoring and reporting
+---
 
-## Features
+# **2️⃣ How to Configure an ETL Job**
+Each ETL job is defined in a configuration file:  
+📂 `config/etlConfig.json`
 
-### Data Processing
-- Batch processing with configurable batch sizes
-- Incremental loading using timestamps
-- Schema synchronization between source and target
-- Support for multiple database types
-- Transaction management for data consistency
-
-### Error Handling
-- Multi-level retry mechanism
-- Exponential backoff strategy
-- Detailed error logging
-- Transaction rollback on failures
-
-### Monitoring
-- Comprehensive metrics tracking
-- Performance statistics
-- Error rate monitoring
-- Processing throughput measurement
-- Validation error tracking
-
-### Data Quality
-- Schema-based validation
-- Type checking
-- Data transformation rules
-- Validation error reporting
-
-## Setup
-
-### Prerequisites
-- Node.js (v14 or higher)
-- Access to source and target databases
-- Configuration files in place
-
-### Installation
-
-1. Ensure required configuration files are present:
-```bash
-config/
-  ├── etlConfig.json
-  ├── businessRules.json
-  ├── apiConfig.json
-  └── rules/
-      └── [entity]_rules.dsl
-```
-
-2. Install dependencies:
-```bash
-npm install
-```
-
-## Configuration
-
-### ETL Configuration (etlConfig.json)
+### **✅ Example ETL Job Configuration**
 ```json
 [
   {
-    "source_table": "source_table_name",
-    "target_table": "target_table_name",
+    "source_table": "users",
+    "target_table": "customers",
+    "keys": ["id"],
     "frequency": "5m",
-    "keys": ["id", "timestamp"],
-    "batch_size": 1000
+    "transformations": [
+      { "field": "full_name", "expression": "data.first_name + ' ' + data.last_name" },
+      { "field": "created_at", "expression": "new Date().toISOString()" }
+    ],
+    "notifications": [
+      { "condition": "data.account_status == 'suspended'", "message": "Suspended account detected: ${data.email}" }
+    ]
   }
 ]
 ```
 
-- `source_table`: Source table name
-- `target_table`: Target table name
-- `frequency`: Job execution frequency (format: number + s/m/h)
-- `keys`: Primary/unique keys for incremental loading
-- `batch_size`: Number of records per batch
+---
 
-### API Configuration (apiConfig.json)
+# **3️⃣ How to Set Up & Run an ETL Job**
+## **📌 Step 1: Configure Your ETL Job**
+- **Edit** the `etlConfig.json` file to define your job.
+- **Specify** the source & target tables, scheduling frequency, and transformation rules.
+
+## **📌 Step 2: Start the ETL Service**
+No need to write any code! Simply **start the service**:
+
+```sh
+node etl_service.js
+```
+✅ The service will **automatically schedule jobs** based on the configuration.
+
+## **📌 Step 3: Check Job Execution Logs**
+To monitor the ETL job, **check the logs**:
+
+```sh
+tail -f logs/etl.log
+```
+You'll see messages like:
+
+```
+Starting ETL job for users -> customers
+Processing 1000 records in batch
+ETL job completed successfully.
+```
+
+---
+
+# **4️⃣ Understanding the ETL Job Configuration**
+## **🛠️ Key Components of `etlConfig.json`**
+| Field              | Description |
+|--------------------|-------------|
+| `source_table`     | The table to extract data from. |
+| `target_table`     | The table to load transformed data into. |
+| `keys`             | The primary key(s) used to track updates. |
+| `frequency`        | How often the job runs (`5m` = every 5 minutes, `1h` = hourly). |
+| `transformations`  | Rules to modify data before loading it. |
+| `notifications`    | Alerts for specific conditions (e.g., `account_status == 'suspended'`). |
+
+---
+
+# **5️⃣ Applying Business Rules to ETL Jobs**
+The ETL service allows **custom transformations** using **Business Rules**.
+
+## **✅ Example: Business Rules for Lead Conversion**
+Create a **rules file** in 📂 `config/rules/users_rules.dsl`:
+
+```text
+IF UPDATE users WHEN data.account_status = "suspended" THEN
+    notify "Suspended account detected: ${data.email}"
+ELSE IF data.account_status = "active" THEN
+    update last_active_date = new Date().toISOString()
+```
+
+### **How It Works**
+✅ If `account_status = "suspended"`, send a **notification**.  
+✅ If `account_status = "active"`, update `last_active_date`.  
+
+💡 **Rules are applied automatically!** No manual intervention is needed.
+
+---
+
+# **6️⃣ Scheduling ETL Jobs**
+### **⏳ How to Set Job Frequency**
+Set the `frequency` field in `etlConfig.json`:
+
+| Frequency | Runs Every |
+|-----------|-----------|
+| `"30s"`   | 30 seconds |
+| `"5m"`    | 5 minutes |
+| `"1h"`    | 1 hour |
+| `"24h"`   | 1 day |
+
+**Example:**  
+To run an ETL job **every hour**, set:
 ```json
-[
-  {
-    "dbTable": "table_name",
-    "dbType": "mysql",
-    "dbConnection": {
-      "host": "localhost",
-      "user": "user",
-      "password": "password",
-      "database": "db_name"
-    }
-  }
-]
+"frequency": "1h"
 ```
 
-### Business Rules (rules/[entity]_rules.dsl)
-```dsl
-RULE "transform_field"
-WHEN
-  UPDATE ON "table_name"
-THEN
-  SET field = UPPERCASE(field)
-END
+---
+
+# **7️⃣ Error Handling & Retries**
+The ETL service automatically **detects errors** and **retries failed jobs**.
+
+### **✅ How the ETL Service Handles Failures**
+1️⃣ If a record **fails validation**, it is **skipped** and logged.  
+2️⃣ If the **database connection fails**, the job **waits and retries**.  
+3️⃣ If an error occurs **3 times in a row**, the job is **marked as failed**.
+
+📌 **Example Log Message for a Failed Job**
+```
+ETL job attempt 1 failed for users -> customers
+Retrying in 2 seconds...
+Retry successful after 1 attempts.
 ```
 
-## Usage
+---
 
-### Starting the ETL System
+# **8️⃣ How to Monitor ETL Performance**
+You can track **how many records were processed**, **error rates**, and **job execution time**.
 
-1. Start the ETL service:
-```bash
-node src/modules/etl_service.js
+## **✅ View ETL Metrics**
+Each job logs **performance metrics**, such as:
+```
+ETL Job Metrics:
+- Records Processed: 2,000
+- Errors: 5
+- Validation Errors: 2
+- Execution Time: 12s
 ```
 
-2. Monitor the logs for job execution status and metrics.
+---
 
-### Creating New ETL Jobs
+# **9️⃣ Manually Running an ETL Job**
+If you need to **run a job immediately** without waiting for the schedule:
 
-1. Add job configuration to etlConfig.json:
-```json
-{
-  "source_table": "users",
-  "target_table": "users_processed",
-  "frequency": "1h",
-  "keys": ["user_id"],
-  "batch_size": 500
-}
+```sh
+node etl_module.js
 ```
+This will **process all configured ETL jobs** immediately.
 
-2. Create transformation rules (optional):
-```dsl
-RULE "normalize_email"
-WHEN
-  UPDATE ON "users"
-THEN
-  SET email = LOWERCASE(email)
-END
-```
+---
 
-## Monitoring & Metrics
+# **🔟 Troubleshooting Common Issues**
+### **🚨 Issue: No Data is Being Processed**
+✅ Ensure `etlConfig.json` is correctly formatted.  
+✅ Check database **connections** (`source_table`, `target_table`).  
+✅ Verify **keys** exist in the tables.  
 
-### Available Metrics
-- Processing duration
-- Records processed count
-- Error rates
-- Validation errors
-- Processing throughput
+### **🚨 Issue: Errors in Transformation Rules**
+✅ Check `config/rules/{table}_rules.dsl` for typos.  
+✅ Ensure expressions (e.g., `data.first_name + ' ' + data.last_name'`) are **valid JavaScript**.  
 
-### Sample Metrics Output
-```json
-{
-  "duration": 1500,
-  "recordsProcessed": 1000,
-  "errors": 5,
-  "validationErrors": 2,
-  "errorRate": 0.005,
-  "throughput": "666.67"
-}
-```
+---
 
-## Error Handling
+# **🎯 Summary: How to Use the ETL Service**
+1️⃣ **Edit `etlConfig.json`** → Define ETL jobs.  
+2️⃣ **Start the ETL service** → `node etl_service.js`.  
+3️⃣ **Monitor logs** → `tail -f logs/etl.log`.  
+4️⃣ **Apply business rules** → Edit `rules/{table}_rules.dsl`.  
+5️⃣ **Schedule jobs automatically** → No manual execution needed!  
 
-### Retry Mechanism
-- Individual record retries: 3 attempts
-- Job level retries: 3 attempts
-- Exponential backoff between retries
-
-### Error Types
-1. Validation Errors
-   - Invalid data types
-   - Missing required fields
-   - Schema mismatches
-
-2. Processing Errors
-   - Database connection issues
-   - Transaction failures
-   - Transformation errors
-
-## Best Practices
-
-1. Data Validation
-   - Always validate data before transformation
-   - Define clear validation rules
-   - Monitor validation errors
-
-2. Performance Optimization
-   - Use appropriate batch sizes
-   - Configure optimal job frequencies
-   - Monitor system resources
-
-3. Error Handling
-   - Implement proper error recovery
-   - Monitor retry rates
-   - Set appropriate timeout values
-
-4. Monitoring
-   - Regular metric analysis
-   - Set up alerts for high error rates
-   - Monitor system performance
-
-## Troubleshooting
-
-### Common Issues
-
-1. Connection Failures
-```
-Error: Database connection or type not found for tables
-```
-Solution: Verify database configuration in apiConfig.json
-
-2. Schema Sync Issues
-```
-Error: Failed to sync schema for table
-```
-Solution: Ensure proper database permissions and valid schema definitions
-
-3. Validation Errors
-```
-Error: Invalid value for field
-```
-Solution: Check data types and validation rules
-
-### Debug Mode
-
-Enable detailed logging by setting environment variable:
-```bash
-DEBUG=true node src/modules/etl_service.js
-```
-
-### Support
-
-For additional support:
-1. Check the error logs
-2. Review the metrics output
-3. Verify configuration files
-4. Ensure database connectivity
-5. Check system resources
-
-## Conclusion
-
-This ETL system provides a robust solution for data integration needs with features like:
-- Reliable data processing
-- Comprehensive error handling
-- Detailed monitoring
-- Flexible configuration
-- Data quality controls
-
-Regular monitoring of metrics and logs will help ensure optimal performance and reliability of your ETL processes.
+🚀 **Now you can move, transform, and sync data across databases effortlessly!** 🎯

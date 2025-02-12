@@ -23,160 +23,188 @@ This module provides a way to define business rules using a DSL (Domain-Specific
 
 - **Else Clause**: Support fallback actions with `ELSE`.
 
-## Installation
-
-```bash
-npm install rule-engine-dsl
-```
-
-*Note: The above command assumes you’ve published the module to npm. If not, copy the `ruleEngine.js` file into your project.*
-
-## Quick Start
-
-1. **Define a DSL Script**: Write your rules in a `.js` or `.txt` file (e.g., `dslScript.js`).
-2. **Create Your Action Handlers**: Integrate database connections, email services, or other resources in a `context` object.
-3. **Load and Execute Rules**: Use the `RuleEngine` to parse your DSL and then call `processEvent` whenever an event occurs in your app.
-
-### Example DSL Script
-
-Create a file named `dslScript.js`:
-
-```js
-module.exports = `
-IF NEW order WHEN order.status = "paid" THEN
-    send order to action.fulfillment
-    send order to action.email
-
-IF UPDATE order WHEN order.status = "paid" AND order.total > 500 THEN
-    update order.status = "premium"
-    send order to action.notify.vip_team
-ELSE
-    send order to action.email.standard_confirmation
-`;
-```
-
-**What this DSL does**:
-- When a new `order` is created and its `status = "paid"`, it sends the order to `fulfillment` and `email` actions.
-- When an `order` is updated and `status = "paid" AND total > 500`, it updates its status to `"premium"` and notifies the VIP team.
-- Otherwise, if the `status = "paid"` but `total <= 500`, it sends a `standard_confirmation` email.
-
-### Defining Action Handlers
-
-You must provide the `context.actions` object that knows how to perform the actions defined in the DSL. For example:
-
-```js
-const context = {
-  // You might store database clients, email services, or API clients here
-  dbClient: myDatabaseClient,
-  emailService: myEmailClient,
-  notificationService: myNotificationService,
-  
-  actions: {
-    update: async (ctx, entity, field, value) => {
-      // Perform a database update
-      await ctx.dbClient.updateEntityField(entity, field, value);
-    },
-    send: async (ctx, entity, destination) => {
-      if (destination === 'action.email') {
-        await ctx.emailService.send({
-          to: 'customer@example.com',
-          subject: 'Your Order is Paid',
-          body: `Order ${entity} is now ready for fulfillment.`
-        });
-      } else if (destination === 'action.fulfillment') {
-        await ctx.notificationService.requestFulfillment(entity);
-      } else if (destination === 'action.email.standard_confirmation') {
-        await ctx.emailService.send({
-          to: 'customer@example.com',
-          subject: 'Your Order Confirmation',
-          body: `Order ${entity} has been updated and is confirmed.`
-        });
-      } else if (destination === 'action.notify.vip_team') {
-        await ctx.notificationService.notifyTeam('vip_team', `Premium order: ${entity}`);
-      }
-    },
-    notify: async (ctx, target) => {
-      await ctx.notificationService.notifyTeam(target, 'An event occurred');
-    },
-    log: (ctx, message) => {
-      console.log(`Log: ${message}`);
-    },
-    invoke: (ctx, functionName, args) => {
-      // If you have a functions map
-      if (ctx.functions && typeof ctx.functions[functionName] === 'function') {
-        return ctx.functions[functionName](...args);
-      } else {
-        console.warn(`No function named ${functionName}`);
-      }
-    },
-    unknown: (ctx, line) => {
-      console.warn(`Unknown action: ${line}`);
-    }
-  }
-};
-```
-
-This is just an example. In a real application, you’ll implement these methods to interact with your database, send emails, call APIs, etc.
-
-### Using the Rule Engine
-
-```js
-const { RuleEngine } = require('./ruleEngine'); // Adjust path if necessary
-const dslScript = require('./dslScript'); // The DSL rules we wrote above
-const context = require('./context'); // The context and actions defined above
-
-// Create the rule engine from the DSL
-const engine = RuleEngine.fromDSL(dslScript);
-
-// Now simulate events:
-(async () => {
-  // New order event
-  await engine.processEvent('NEW', 'order', {status: 'paid'}, context);
-  // This should trigger sending to fulfillment and email.
-
-  // Update order event: high value premium
-  await engine.processEvent('UPDATE', 'order', {status: 'paid', total: 600}, context);
-  // This should update status to premium and notify VIP team.
-
-  // Update order event: standard value
-  await engine.processEvent('UPDATE', 'order', {status: 'paid', total: 100}, context);
-  // This should send standard confirmation email.
-})();
-```
-
-### Understanding the Workflow
-
-1. **Loading DSL**: `RuleEngine.fromDSL(dslScript)` parses and compiles the rules into `Rule` objects.
-2. **Processing Events**: Each time `processEvent(eventType, entity, data, context)` is called:
-   - The engine checks every rule to see if `eventType` and `entity` match.
-   - If conditions (`WHEN` clause) are satisfied, the `THEN` actions run.
-   - If conditions are not met but there’s an `ELSE` clause, those actions run.
-3. **Executing Actions**: Actions call the functions defined in `context.actions`. You are free to integrate these functions with your actual business logic.
-
-### Error Handling & Logging
-
-- If the DSL is malformed, the parser throws an error with a descriptive message.
-- Unknown conditions or actions log warnings but do not crash the application.
-- For real-world scenarios, integrate with a logging framework (like Winston or Pino) and possibly add more robust error handling.
-
-### Extending the DSL
-
-- **Add New Condition Operators**: Modify the `_evaluateCondition` method in `Rule` to support new comparison operators.
-- **Add New Actions**: Add a new function in `context.actions` to handle a custom verb (like `queue`, `archive`, `sync_with_crm`).
-- **Add Utility Functions**: Insert more `invoke` functions in `context.functions` for custom logic (e.g., `calculateDiscount`, `validateAddress`).
-
-### Testing and Validation
-
-- **Unit Testing**: Write tests to ensure that given certain inputs (events, data), the rules produce the correct actions.
-- **Integration Testing**: Validate that the actions actually update databases or send emails as intended when integrated with your real services.
-
-## Conclusion
-
-The `ruleEngine.js` and `DSLParser` approach allow you to write flexible, business-friendly rules and apply them to your data in real-time. By separating the DSL interpretation from the actual actions, you maintain a clean architecture that’s easy to update and maintain as your business logic evolves.
+Here's a **user-friendly guide** on how to write **Business Rules** using your DSL (Domain-Specific Language) parser.
 
 ---
 
-**In summary**:
-- Write your rules in a human-readable DSL.
-- Provide context with `actions` that know how to perform the tasks.
-- Call `processEvent()` whenever you need to execute those rules in response to application events.
+# **📖 How to Write Business Rules Using the DSL Parser**
+
+## **1️⃣ Introduction**
+The **Business Rules DSL** allows you to define conditions and actions for modifying API responses **without writing code**. You can apply rules to different API endpoints, modify data before it's returned, and enforce custom logic.
+
+### **🛠️ Basic Structure of a Business Rule**
+Each rule follows this format:
+
+```dsl
+IF <HTTP_METHOD> <RESOURCE> [WHEN <CONDITIONS>] THEN
+    <ACTIONS>
+ELSE IF <OTHER_CONDITIONS>
+    <ACTIONS>
+ELSE
+    <ACTIONS>
+```
+---
+
+## **2️⃣ Defining Basic Rules**
+### **✅ Example: Modify Video API Responses**
+This rule updates **video data** when users fetch videos via the API:
+
+```dsl
+IF GET videos THEN
+    update heroUrl = http://localhost:5173/stream/${data.videoID}
+    update id = ${data.videoID}
+    update labels = ${data.name}
+    update posterUrl = http://localhost:5173/img/${data.hero}
+    update mediaType = video
+```
+
+### **🔍 Explanation**
+- When a user **GETs `/api/videos` or `/api/videos/:id`**, this rule will run.
+- The rule **updates** the following fields:
+  - **heroUrl** → Points to a streaming service.
+  - **posterUrl** → Generates an image URL.
+  - **id** and **labels** → Uses values from the API response.
+
+---
+
+## **3️⃣ Adding Conditions**
+Use `WHEN` to apply rules **only when specific conditions are met**.
+
+### **✅ Example: Show Free Videos Only for Guests**
+```dsl
+IF GET videos WHEN data.isPremium = false THEN
+    update availability = "Free"
+```
+### **🔍 Explanation**
+- **Applies only when `isPremium = false`** (meaning the video is free).
+- Updates `availability` to `"Free"`.
+- If `isPremium = true`, the rule **won’t apply**.
+
+---
+
+## **4️⃣ Using ELSE IF & ELSE**
+You can define multiple conditions **for different scenarios**.
+
+### **✅ Example: Show Different Messages for Premium & Free Videos**
+```dsl
+IF GET videos WHEN data.isPremium = true THEN
+    update message = "This is a premium video. Please subscribe."
+ELSE IF data.isPremium = false
+    update message = "Enjoy this free video!"
+ELSE
+    update message = "Video status unknown."
+```
+### **🔍 Explanation**
+- If the **video is premium**, users see a **subscription message**.
+- If the **video is free**, users see **a free video message**.
+- If neither condition matches, it sets a **default message**.
+
+---
+
+## **5️⃣ Applying Rules to Other API Methods**
+The DSL supports **other HTTP methods**, such as `POST`, `PUT`, `DELETE`.
+
+### **✅ Example: Modify Data When a New User Registers**
+```dsl
+IF POST users THEN
+    update welcomeMessage = "Welcome, ${data.username}!"
+    update accountStatus = "Pending Verification"
+```
+### **🔍 Explanation**
+- When a new user **registers (`POST /api/users`)**, the rule:
+  - **Adds a welcome message.**
+  - **Sets account status to "Pending Verification".**
+
+---
+
+## **6️⃣ Working with Arrays**
+You can modify **list responses** (multiple items).
+
+### **✅ Example: Apply Discount to All Products**
+```dsl
+IF GET products WHEN data.category = "electronics" THEN
+    update price = ${data.price} * 0.9
+```
+### **🔍 Explanation**
+- If the product **category is `electronics`**, the price is **reduced by 10%**.
+
+---
+
+## **7️⃣ Working with Nested Data**
+If your API response contains **nested objects**, use **dot notation**.
+
+### **✅ Example: Update User Profile Data**
+```dsl
+IF GET users THEN
+    update profile.avatar = "https://cdn.example.com/avatars/${data.userID}.png"
+    update profile.rank = "New Member"
+```
+### **🔍 Explanation**
+- **`profile.avatar`** → Sets a custom avatar URL.
+- **`profile.rank`** → Sets a **default rank** for new users.
+
+---
+
+## **8️⃣ Combining Multiple Conditions**
+You can use `AND` / `OR` to combine multiple conditions.
+
+### **✅ Example: Custom Welcome Message for VIP Users**
+```dsl
+IF GET users WHEN data.accountType = "VIP" AND data.age >= 18 THEN
+    update welcomeMessage = "Welcome VIP! Enjoy exclusive benefits."
+```
+### **🔍 Explanation**
+- Only applies if:
+  - `accountType` is `"VIP"`, **AND**
+  - The user is **18 or older**.
+
+---
+
+## **9️⃣ Handling Missing Data (NULL Values)**
+You can check if a value **is missing (NULL)**.
+
+### **✅ Example: Set Default Avatar If None Exists**
+```dsl
+IF GET users WHEN data.profile.avatar IS NULL THEN
+    update profile.avatar = "https://cdn.example.com/default-avatar.png"
+```
+### **🔍 Explanation**
+- If `profile.avatar` is **missing (NULL)**, it sets a **default avatar**.
+
+---
+
+## **🔟 Deleting Fields**
+You can remove **fields from responses**.
+
+### **✅ Example: Hide Admin Emails from Public Responses**
+```dsl
+IF GET users WHEN data.role = "admin" THEN
+    update email = null
+```
+### **🔍 Explanation**
+- If a user has `role = "admin"`, their **email is removed from the response**.
+
+---
+
+# **🎯 Summary: DSL Cheat Sheet**
+| **Command**       | **Purpose** |
+|-------------------|------------|
+| `IF GET <resource>` | Apply rule on GET requests. |
+| `IF POST <resource>` | Apply rule on POST requests. |
+| `WHEN <conditions>` | Specify when rule applies. |
+| `ELSE IF <conditions>` | Add alternative conditions. |
+| `ELSE` | Default action if no conditions match. |
+| `update field = value` | Modify response fields. |
+| `update field = null` | Remove a field from response. |
+| `data.field` | Access API response fields. |
+| `data.field IS NULL` | Check if a field is missing. |
+| `data.field IN [val1, val2]` | Check if a value is in a list. |
+
+---
+
+# **🚀 Final Notes**
+✅ **Easy to Use** – No coding required.  
+✅ **Flexible** – Works for multiple API endpoints.  
+✅ **Powerful** – Modify data dynamically before returning it.  
+
+Now, you’re ready to **write custom Business Rules** in your API using DSL! 🚀🎯
