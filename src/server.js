@@ -23,7 +23,7 @@ require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const requestLogger = require('./middleware/requestLoggingMiddleware');
-
+const createGlobalValidationMiddleware = require('./middleware/validationMiddleware');
 // Constants for configuration
 const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -2809,9 +2809,10 @@ class Adaptus2Server {
             this.registerFileUploadEndpoints();
             this.registerStaticEndpoints();
             this.initializeOptionalModules(this.app);
+            createGlobalValidationMiddleware();
             
             await preCacheGetEndpoints(this.categorizedConfig.databaseRoutes);
-       
+            
             await this.setupGraphQL();
            
             this.setupReloadHandler(this.configPath);
