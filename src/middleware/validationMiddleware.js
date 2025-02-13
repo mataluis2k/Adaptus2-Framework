@@ -55,11 +55,13 @@ function createGlobalValidationMiddleware() {
     // Get the latest apiConfig
     const apiConfig = getApiConfig();
     
+    
     if (!apiConfig || !Array.isArray(apiConfig)) {
         console.warn('Invalid or missing apiConfig. Validation middleware will be disabled.');
         return (req, res, next) => next();
     }
 
+  
     apiConfig.forEach(endpoint => {
         if (endpoint.validation && endpoint.route && endpoint.allowMethods) {
             routeConfigMap.set(endpoint.route, {
@@ -71,14 +73,17 @@ function createGlobalValidationMiddleware() {
 
     return (req, res, next) => {
         // Get the route and method from the request
-        const route = req.path;
+        const route = req.path.split('/').filter(Boolean)[1]; // Extracts first segment after root
         const method = req.method;
         
         // Get endpoint config for this route
         const endpointConfig = routeConfigMap.get(route);
+
+        console.log('endpointConfig', endpointConfig);
         
         // If no config exists or method not allowed, skip validation
         if (!endpointConfig || !endpointConfig.allowMethods.includes(method)) {
+            console.log(`Skipping validation for ${method} ${route} ${!endpointConfig ? ' - No config found' : ''}`);
             return next();
         }
 
@@ -89,7 +94,7 @@ function createGlobalValidationMiddleware() {
         let dataToValidate;
         switch (method) {
             case 'GET':
-                dataToValidate = req.query;
+                dataToValidate = { ...req.query, ...req.params };
                 break;
             case 'POST':
             case 'PUT':
@@ -105,10 +110,15 @@ function createGlobalValidationMiddleware() {
                 return next();
         }
         
+
+        console.log(`Validating ${method} ${route}`, { data: dataToValidate },routeConfigMap );
         // Validate the data
-        const { error } = schema.validate(dataToValidate, { abortEarly: false });
+       // Validate the data with convert: false
+        const { error } = schema.validate(dataToValidate, { abortEarly: false, convert: false });
+
         
         if (error) {
+            console.log(`Validation failed for ${method} ${route}:`, error.details);
             // Map each error detail to include custom error codes if available
             const formattedErrors = error.details.map(detail => {
                 const field = detail.path[0];

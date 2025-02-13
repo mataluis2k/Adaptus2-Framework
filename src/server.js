@@ -2815,22 +2815,29 @@ class Adaptus2Server {
             this.setupDependencies();
             this.setupPluginLoader();
             autoloadPlugins(this.pluginManager);
+                       // Register validation middleware globally
+                       const validationMiddleware = createGlobalValidationMiddleware();
+                       this.app.use(validationMiddleware());
             this.registerAnalyticsRoutes();
             this.registerDevTools();
             setupRag(this.apiConfig);
             extendContext();
             initializeRules();
             this.registerMiddleware();
+            
+ 
+
             this.registerRoutes();
             this.registerProxyEndpoints();
             this.registerDynamicEndpoints();
             this.registerFileUploadEndpoints();
             this.registerStaticEndpoints();
-            this.initializeOptionalModules(this.app);
-            createGlobalValidationMiddleware();
+            this.initializeOptionalModules(this.app);            
+
+
     
             const preCache = process.env.DBPRECACHE === 'true' || false ;
-            if(process.env.DBPRECACHE === 'true') {
+            if(preCache === 'true') {
                 await preCacheGetEndpoints(this.categorizedConfig.databaseRoutes);
             }
             await this.setupGraphQL();
