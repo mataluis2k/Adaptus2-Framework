@@ -1414,8 +1414,10 @@ function buildFilterClause(filterObj, dbTable) {
 function initializeRules() {
     try {
 
+        if (require.cache[require.resolve(rulesConfigPath)]) {
+            delete require.cache[require.resolve(rulesConfigPath)];
+        }
         //DSLParser.autoRegisterFromContext(globalContext);
-
         const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
         
         // Use RuleEngine's fromDSL to initialize the engine properly
