@@ -268,41 +268,41 @@ globalContext.actions.log = (ctx, action) => {
     }
 };
 
-globalContext.actions.response = (ctx, action) => {
-    try {
-        const consolelog = require('./modules/logger');
-        const { key = "data" } = action;
+// globalContext.actions.response = (ctx, action) => {
+//     try {
+//         const consolelog = require('./modules/logger');
+//         const { key = "data" } = action;
 
-        if (!ctx.data[key]) {
-            ctx.data[key] = {};
-            consolelog.log('Response Object:', {
-                status: 'initialized',
-                key: key,
-                timestamp: new Date().toISOString()
-            });
-        } else {
-            consolelog.log('Response Object:', {
-                status: 'exists',
-                key: key,
-                timestamp: new Date().toISOString()
-            });
-        }
+//         if (!ctx.data[key]) {
+//             ctx.data[key] = {};
+//             consolelog.log('Response Object:', {
+//                 status: 'initialized',
+//                 key: key,
+//                 timestamp: new Date().toISOString()
+//             });
+//         } else {
+//             consolelog.log('Response Object:', {
+//                 status: 'exists',
+//                 key: key,
+//                 timestamp: new Date().toISOString()
+//             });
+//         }
 
-        return { success: true, message: `Response object is ready under key: ${key}` };
-    } catch (error) {
-        try {
-            const consolelog = require('./modules/logger');
-            consolelog.error('Error in action.response:', {
-                error: error.stack || error.message,
-                timestamp: new Date().toISOString()
-            });
-        } catch (loggingError) {
-            console.error('Failed to log response error:', loggingError);
-            console.error('Original error:', error);
-        }
-        throw error;
-    }
-};
+//         return response;
+//     } catch (error) {
+//         try {
+//             const consolelog = require('./modules/logger');
+//             consolelog.error('Error in action.response:', {
+//                 error: error.stack || error.message,
+//                 timestamp: new Date().toISOString()
+//             });
+//         } catch (loggingError) {
+//             console.error('Failed to log response error:', loggingError);
+//             console.error('Original error:', error);
+//         }
+//         throw error;
+//     }
+// };
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
             const { data } = params;
@@ -343,6 +343,13 @@ globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
 };
 
+globalContext.actions.response = (ctx, params) => {
+    const { key, data } = params;    
+    console.log(`[RESPONSE]: Data stored under key: ${data}`);
+    response.setResponse(600, "done", null, data, 'response');
+    return response;    
+};
+
 globalContext.actions.end = (ctx, params) => {
     console.log('[END]: End of action sequence');
     response.setResponse(600, null, null, null, 'END');
@@ -365,6 +372,10 @@ function flattenResolvers(resolvers) {
     return flatResolvers;
 }
 
+async function clearRedisCache() {
+    await redis.flushall();
+    console.log("Redis cache cleared!");
+}
 
 function findArrayWithKeys(data, requiredKeys) {
     if (Array.isArray(data)) {
@@ -453,7 +464,7 @@ function registerProxyEndpoints(app, apiConfig) {
             // Register routes for each method in allowMethods
             allowMethods.forEach((method) => {
                 console.log(`Registering proxy for route: ${route}, method: ${method}, targetUrl: ${targetUrl}`);
-                console.log(`Auth for route ${route}:`, auth); // 
+                consolelog.log(`Auth for route ${route}:`, auth); // 
                 app[method.toLowerCase()](
                     route,
                     authenticateMiddleware(auth),
@@ -625,9 +636,9 @@ function registerStaticRoute(app, endpoint) {
 }
 
 const registerFileUploadEndpoint = (app, config) => {
-    console.log(config);
+    consolelog.log(config);
     const { route, dbTable, allowWrite, fileUpload , acl, auth } = config;
-    console.log(fileUpload);
+    consolelog.log(fileUpload);
     const upload = multer({        
         storage: getMulterStorage(fileUpload.storagePath),
         fileFilter: (req, file, cb) => {
@@ -1278,7 +1289,7 @@ function buildFilterClause(filterObj, dbTable) {
                     res.status(201).json({ message: 'Record created', id: result.insertId });
                 } catch (error) {
                     console.error(`Error in POST ${route}:`, error);
-                    res.status(500).json({ error: 'Internal Server Error' });
+                    res.status(400).json({ error: error.message });
                 }
             });
         }
@@ -1415,6 +1426,7 @@ function initializeRules() {
     try {
 
         //DSLParser.autoRegisterFromContext(globalContext);
+        delete require.cache[require.resolve(rulesConfigPath)];
 
         const dslText = fs.readFileSync(rulesConfigPath, 'utf-8');
         
@@ -1427,7 +1439,8 @@ function initializeRules() {
             // Initialize the rule engine with the parsed rules
             ruleEngine = ruleEngineInstance;
         }
-        console.log(ruleEngine);      
+        consolelog.log(ruleEngine);  
+        globalContext.ruleEngine = ruleEngineInstance.rules;  
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
         console.error('Failed to initialize business rules:', error.message);        
@@ -1829,7 +1842,7 @@ class Adaptus2Server {
                             socket.write(JSON.stringify(this.apiConfig, null, 2));
                             break;   
                         case "showRules":
-                            socket.write(JSON.stringify(this.businessRules, null, 2));
+                            socket.write(JSON.stringify(globalContext.ruleEngine));
                             break;
                         case "nodeInfo":
                             if (args.length < 2) {
@@ -1859,6 +1872,7 @@ class Adaptus2Server {
                         case "configReload":
                             try {                               
                                 consolelog.log('Reloading configuration...');
+                                clearRedisCache();
                                 initializeRules();
                                 this.apiConfig = await loadConfig();
                                 consolelog.log(this.apiConfig);
@@ -2086,7 +2100,7 @@ class Adaptus2Server {
 
                         case "help":                   
                         default:
-                            socket.write("Available commands: version, nodeInfo, showConfig, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
+                            socket.write("Available commands: version, showRules, nodeInfo, showConfig, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
                     }
                 } catch (error) {
                     socket.write(`Error: ${error.message}\n`);
@@ -2453,8 +2467,10 @@ class Adaptus2Server {
 
         // Initialize Firebase Service
         try {
-            new FirebaseService(); // Initialize Firebase
-            console.log('Firebase service initialized successfully');
+            const firebase = new FirebaseService(); // Initialize Firebase
+            if(firebase !== null) { 
+                console.log('Firebase service initialized successfully');
+            }
         } catch (error) {
             console.error('Failed to initialize Firebase service:', error.message);
         }
@@ -2777,7 +2793,7 @@ class Adaptus2Server {
                 consolelog.log('Table initialization complete. Exiting...');
                 process.exit(0);
             }
-    
+            clearRedisCache();
             // Load the API configuration
             this.apiConfig = await loadConfig();
             this.categorizedConfig = categorizeApiConfig(this.apiConfig);
@@ -2810,9 +2826,11 @@ class Adaptus2Server {
             this.registerStaticEndpoints();
             this.initializeOptionalModules(this.app);
             createGlobalValidationMiddleware();
-            
-            await preCacheGetEndpoints(this.categorizedConfig.databaseRoutes);
-            
+    
+            const preCache = process.env.DBPRECACHE === 'true' || false ;
+            if(process.env.DBPRECACHE === 'true') {
+                await preCacheGetEndpoints(this.categorizedConfig.databaseRoutes);
+            }
             await this.setupGraphQL();
            
             this.setupReloadHandler(this.configPath);

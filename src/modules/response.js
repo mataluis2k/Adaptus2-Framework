@@ -14,20 +14,21 @@ const response = {
         this.status = status;
         if(status === 600){
             this.status = 200;
-            return; // we don't want to override a status code that is already set
         }
         this.message = message;
         this.error = error;
-        this.data = data;
+        this.response = data;
         this.module = module;
+        return this;
     },
     Reset: function(){
         console.log('Resetting response');
         this.status = 200;
         this.message = '';
-        this.error = '';
-        this.data = {};
+        this.error = '';        
         this.module = '';
+        this.response = "";
+        return this;
     }
 }
 

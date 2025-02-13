@@ -13,7 +13,7 @@ class DynamicRouteHandler {
      */
     static registerDynamicRoute(app, endpoint) {
         const { route, allowMethods, validation, sqlQuery, businessLogic, response } = endpoint;
-        console.log("Dynaroute:", endpoint);
+        consolelog.log("Dynaroute:", endpoint);
 
         if (!Array.isArray(allowMethods) || allowMethods.length === 0) {
             console.error(`Invalid or missing 'allowMethods' for route ${endpoint}`);

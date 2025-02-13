@@ -21,13 +21,14 @@ async function getDbConnection(config) {
 
     try {
         if (dbType.toLowerCase() === 'mysql') {
-            dbConnections[normalizedDbConnection] = await mysql.createConnection({
+            const mysqlConfig = {
                 host: process.env[`${normalizedDbConnection}_HOST`],
                 user: process.env[`${normalizedDbConnection}_USER`],
                 password: process.env[`${normalizedDbConnection}_PASSWORD`],
                 database: process.env[`${normalizedDbConnection}_DB`],
                 port: process.env[`${normalizedDbConnection}_PORT`] || 3306,
-            });
+            };            
+            dbConnections[normalizedDbConnection] = await mysql.createConnection(mysqlConfig);
         } else if (dbType.toLowerCase() === 'postgres') {
             const client = new Client({
                 host: process.env[`${normalizedDbConnection}_HOST`],

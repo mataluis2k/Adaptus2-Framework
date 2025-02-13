@@ -33,7 +33,7 @@ const authenticateToken = (req, res, next) => {
         return res.status(401).json({ error: 'Unauthorized' }); // Stop execution
     }
     const decoded = jwt.decode(token);
-    console.log('Decoded Token:', decoded);
+   
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
@@ -42,6 +42,7 @@ const authenticateToken = (req, res, next) => {
         }
 
         req.user = user; // Attach user data to the request
+        consolelog.log('Setting User in Context:', user);
         setContext('user', user); // Store user in context
         next(); // Proceed to the next middleware or route handler
     });
