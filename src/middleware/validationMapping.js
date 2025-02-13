@@ -24,6 +24,17 @@ const validationMapping = {
   },
 
   /**
+   * Add validation when the type is Joi.number
+   */
+  number: (schema, value, key) => {
+    if (schema.describe().type === 'number') {
+      return schema.messages({
+        'number.base': `${key} must be a number.`
+      });
+    }
+    return schema;
+  },
+  /**
    * Requires that a field is not empty.
    */
   notEmpty: (schema, value, key) => {

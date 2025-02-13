@@ -35,8 +35,8 @@ class DevToolsRoutes {
         // Validate configuration
         this.router.post('/validate-config', async (req, res) => {
             try {
-                const { configPath, schema } = req.body;
-                const result = await this.devTools.validateConfig(configPath, schema);
+                const { configPath } = req.body;
+                const result = await this.devTools.validateConfig(configPath);
                 res.json(result);
             } catch (error) {
                 res.status(500).json({ error: error.message });
