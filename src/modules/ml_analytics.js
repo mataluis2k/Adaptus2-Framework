@@ -3,7 +3,7 @@ const path = require('path');
 const schedule = require('node-schedule');
 const natural = require('natural'); // Sentiment analysis
 const { kmeans } = require('ml-kmeans'); // Correct import for KMeans
-
+const consolelog = require('./logger');
 const { DBSCAN } = require('density-clustering'); // Anomaly detection
 const { getDbConnection } = require(path.join(__dirname,'db'));
 require('dotenv').config();
@@ -31,9 +31,9 @@ class MLAnalytics {
             this.mlConfig = JSON.parse(mlData);
 
             
-            console.log('ML configuration loaded successfully:', this.mlConfig);
+            consolelog.log('ML configuration loaded successfully:', this.mlConfig);
         } catch (error) {
-            console.error('Error loading configurations:', error.message);
+            consolelog.error('Error loading configurations:', error.message);
             throw new Error('Failed to load configurations');
         }
     }
@@ -79,7 +79,7 @@ class MLAnalytics {
 
         const mainEndpoint = this.mainConfig.find((ep) => ep.dbTable === dbTable);
         if (!mainEndpoint) {
-            console.warn(`Endpoint ${dbTable} not found in main configuration.`);
+            consolelog.warn(`Endpoint ${dbTable} not found in main configuration.`);
             return null;
         }
 
@@ -116,7 +116,7 @@ class MLAnalytics {
         };
 
         // Log the configuration being used
-        console.log(`Configuration for ${dbTable}:`, {
+        consolelog.log(`Configuration for ${dbTable}:`, {
             batchSize: mergedConfig.batchSize,
             samplingRate: mergedConfig.samplingRate,
             sentimentConfig: mergedConfig.sentimentConfig,
@@ -135,19 +135,19 @@ class MLAnalytics {
             const { dbTable, mlmodel } = endpoint;
 
             if (!mlmodel || mlmodel.length === 0) {
-                console.warn(`No ML models configured for endpoint ${endpoint.route}`);
+                consolelog.warn(`No ML models configured for endpoint ${endpoint.route}`);
                 continue;
             }
 
             const connection = await getDbConnection(endpoint);
             if (!connection) {
-                console.error(`Failed to connect to database for ${endpoint.dbConnection}`);
+                consolelog.error(`Failed to connect to database for ${endpoint.dbConnection}`);
                 continue;
             }
 
             const mergedConfig = this.getMergedConfig(dbTable);
             if (!mergedConfig) {
-                console.warn(`Skipping training for ${dbTable} due to missing configuration.`);
+                consolelog.warn(`Skipping training for ${dbTable} due to missing configuration.`);
                 continue;
             }
 
@@ -161,7 +161,7 @@ class MLAnalytics {
             try {
                 // Sampling logic
                 if (samplingRate > 0) {
-                    console.log(`Sampling ${samplingRate * 100}% of data for ${dbTable}`);
+                    consolelog.log(`Sampling ${samplingRate * 100}% of data for ${dbTable}`);
                     const [rows] = await connection.query(
                         `SELECT * FROM ${dbTable} WHERE RAND() < ?`, 
                         [samplingRate]
@@ -174,7 +174,7 @@ class MLAnalytics {
                 let offset = 0;
                 let rows;
 
-                console.log(`Training models for ${dbTable} in batches of ${batchSize}...`);
+                consolelog.log(`Training models for ${dbTable} in batches of ${batchSize}...`);
                 do {
                     const [batch] = await connection.query(
                         `SELECT * FROM ${dbTable} LIMIT ? OFFSET ?`,
@@ -184,11 +184,11 @@ class MLAnalytics {
                     rows = batch;
                     offset += batchSize;
 
-                    console.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
+                    consolelog.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
                     await this.processRows(rows, mlmodel, endpoint, parallelProcessing, incrementalTraining);
                 } while (rows.length === batchSize);
             } catch (error) {
-                console.error(`Error training models for ${dbTable}:`, error.message);
+                consolelog.error(`Error training models for ${dbTable}:`, error.message);
             }
         }
     }
@@ -226,7 +226,7 @@ class MLAnalytics {
             case 'rag':
                 break;
             default:
-                console.warn(`Unsupported ML model type: ${modelType}`);
+                consolelog.warn(`Unsupported ML model type: ${modelType}`);
         }
     }
 
@@ -237,7 +237,7 @@ class MLAnalytics {
         const { handleMissingValues } = require('./ml_utils');
         
         if (!rows || rows.length === 0) {
-            console.warn(`No data provided for sentiment analysis in ${endpoint.dbTable}`);
+            consolelog.warn(`No data provided for sentiment analysis in ${endpoint.dbTable}`);
             return null;
         }
 
@@ -314,7 +314,7 @@ class MLAnalytics {
                         wordCount: words.length
                     };
                 } catch (error) {
-                    console.error(`Error processing row ${row[endpoint.keys[0]]}:`, error);
+                    consolelog.error(`Error processing row ${row[endpoint.keys[0]]}:`, error);
                     return {
                         id: row[endpoint.keys[0]],
                         sentiment: null,
@@ -344,7 +344,7 @@ class MLAnalytics {
                 }
             };
 
-            console.log(`Sentiment model trained for ${endpoint.dbTable}`);
+            consolelog.log(`Sentiment model trained for ${endpoint.dbTable}`);
             return {
                 data: sentimentData,
                 stats,
@@ -357,7 +357,7 @@ class MLAnalytics {
                 }
             };
         } catch (error) {
-            console.error(`Error in sentiment analysis for ${endpoint.dbTable}:`, error);
+            consolelog.error(`Error in sentiment analysis for ${endpoint.dbTable}:`, error);
             return {
                 error: error.message,
                 message: "Failed to train sentiment model"
@@ -372,7 +372,7 @@ class MLAnalytics {
         const { scale, oneHotEncode, handleMissingValues } = require('./ml_utils');
         
         if (!rows || rows.length === 0) {
-            console.warn(`No data provided for recommendations in ${endpoint.dbTable}`);
+            consolelog.warn(`No data provided for recommendations in ${endpoint.dbTable}`);
             return null;
         }
 
@@ -401,7 +401,7 @@ class MLAnalytics {
                 const sampleValue = values.find(v => v !== null && v !== undefined);
                 
                 if (!sampleValue) {
-                    console.warn(`Field ${field} has no valid values, skipping`);
+                    consolelog.warn(`Field ${field} has no valid values, skipping`);
                     continue;
                 }
 
@@ -522,7 +522,7 @@ class MLAnalytics {
                 };
             });
 
-            console.log(`Recommendation model trained for ${endpoint.dbTable}`);
+            consolelog.log(`Recommendation model trained for ${endpoint.dbTable}`);
             return {
                 clusters: enhancedClusters,
                 fieldProcessors: Array.from(fieldProcessors.entries()),
@@ -546,7 +546,7 @@ class MLAnalytics {
                 }
             };
         } catch (error) {
-            console.error(`Error in recommendation model for ${endpoint.dbTable}:`, error);
+            consolelog.error(`Error in recommendation model for ${endpoint.dbTable}:`, error);
             return {
                 error: error.message,
                 message: "Failed to train recommendation model"
@@ -562,7 +562,7 @@ class MLAnalytics {
         const { scale, oneHotEncode, handleMissingValues } = require('./ml_utils');
         
         if (!rows || rows.length === 0) {
-            console.warn(`No data provided for anomaly detection in ${endpoint.dbTable}`);
+            consolelog.warn(`No data provided for anomaly detection in ${endpoint.dbTable}`);
             return null;
         }
 
@@ -588,7 +588,7 @@ class MLAnalytics {
                 const sampleValue = values.find(v => v !== null && v !== undefined);
                 
                 if (!sampleValue) {
-                    console.warn(`Field ${field} has no valid values, skipping`);
+                    consolelog.warn(`Field ${field} has no valid values, skipping`);
                     continue;
                 }
 
@@ -678,7 +678,7 @@ class MLAnalytics {
             const clusters = dbscan.run(processedData, eps, minPts);
 
             if (!clusters || clusters.length === 0) {
-                console.warn(`No clusters formed for ${endpoint.dbTable}. Check dataset and parameters.`);
+                consolelog.warn(`No clusters formed for ${endpoint.dbTable}. Check dataset and parameters.`);
                 return {
                     clusters: [],
                     fieldProcessors: Array.from(fieldProcessors.entries()),
@@ -699,7 +699,7 @@ class MLAnalytics {
                 }
             }
 
-            console.log(`Anomaly detection model trained for ${endpoint.dbTable}`);
+            consolelog.log(`Anomaly detection model trained for ${endpoint.dbTable}`);
             return {
                 clusters,
                 fieldProcessors: Array.from(fieldProcessors.entries()),
@@ -719,7 +719,7 @@ class MLAnalytics {
                 }
             };
         } catch (error) {
-            console.error(`Error in anomaly detection for ${endpoint.dbTable}:`, error);
+            consolelog.error(`Error in anomaly detection for ${endpoint.dbTable}:`, error);
             return {
                 error: error.message,
                 message: "Failed to train anomaly detection model"
@@ -797,7 +797,7 @@ class MLAnalytics {
      */
     scheduleTraining() {
         schedule.scheduleJob('0 0 * * *', () => {
-            console.log('Starting periodic model training...');
+            consolelog.log('Starting periodic model training...');
             this.trainModels();
         });
     }

@@ -42,7 +42,7 @@ class RuleEngineMiddleware {
             const globalContext = this.dependencyManager.context; // Access globalContext from DependencyManager
 
             if (['POST', 'PUT', 'PATCH'].includes(eventType) && req.body) {
-                response.Reset();
+               // response.Reset();
                 console.log(`Processing inbound ${eventType} on ${entityName} with data:`, req.body);
 
                 try {
