@@ -1,3 +1,4 @@
+// validationMiddleware.js
 const Joi = require('joi');
 const validationMapping = require('./validationMapping');
 const { getApiConfig } = require('../modules/apiConfig');
@@ -45,9 +46,9 @@ function generateValidationSchema(validationRules) {
 }
 
 /**
- * Extracts the base route from a path
- * @param {string} path - The full path
- * @returns {string} - The base route
+ * Extracts the base route from a path.
+ * @param {string} path - The full path.
+ * @returns {string} - The base route.
  */
 function getBaseRoute(path) {
   const basePath = process.env.BASE_PATH || '';
@@ -57,68 +58,75 @@ function getBaseRoute(path) {
   return basePath + segments[1];
 }
 
+// --- Module-level variable to store the route validation config ---
+let routeConfigMap = new Map();
+
 /**
- * Creates a global validation middleware that handles all HTTP methods
- * @returns {Function} Express middleware function
+ * Updates the route validation configuration.
+ * This function should be called whenever the API configuration is reloaded.
+ * @param {Array} apiConfig - The new API configuration array.
+ */
+function updateValidationRules() {
+  const apiConfig = getApiConfig();
+  if (Array.isArray(apiConfig)) {
+      routeConfigMap.clear();
+      apiConfig.forEach(endpoint => {
+        if (endpoint.validation && endpoint.route) {
+          routeConfigMap.set(endpoint.route, {
+            validation: endpoint.validation,
+            allowMethods: endpoint.allowMethods || ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+            keys: endpoint.keys || []
+          });
+          console.log(`Registered validation for route: ${endpoint.route}`);
+        }
+      });
+      console.log('Validation rules updated.');
+    } else {
+      console.error('Invalid API configuration format.');
+    }
+}
+
+/**
+ * Creates a global validation middleware that handles all HTTP methods.
+ * @returns {Function} Express middleware function.
  */
 function createGlobalValidationMiddleware() {
-  // Create a map of routes to their endpoint configs for faster lookup
-  const routeConfigMap = new Map();
-
-  // Get the latest apiConfig
-  const apiConfig = getApiConfig();
-
-  if (!apiConfig || !Array.isArray(apiConfig)) {
-    console.warn('Invalid or missing apiConfig. Validation middleware will be disabled.');
-    return function noopMiddleware(req, res, next) { next(); };
+  // In case updateValidationRules hasn’t been called yet, initialize from the current config.
+  if (!routeConfigMap.size) {    
+      updateValidationRules();
   }
 
-  // Store routes in the config map
-  apiConfig.forEach(endpoint => {
-    if (endpoint.validation && endpoint.route) {
-      routeConfigMap.set(endpoint.route, {
-        validation: endpoint.validation,
-        allowMethods: endpoint.allowMethods || ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-        keys: endpoint.keys || []
-      });
-      console.log(`Registered validation for route: ${endpoint.route}`);
-    }
-  });
-
-  // Create and return the middleware function
   const middleware = function validationMiddleware(req, res, next) {
     try {
       const path = req.path || '';
       const baseRoute = getBaseRoute(path);
       const method = req.method;
 
-      // Find matching route config
+      // Look up the current validation configuration for the route.
       const endpointConfig = routeConfigMap.get(baseRoute);
 
-      // If no config exists or method not allowed, skip validation
+      // If no config exists or the method isn’t allowed, skip validation.
       if (!endpointConfig || !endpointConfig.allowMethods.includes(method)) {
         return next();
       }
 
       console.log(`Validating ${method} ${path} against rules for ${baseRoute}`);
 
-      // Generate schema for the validation rules
+      // Generate schema for the validation rules.
       const { schema, errorMapping } = generateValidationSchema(endpointConfig.validation);
 
       // Determine the key name for the ID (if defined in the keys array)
       const keyField = endpointConfig.keys && endpointConfig.keys.length > 0 ? endpointConfig.keys[0] : 'id';
 
-      // Get data to validate based on request method
+      // Get data to validate based on the request method.
       let dataToValidate = {};
 
       if (method === 'GET') {
-        // Extract ID from URL parameters using the keyField
+        // Extract ID from URL parameters using keyField.
         const segments = path.split('/').filter(Boolean);
         const idParam = segments[segments.length - 1];
 
-        // If there's an ID parameter and a corresponding validation rule exists
         if (idParam && endpointConfig.validation[keyField]) {
-          // Try to convert to number if the validation requires it
           if (endpointConfig.validation[keyField].type === 'number') {
             const numValue = Number(idParam);
             if (isNaN(numValue)) {
@@ -136,7 +144,7 @@ function createGlobalValidationMiddleware() {
           }
         }
 
-        // Add query parameters
+        // Add query parameters.
         Object.assign(dataToValidate, req.query || {});
       } else if (['POST', 'PUT', 'PATCH'].includes(method)) {
         dataToValidate = req.body || {};
@@ -144,8 +152,7 @@ function createGlobalValidationMiddleware() {
 
       console.log('Data to validate:', dataToValidate);
 
-      // Validate the data with strict type checking
-      const { error } = schema.validate(dataToValidate, { 
+      const { error } = schema.validate(dataToValidate, {
         abortEarly: false,
         convert: false,
         allowUnknown: true
@@ -164,7 +171,7 @@ function createGlobalValidationMiddleware() {
         });
 
         const httpCode = formattedErrors[0].httpCode || 400;
-        return res.status(httpCode).json({ 
+        return res.status(httpCode).json({
           errors: formattedErrors,
           method: method,
           path: path
@@ -172,20 +179,23 @@ function createGlobalValidationMiddleware() {
       }
 
       next();
-    } catch (error) {
-      console.error('Validation middleware error:', error);
-      res.status(500).json({ 
+    } catch (err) {
+      console.error('Validation middleware error:', err);
+      res.status(500).json({
         error: 'Internal Server Error',
-        message: process.env.NODE_ENV === 'development' ? error.message : undefined
+        message: process.env.NODE_ENV === 'development' ? err.message : undefined
       });
     }
   };
 
-  // Ensure the middleware is properly named and has the correct length
+  // Optionally set a name/length for the middleware function.
   Object.defineProperty(middleware, 'name', { value: 'validationMiddleware' });
   Object.defineProperty(middleware, 'length', { value: 3 });
 
   return middleware;
 }
 
-module.exports = createGlobalValidationMiddleware;
+module.exports = {
+  createGlobalValidationMiddleware,
+  updateValidationRules
+};

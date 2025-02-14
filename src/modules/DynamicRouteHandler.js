@@ -1,5 +1,5 @@
 const { getDbConnection } = require('./db'); // Your database module
-const validationMiddleware = require('../middleware/validationMiddleware'); // Validation Middleware
+
 const BusinessLogicProcessor = require('./BusinessLogicProcessor'); // Business Logic Processor
 const consolelog = require('./logger');
 const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
@@ -28,12 +28,6 @@ class DynamicRouteHandler {
             }
             if (endpoint.acl) {
                 middlewares.push(aclMiddleware(endpoint.acl));
-            }
-
-
-            // Attach validation middleware if validation rules are defined
-            if (validation) {
-                middlewares.push(validationMiddleware(validation));
             }
 
             // Register the route with the appropriate method

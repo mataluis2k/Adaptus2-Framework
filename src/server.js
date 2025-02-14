@@ -23,7 +23,7 @@ require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const requestLogger = require('./middleware/requestLoggingMiddleware');
-const createGlobalValidationMiddleware = require('./middleware/validationMiddleware');
+const { updateValidationRules , createGlobalValidationMiddleware }= require('./middleware/validationMiddleware');
 
 
 // Constants for configuration
@@ -1855,6 +1855,7 @@ class Adaptus2Server {
                                 this.apiConfig = await loadConfig();
                                 consolelog.log(this.apiConfig);
                                 this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
+                                updateValidationRules();
                         
                                 // CLEAR ALL ROUTES (Fixes issue)
                                 this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
