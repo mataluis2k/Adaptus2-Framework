@@ -24,6 +24,8 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const requestLogger = require('./middleware/requestLoggingMiddleware');
 const createGlobalValidationMiddleware = require('./middleware/validationMiddleware');
+
+
 // Constants for configuration
 const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -855,7 +857,10 @@ function registerRoutes(app, apiConfig) {
 
     apiConfig.forEach((endpoint, index) => {
         const { route, dbTable, dbConnection: connString, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache, auth, authentication, encryption } = endpoint;
-        
+        const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
+        const unauthorized = (endpoint.errorCodes && endpoint.errorCodes['unauthorized']) 
+            ? endpoint.errorCodes['unauthorized'] 
+            : defaultUnauthorized;
         // Validate required configuration
         if (!connString || !dbTable || !route) {
             console.error(`Invalid endpoint configuration at index ${index}:`, {
@@ -1042,7 +1047,7 @@ function buildFilterClause(filterObj, dbTable) {
 app.get(
   `${route}${getParamPath}`,
   authenticateMiddleware(auth),
-  aclMiddleware(acl),
+  aclMiddleware(acl,unauthorized),
   async (req, res) => {
     try {
       console.log("Incoming GET request:", {
@@ -1207,8 +1212,16 @@ app.get(
       let response;
       if (recordId) {
         if (!results.length) {
-          return res.status(404).json({ error: "Record not found" });
-        }
+            if (endpoint.errorCodes && endpoint.errorCodes['notFound']) {
+              const errorConfig = endpoint.errorCodes['notFound'] || { 
+                httpCode: 500, 
+                message: `Missed Configure Error handler, check endpoint ErrorCodes for ${endpoint.route}` 
+              };
+              return res.status(errorConfig.httpCode).json({ error: errorConfig.message, code: errorConfig.code });
+            } else {
+              return res.status(404).json({ error: "Record not found" });
+            }
+          }
         response = results[0];
       } else {
         response = {
@@ -1238,7 +1251,7 @@ app.get(
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl,unauthorized), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -1268,7 +1281,7 @@ app.get(
             app.put(
             `${route}/:${primaryKey}`,
             authenticateMiddleware(auth),
-            aclMiddleware(acl),
+            aclMiddleware(acl,unauthorized),
             async (req, res) => {
                 const recordId = req.params[primaryKey];
                 if (!recordId) {
@@ -1309,7 +1322,7 @@ app.get(
             app.patch(
             `${route}/:${primaryKey}`,
             authenticateMiddleware(auth),
-            aclMiddleware(acl),
+            aclMiddleware(acl,unauthorized),
             async (req, res) => {
                 const recordId = req.params[primaryKey];
                 if (!recordId) {
@@ -1350,7 +1363,7 @@ app.get(
             app.delete(
             `${route}/:${primaryKey}`,
             authenticateMiddleware(auth),
-            aclMiddleware(acl),
+            aclMiddleware(acl,unauthorized),
             async (req, res) => {
                 const recordId = req.params[primaryKey];
                 if (!recordId) {

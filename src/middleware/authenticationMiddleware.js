@@ -2,22 +2,22 @@ const jwt = require('jsonwebtoken');
 const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const consolelog = require('../modules/logger');
 const { setContext } = require('../modules/context');
-
+const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
 /**
  * ACL Middleware: Ensures user has one of the allowed roles.
  */
-const aclMiddleware = (allowedRoles) => {
+const aclMiddleware = (allowedRoles, customMessage = defaultUnauthorized) => {
     return (req, res, next) => {
         if (allowedRoles) {
-            // Ensure `req.user.acl` exists and matches one of the allowed roles
             consolelog.log('ACL Middleware:', req.user);
             const userRole = req.user?.acl; // Adjust based on your user object structure
             if (!userRole || !allowedRoles.includes(userRole)) {
                 consolelog.log('User Denied access, mismatch in ACL Middleware:', allowedRoles);
-                return res.status(403).json({ error: 'Access Denied' });
+                // Use customMessage for the response
+                return res.status(customMessage.httpCode).json({ error: customMessage.message });
             }
         }
-        next(); // Proceed to the next middleware if ACL passes
+        next(); // Proceed if ACL passes
     };
 };
 
