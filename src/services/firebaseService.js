@@ -27,7 +27,7 @@ class FirebaseService {
                     console.log('Service account path:', serviceAccountPath); 
                       // load the service account file
                     serviceAccount = require(serviceAccountPath);
-                    console.log('Service account loaded from file:', serviceAccount );
+                    
                     admin.initializeApp({
                         credential: admin.credential.cert(serviceAccount)
                     });
