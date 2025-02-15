@@ -1728,6 +1728,7 @@ class Adaptus2Server {
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
+        this.app.use(express.json());
         
         if(process.env.CORS_ENABLED === 'true') {
             this.app.use(cors(corsOptions));
