@@ -114,6 +114,10 @@ const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenti
 const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
+const { generateDeterministicUUID } = require('./modules/dynamicUUID');
+
+const SECRET_SALT = process.env.SECRET_SALT || 'abcdc72ac166f371bd7e70a71e9c3182'; 
+
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -226,6 +230,25 @@ const REDIS_CHANNELS = {
 const redisPublisher = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const redisSubscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
+
+
+// Function to store mapping in Redis
+async function storeUUIDMapping(tableName, recordId, uuid) {
+    const key = `uuid_map:${tableName}:${uuid}`;
+    await redis.set(key, recordId);
+}
+
+// Function to retrieve original ID from UUID
+async function getOriginalIdFromUUID(tableName, uuid) {
+
+    const key = `uuid_map:${tableName}:${uuid}`;
+
+    const recordId = await redis.get(key); 
+
+    return recordId || null; // Return null if not found
+}
+
+
 consolelog.log('Current directory:', __dirname);
 
 const graphqlDbType = process.env.DEFAULT_DBTYPE;
@@ -270,41 +293,41 @@ globalContext.actions.log = (ctx, action) => {
     }
 };
 
-// globalContext.actions.response = (ctx, action) => {
-//     try {
-//         const consolelog = require('./modules/logger');
-//         const { key = "data" } = action;
+globalContext.actions.response = (ctx, action) => {
+    try {
+        const consolelog = require('./modules/logger');
+        const { key = "data" } = action;
 
-//         if (!ctx.data[key]) {
-//             ctx.data[key] = {};
-//             consolelog.log('Response Object:', {
-//                 status: 'initialized',
-//                 key: key,
-//                 timestamp: new Date().toISOString()
-//             });
-//         } else {
-//             consolelog.log('Response Object:', {
-//                 status: 'exists',
-//                 key: key,
-//                 timestamp: new Date().toISOString()
-//             });
-//         }
+        if (!ctx.data[key]) {
+            ctx.data[key] = {};
+            consolelog.log('Response Object:', {
+                status: 'initialized',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            consolelog.log('Response Object:', {
+                status: 'exists',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-//         return response;
-//     } catch (error) {
-//         try {
-//             const consolelog = require('./modules/logger');
-//             consolelog.error('Error in action.response:', {
-//                 error: error.stack || error.message,
-//                 timestamp: new Date().toISOString()
-//             });
-//         } catch (loggingError) {
-//             console.error('Failed to log response error:', loggingError);
-//             console.error('Original error:', error);
-//         }
-//         throw error;
-//     }
-// };
+        return response;
+    } catch (error) {
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('Error in action.response:', {
+                error: error.stack || error.message,
+                timestamp: new Date().toISOString()
+            });
+        } catch (loggingError) {
+            console.error('Failed to log response error:', loggingError);
+            console.error('Original error:', error);
+        }
+        throw error;
+    }
+};
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
             const { data } = params;
@@ -345,12 +368,12 @@ globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
 };
 
-globalContext.actions.response = (ctx, params) => {
-    const { key, data } = params;    
-    console.log(`[RESPONSE]: Data stored under key: ${data}`);
-    response.setResponse(600, "done", null, data, 'response');
-    return response;    
-};
+// globalContext.actions.response = (ctx, params) => {
+//     const { key, data } = params;    
+//     console.log(`[RESPONSE]: Data stored under key: ${data}`);
+//     response.setResponse(600, "done", null, data, 'response');
+//     return response;    
+// };
 
 globalContext.actions.end = (ctx, params) => {
     console.log('[END]: End of action sequence');
@@ -1042,211 +1065,192 @@ function buildFilterClause(filterObj, dbTable) {
     };
   }
   
-  const getParamPath =
-  keys && keys.length > 0 ? `/:${keys[0]}?` : "";
-app.get(
-  `${route}${getParamPath}`,
-  authenticateMiddleware(auth),
-  aclMiddleware(acl,unauthorized),
-  async (req, res) => {
-    try {
-      console.log("Incoming GET request:", {
-        route,
-        params: req.params,
-        query: req.query,
-      });
+  const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
 
-      const connection = await getDbConnection(endpoint);
-      if (!connection) {
-        console.error(`Database connection failed for ${endpoint.dbConnection}`);
-        return res
-          .status(500)
-          .json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-      }
-
-      // Sanitize query parameters.
-      const sanitizedQuery = Object.fromEntries(
-        Object.entries(req.query).map(([key, value]) => [
-          key,
-          String(value).replace(/^['"]|['"]$/g, ""),
-        ])
-      );
-
-      // Pagination parameters.
-      const limit = parseInt(sanitizedQuery.limit, 10) || 20;
-      const offset = parseInt(sanitizedQuery.offset, 10) || 0;
-      if (limit < 0 || offset < 0) {
-        console.error("Invalid pagination parameters:", { limit, offset });
-        return res
-          .status(400)
-          .json({ error: "Limit and offset must be non-negative integers" });
-      }
-
-      // Determine if a single record was requested.
-      // Use the key defined in keys if available; otherwise check for a parameter named "id".
-      const recordKey = keys && keys.length > 0 ? keys[0] : "id";
-      const recordId = req.params[recordKey];
-
-      let whereClause = "";
-      let params = [];
-
-      if (recordId) {
-        // Use recordKey in the SQL query.
-        whereClause = `WHERE ${dbTable}.${recordKey} = ?`;
-        params.push(recordId);
-      } else {
-        let filterClause = "";
-        let filterValues = [];
-        if (sanitizedQuery.filter && typeof sanitizedQuery.filter === "object") {
-          const { clause, values } = buildFilterClause(sanitizedQuery.filter, dbTable);
-          filterClause = clause;
-          filterValues = values;
-        }
-
-        const queryKeys = endpoint.keys
-          ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
-          : Object.keys(sanitizedQuery);
-        const equalityClause = queryKeys
-          .map((key) => `${dbTable}.${key} = ?`)
-          .join(" AND ");
-        const equalityValues = queryKeys.map((key) => sanitizedQuery[key]);
-
-        const clauses = [];
-        if (equalityClause) clauses.push(equalityClause);
-        if (filterClause) clauses.push(filterClause);
-        if (clauses.length) {
-          whereClause = `WHERE ${clauses.join(" AND ")}`;
-          params = [...equalityValues, ...filterValues];
-        }
-      }
-
-      // Enforce record ownership if configured.
-      if (endpoint.owner) {
-        const user = getContext('user');
-        if (!user) {
-          return res.status(401).json({ error: "Unauthorized" });
-        }
-        if (whereClause) {
-          whereClause += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-        } else {
-          whereClause = `WHERE ${dbTable}.${endpoint.owner.column} = ?`;
-        }
-        params.push(user[endpoint.owner.tokenField]);
-      }
-
-      // Validate requested fields.
-      const requestedFields = sanitizedQuery.fields
-        ? sanitizedQuery.fields.split(",").filter((field) => endpoint.allowRead.includes(field))
-        : endpoint.allowRead;
-      if (!requestedFields.length) {
-        console.error("No valid fields requested:", sanitizedQuery.fields);
-        return res.status(400).json({ error: "No valid fields requested" });
-      }
-      const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(", ");
-
-      // Process relationships.
-      let joinClause = "";
-      let relatedFields = "";
-      if (Array.isArray(endpoint.relationships)) {
-        endpoint.relationships.forEach((rel) => {
-          const joinType = rel.joinType || "LEFT JOIN";
-          joinClause += ` ${joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
-          if (Array.isArray(rel.fields) && rel.fields.length > 0) {
-            relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(", ")}`;
-          }
+  app.get(
+    `${route}${getParamPath}`,
+    authenticateMiddleware(auth),
+    aclMiddleware(acl, unauthorized),
+    async (req, res) => {
+      try {
+        console.log("Incoming GET request:", {
+          route,
+          params: req.params,
+          query: req.query,
         });
-      }
-      const queryFields = `${fields}${relatedFields}`;
-      const paginationClause = recordId ? "" : `LIMIT ${limit} OFFSET ${offset}`;
-      const dataQuery = `
-        SELECT ${queryFields}
-        FROM ${dbTable}
-        ${joinClause}
-        ${whereClause}
-        ${paginationClause}
-      `;
-      const countQuery = `
-        SELECT COUNT(*) as totalCount
-        FROM ${dbTable}
-        ${joinClause}
-        ${whereClause}
-      `;
-
-      const cacheKey = `cache:${route}:${JSON.stringify(req.params)}:${JSON.stringify(req.query)}`;
-      if (endpoint.cache === 1) {
-        const cachedData = await redis.get(cacheKey);
-        if (cachedData) {
-          console.log("Cache hit for key:", cacheKey);
-          return res.json(JSON.parse(cachedData));
+  
+        const connection = await getDbConnection(endpoint);
+        if (!connection) {
+          console.error(`Database connection failed for ${endpoint.dbConnection}`);
+          return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
         }
-      }
-      console.log("Cache miss or caching disabled. Executing queries.");
-
-      let totalCount = 0;
-      if (!recordId) {
-        if (whereClause.trim() === "") {
-          const [tables] = await connection.execute(
-            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
-            ["table_stats"]
-          );
-          if (tables.length > 0) {
-            const approxQuery = "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
-            try {
-              const [approxResult] = await connection.execute(approxQuery, [dbTable]);
-              totalCount = approxResult[0]?.totalCount || 0;
-            } catch (err) {
-              console.error("Error executing approximate count query:", err);
-              totalCount = 0;
+  
+        // Sanitize query parameters.
+        const sanitizedQuery = Object.fromEntries(
+          Object.entries(req.query).map(([key, value]) => [
+            key,
+            String(value).replace(/^['"]|['"]$/g, ""),
+          ])
+        );
+  
+        // Pagination parameters.
+        const limit = parseInt(sanitizedQuery.limit, 10) || 20;
+        const offset = parseInt(sanitizedQuery.offset, 10) || 0;
+        if (limit < 0 || offset < 0) {
+          console.error("Invalid pagination parameters:", { limit, offset });
+          return res.status(400).json({ error: "Limit and offset must be non-negative integers" });
+        }
+  
+        // Determine if a single record was requested.
+        const recordKey = keys && keys.length > 0 ? keys[0] : "id";
+        let recordId = req.params[recordKey];
+  
+        let whereClause = "";
+        let params = [];
+  
+        if (recordId) {
+          // Convert UUID back to original ID if needed.
+          if (endpoint.uuidMapping) {
+            const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+            if (!decodedId) {
+              return res.status(400).json({ error: "Invalid UUID provided" });
             }
-          } else {
-            console.log("table_stats table not found; disabling record count.");
-            totalCount = 0;
+            recordId = decodedId;
           }
+  
+          // Use recordKey in the SQL query.
+          whereClause = `WHERE ${dbTable}.${recordKey} = ?`;
+          params.push(recordId);
         } else {
+          let filterClause = "";
+          let filterValues = [];
+          if (sanitizedQuery.filter && typeof sanitizedQuery.filter === "object") {
+            const { clause, values } = buildFilterClause(sanitizedQuery.filter, dbTable);
+            filterClause = clause;
+            filterValues = values;
+          }
+  
+          const queryKeys = endpoint.keys
+            ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
+            : Object.keys(sanitizedQuery);
+          const equalityClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(" AND ");
+          const equalityValues = queryKeys.map((key) => sanitizedQuery[key]);
+  
+          const clauses = [];
+          if (equalityClause) clauses.push(equalityClause);
+          if (filterClause) clauses.push(filterClause);
+          if (clauses.length) {
+            whereClause = `WHERE ${clauses.join(" AND ")}`;
+            params = [...equalityValues, ...filterValues];
+          }
+        }
+  
+        // Enforce record ownership if configured.
+        if (endpoint.owner) {
+          const user = getContext("user");
+          if (!user) {
+            return res.status(401).json({ error: "Unauthorized" });
+          }
+          whereClause += whereClause ? ` AND ${dbTable}.${endpoint.owner.column} = ?` : `WHERE ${dbTable}.${endpoint.owner.column} = ?`;
+          params.push(user[endpoint.owner.tokenField]);
+        }
+  
+        // Validate requested fields.
+        const requestedFields = sanitizedQuery.fields
+          ? sanitizedQuery.fields.split(",").filter((field) => endpoint.allowRead.includes(field))
+          : endpoint.allowRead;
+        if (!requestedFields.length) {
+          console.error("No valid fields requested:", sanitizedQuery.fields);
+          return res.status(400).json({ error: "No valid fields requested" });
+        }
+        const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(", ");
+  
+        // Process relationships.
+        let joinClause = "";
+        let relatedFields = "";
+        if (Array.isArray(endpoint.relationships)) {
+          endpoint.relationships.forEach((rel) => {
+            const joinType = rel.joinType || "LEFT JOIN";
+            joinClause += ` ${joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
+            if (Array.isArray(rel.fields) && rel.fields.length > 0) {
+              relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(", ")}`;
+            }
+          });
+        }
+        const queryFields = `${fields}${relatedFields}`;
+        const paginationClause = recordId ? "" : `LIMIT ${limit} OFFSET ${offset}`;
+        const dataQuery = `
+          SELECT ${queryFields}, ${recordKey} as originalId
+          FROM ${dbTable}
+          ${joinClause}
+          ${whereClause}
+          ${paginationClause}
+        `;
+        const countQuery = `
+          SELECT COUNT(*) as totalCount
+          FROM ${dbTable}
+          ${joinClause}
+          ${whereClause}
+        `;
+  
+        const cacheKey = `cache:${route}:${JSON.stringify(req.params)}:${JSON.stringify(req.query)}`;
+        if (endpoint.cache === 1) {
+          const cachedData = await redis.get(cacheKey);
+          if (cachedData) {
+            console.log("Cache hit for key:", cacheKey);
+            return res.json(JSON.parse(cachedData));
+          }
+        }
+        console.log("Cache miss or caching disabled. Executing queries.");
+  
+        let totalCount = 0;
+        if (!recordId) {
           const [countResult] = await connection.execute(countQuery, params);
           totalCount = countResult[0]?.totalCount || 0;
         }
-      }
-
-      const [results] = await connection.execute(dataQuery, params);
-      let response;
-      if (recordId) {
-        if (!results.length) {
-            if (endpoint.errorCodes && endpoint.errorCodes['notFound']) {
-              const errorConfig = endpoint.errorCodes['notFound'] || { 
-                httpCode: 500, 
-                message: `Missed Configure Error handler, check endpoint ErrorCodes for ${endpoint.route}` 
-              };
-              return res.status(errorConfig.httpCode).json({ error: errorConfig.message, code: errorConfig.code });
-            } else {
-              return res.status(404).json({ error: "Record not found" });
-            }
+  
+        const [results] = await connection.execute(dataQuery, params);
+  
+        // Convert IDs to UUIDs before returning response
+        if (endpoint.uuidMapping) {
+          results.forEach((record) => {
+            record.uuid = generateDeterministicUUID(dbTable, record.originalId, SECRET_SALT);
+            storeUUIDMapping(dbTable, record.originalId, record.uuid)
+            delete record.originalId;
+            delete record[recordKey]; 
+          });
+        }
+  
+        let response;
+        if (recordId) {
+          if (!results.length) {
+            return res.status(404).json({ error: "Record not found" });
           }
-        response = results[0];
-      } else {
-        response = {
-          data: results,
-          metadata: {
-            totalRecords: totalCount,
-            limit,
-            offset,
-            totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
-          },
-        };
+          response = results[0];
+        } else {
+          response = {
+            data: results,
+            metadata: {
+              totalRecords: totalCount,
+              limit,
+              offset,
+              totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
+            },
+          };
+        }
+  
+        if (endpoint.cache === 1) {
+          console.log("Caching response for key:", cacheKey);
+          await redis.set(cacheKey, JSON.stringify(response), "EX", 300);
+        }
+        res.json(response);
+      } catch (error) {
+        console.error(`Error in GET ${route}:`, error.stack);
+        res.status(500).json({ error: error.message });
       }
-
-      if (endpoint.cache === 1) {
-        console.log("Caching response for key:", cacheKey);
-        await redis.set(cacheKey, JSON.stringify(response), "EX", 300);
-      }
-      res.json(response);
-    } catch (error) {
-      console.error(`Error in GET ${route}:`, error.stack);
-      res.status(500).json({ error: error.message });
     }
-  }
-);
-
+  );
+  
     
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
@@ -1272,129 +1276,164 @@ app.get(
             });
         }
                 // For endpoints that require a primary key (PUT, PATCH, DELETE), register them only if keys is defined.
-        if (keys && keys.length > 0) {
-            const primaryKey = keys[0];
-
-            // *******************************
-            // PUT endpoint adjustments
-            // *******************************
-            app.put(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl,unauthorized),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                if (keys && keys.length > 0) {
+                    const primaryKey = keys[0];
+                
+                    // *******************************
+                    // PUT Endpoint (Update)
+                    // *******************************
+                    app.put(
+                        `${route}/:${primaryKey}`,
+                        authenticateMiddleware(auth),
+                        aclMiddleware(acl, unauthorized),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
+                            if (writableFields.length === 0) {
+                                return res.status(400).json({ error: 'No writable fields provided' });
+                            }
+                
+                            const values = writableFields.map((key) => req.body[key]);
+                            const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
+                            let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+                            const params = [...values, recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record updated' });
+                            } catch (error) {
+                                console.error(`Error in PUT ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                
+                    // *******************************
+                    // PATCH Endpoint (Partial Update)
+                    // *******************************
+                    app.patch(
+                        `${route}/:${primaryKey}`,
+                        authenticateMiddleware(auth),
+                        aclMiddleware(acl, unauthorized),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
+                            if (writableFields.length === 0) {
+                                return res.status(400).json({ error: 'No writable fields provided' });
+                            }
+                
+                            const values = writableFields.map((key) => req.body[key]);
+                            const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
+                            let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+                            const params = [...values, recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record partially updated' });
+                            } catch (error) {
+                                console.error(`Error in PATCH ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                
+                    // *******************************
+                    // DELETE Endpoint
+                    // *******************************
+                    app.delete(
+                        `${route}/:${primaryKey}`,
+                        authenticateMiddleware(auth),
+                        aclMiddleware(acl, unauthorized),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            let query = `DELETE FROM ${dbTable} WHERE ${primaryKey} = ?`;
+                            const params = [recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record deleted' });
+                            } catch (error) {
+                                console.error(`Error in DELETE ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                } else {
+                    console.log(`Skipping PUT, PATCH, DELETE for ${route} as no keys are defined.`);
                 }
-                const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
-                if (writableFields.length === 0) {
-                return res.status(400).json({ error: 'No writable fields provided' });
-                }
-                const values = writableFields.map((key) => req.body[key]);
-                const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
-                const params = [...values, recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record updated' });
-                } catch (error) {
-                console.error(`Error in PUT ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-
-            // *******************************
-            // PATCH endpoint adjustments
-            // *******************************
-            app.patch(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl,unauthorized),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
-                }
-                const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
-                if (writableFields.length === 0) {
-                return res.status(400).json({ error: 'No writable fields provided' });
-                }
-                const values = writableFields.map((key) => req.body[key]);
-                const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
-                const params = [...values, recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record partially updated' });
-                } catch (error) {
-                console.error(`Error in PATCH ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-
-            // *******************************
-            // DELETE endpoint adjustments
-            // *******************************
-            app.delete(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl,unauthorized),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
-                }
-                let query = `DELETE FROM ${dbTable} WHERE ${primaryKey} = ?`;
-                const params = [recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record deleted' });
-                } catch (error) {
-                console.error(`Error in DELETE ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-        } else {
-            // Optionally, log that update/delete operations are skipped because no keys are defined.
-            console.log(`Skipping PUT, PATCH, DELETE for ${route} as no keys are defined.`);
-        }
+                
     });
 }
 
