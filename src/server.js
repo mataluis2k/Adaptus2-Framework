@@ -1129,13 +1129,37 @@ function buildFilterClause(filterObj, dbTable) {
             filterClause = clause;
             filterValues = values;
           }
+            // If UUID mapping is enabled and the query contains a "uuid" parameter,
+            // assign it to the primary key field (keys[0]) and remove the "uuid" key.
+            if (endpoint.uuidMapping && sanitizedQuery.uuid !== undefined) {
+                sanitizedQuery[endpoint.keys[0]] = sanitizedQuery.uuid;
+                delete sanitizedQuery.uuid;
+            }
   
           const queryKeys = endpoint.keys
             ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
             : Object.keys(sanitizedQuery);
           const equalityClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(" AND ");
-          const equalityValues = queryKeys.map((key) => sanitizedQuery[key]);
-  
+          const equalityValues = [];
+          for (const key of queryKeys) {
+            let value = sanitizedQuery[key];
+            // Only convert the value if this key is the primary key.
+            if (endpoint.uuidMapping && key === (endpoint.keys && endpoint.keys[0])) {
+              const decodedValue = await getOriginalIdFromUUID(dbTable, value);
+              if (!decodedValue) {                
+                if(endpoint.errorCodes.notFound){
+                    return res.status(endpoint.errorCodes.notFound.httpCode).json({ error: endpoint.errorCodes
+                        .notFound.message });
+                }
+                return res
+                  .status(400)
+                  .json({ error: `Sorry, record not Found` });
+              }
+              equalityValues.push(decodedValue);
+            } else {
+              equalityValues.push(value);
+            }
+          }
           const clauses = [];
           if (equalityClause) clauses.push(equalityClause);
           if (filterClause) clauses.push(filterClause);
