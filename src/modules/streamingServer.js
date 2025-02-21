@@ -50,6 +50,15 @@ function profileToOutputOptions(profile) {
 const ffmpegOptions = profileToOutputOptions(selectedProfile || ffmpegProfiles["mediumBandwidth"]);
 
 const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
+// Function to retrieve original ID from UUID
+async function getOriginalIdFromUUID(tableName, uuid) {
+
+    const key = `uuid_map:${tableName}:${uuid}`;
+
+    const recordId = await redis.get(key); 
+
+    return recordId || null; // Return null if not found
+}
 
 const getAsync = async (cacheKey) => {
     return await redis.get(cacheKey);
@@ -91,6 +100,11 @@ class StreamingServer {
 
     async getVideoById(videoID) {
         // Attempt to get video details from cache first
+        //Check if videoID is UUID and get the original ID
+        const originalId = await getOriginalIdFromUUID('video_catalog', videoID);
+        if (originalId) {
+            videoID = originalId;
+        }
         var video = await getAsync(videoID);
         if (video) {
             return JSON.parse(video);

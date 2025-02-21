@@ -21,23 +21,29 @@ class SnowflakeAuditModule {
 
             const query = `
                 SELECT 
-                    a.created_at, rr.slug, a.old_values, a.new_values,  
-                    pr.weight, tt.display_count,
-                    (tt.conversion_count * 1.0) / tt.display_count AS CVR,
-                    a.auditable_id
-                FROM FIVETRAN_DATABASE.LE_PROD_PUBLIC.AUDITS a
-                JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.PAGE_ROUTES pr 
-                    ON a.auditable_id = pr.page_id
-                JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.ROUTES rr 
-                    ON pr.route_id = rr.id
-                JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.SPLIT_TEST_TALLIES tt 
-                    ON pr.page_id = tt.page_id
-                WHERE a.auditable_type = 'pages'
-                  AND a.created_at > ?
-                  AND pr.weight > 0 
-                  AND tt.display_count > 0
-                ORDER BY tt.display_count DESC;
-            `;
+                a.created_at, 
+                rr.slug, 
+                a.old_values, 
+                a.new_values,  
+                pr.weight, 
+                tt.display_count,
+                (tt.conversion_count * 1.0) / tt.display_count AS CVR,
+                a.auditable_id
+            FROM FIVETRAN_DATABASE.LE_PROD_PUBLIC.AUDITS a
+            JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.PAGE_ROUTES pr 
+                ON a.auditable_id = pr.page_id
+            JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.ROUTES rr 
+                ON pr.route_id = rr.id
+            JOIN FIVETRAN_DATABASE.LE_PROD_PUBLIC.SPLIT_TEST_TALLIES tt 
+                ON pr.page_id = tt.page_id
+            WHERE a.auditable_type = 'pages'
+            AND (
+                DATE(a.created_at) = CURRENT_DATE 
+                OR DATE(a.updated_at) = CURRENT_DATE
+                )
+            AND pr.weight > 0 
+            AND tt.display_count > 0
+            ORDER BY tt.display_count DESC`;
 
             const [rows] = await connection.execute(query, [formattedDate]);
 
