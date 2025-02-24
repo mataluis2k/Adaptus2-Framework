@@ -132,8 +132,84 @@ class DevTools {
     }
 
     // Validate configuration files
-    async validateConfig(configPath, schema) {
+    async validateConfig(configPath) {
         try {
+            const schema = {
+                type: "array",
+                items: {
+                    type: "object",
+                    required: ["routeType"],
+                    allOf: [
+                        {
+                            if: {
+                                properties: { routeType: { const: "def" } }
+                            },
+                            then: {
+                                required: []
+                            }
+                        },
+                        {
+                            if: {
+                                properties: { routeType: { not: { const: "def" } } }
+                            },
+                            then: {
+                                required: ["route"]
+                            }
+                        }
+                    ],
+                    properties: {
+                        routeType: {
+                            type: "string",
+                            enum: ["dynamic", "static", "database", "proxy", "def", "fileUpload"]
+                        },
+                        dbType: {
+                            type: "string",
+                            enum: ["mysql"]
+                        },
+                        dbConnection: {
+                            type: "string"
+                        },
+                        route: {
+                            type: "string",
+                            pattern: "^/"
+                        },
+                        auth: {
+                            type: "string"
+                        },
+                        acl: {
+                            type: "array",
+                            items: {
+                                type: "string"
+                            }
+                        },
+                        allowMethods: {
+                            type: "array",
+                            items: {
+                                type: "string",
+                                enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
+                            }
+                        },
+                        allowRead: {
+                            type: "array",
+                            items: {
+                                type: "string"
+                            }
+                        },
+                        allowWrite: {
+                            type: "array",
+                            items: {
+                                type: "string"
+                            }
+                        },
+                        columnDefinitions: {
+                            type: "object",
+                            additionalProperties: {
+                                type: "string"
+                            }
+                        }
+                    }
+                }
+            };
             const config = JSON.parse(await fs.readFile(configPath, 'utf8'));
             const validate = this.ajv.compile(schema);
             const valid = validate(config);

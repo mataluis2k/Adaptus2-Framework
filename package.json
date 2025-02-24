@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.1.30",
+  "version": "2.1.47",
   "description": "The Highly Scalable and Configurable API Express Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -80,6 +80,7 @@
     "path": "^0.12.7",
     "pg": "^8.13.1",
     "pinecone-client": "^2.0.0",
+    "pm2": "^5.4.3",
     "qdrant-client": "^0.0.1",
     "sharp": "^0.33.5",
     "snowflake-sdk": "^2.0.0",

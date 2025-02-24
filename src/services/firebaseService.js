@@ -10,35 +10,44 @@ config({ path: path.resolve(__dirname, '../../.env') });
 class FirebaseService {
     constructor() {
         if (!admin.apps.length) {
+            // Initialize Firebase Admin SDK
+            console.log('Initializing Firebase Admin SDK');
             try {
                 let serviceAccount;
+                let serviceAccountPath;
                 try {
                     // First try to get credentials from environment variable
                     if (process.env.FIREBASE_SERVICE_ACCOUNT) {
-                        serviceAccount = JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT);
+                        serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT;
                     } else {
                         // Fall back to service account file
-                        const serviceAccountPath = path.join(__dirname, '../../config/firebaseService.json');
-                        serviceAccount = require(serviceAccountPath);
+                        serviceAccountPath = path.join(process.env.CONFIG_DIR, 'firebaseService.json');
+                                                                    
                     }
+                    console.log('Service account path:', serviceAccountPath); 
+                      // load the service account file
+                    serviceAccount = require(serviceAccountPath);
                     
                     admin.initializeApp({
                         credential: admin.credential.cert(serviceAccount)
                     });
+                    if (!isContextExtended) {
+                        this.extendContext();
+                        isContextExtended = true; // Prevent multiple extensions
+                    }
                     logger.info('Firebase initialized successfully');
+                    return admin;
                 } catch (error) {
-                    logger.warn('Firebase service account not configured. Firebase features will be disabled.', error);
-                    return; // Exit constructor without initializing Firebase
+                    logger.warn('Firebase service account not configured. Firebase features will be disabled.', error);                    
+                    return null; // Exit constructor without initializing Firebase
                 }
-                if (!isContextExtended) {
-                    extendContext();
-                    isContextExtended = true; // Prevent multiple extensions
-                }
+               
             } catch (error) {
-                logger.error('Firebase initialization error:', error);
+                logger.error('Firebase initialization error:', error);                
                 throw new Error('Firebase initialization failed');
             }
         }
+        return null;
     }
 
     /**
@@ -48,6 +57,7 @@ class FirebaseService {
      * @returns {Promise<string>} A Firebase custom authentication token
      */
     async createCustomToken(uid, additionalClaims = {}) {
+        console.log('Creating custom token for UID:', uid);
         try {
             if (!uid) {
                 throw new Error('User ID is required');
@@ -85,8 +95,13 @@ class FirebaseService {
 
     extendContext() {
         globalContext.actions.firebaseToken = async (ctx, params) => {
-            const { uuid, additionalClaims } = params;
-            return await this.createCustomToken(uuid, additionalClaims);
+            console.log('Creating custom token with params:', params);
+            const { uuid, additionalClaims } = params.data;
+            const token =  await this.createCustomToken(uuid, additionalClaims);
+            console.log('Custom token created:', JSON.stringify(token));
+            ctx.data['token'] = token;               
+                
+            return { success: true, result, key: 'token' };
         };
         globalContext.actions.firebaseVerify = async (ctx, params) => {
             const { idToken } = params;

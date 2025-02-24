@@ -19,6 +19,7 @@ module.exports = {
         dbFunctions = customRequire('../src/modules/db');
         this.genToken = customRequire('../src/modules/genToken');
         this.apiConfig = customRequire('../src/modules/apiConfig');
+        this.response = customRequire('../src/modules/response');
         this.FirebaseService = customRequire('../src/services/firebaseService');
         baseURL = process.env.BASE_URL || 'http://localhost:3000';
         context.actions.registerUser = async (ctx, params) => {
@@ -30,12 +31,28 @@ module.exports = {
         if (!email) throw new Error('Email is required');
         const dbConfig = ctx.config || process.env.DB_CONFIG;
         if (!dbConfig) throw new Error('Database configuration missing');
+            
+        let firebase_user_token = "";
+
         try {
-            await this.checkUserExists(dbConfig, email);
+            await this.checkUserExists(ctx,dbConfig, email);
             const userId = await this.generateUniqueUUID(dbConfig);
             const hashedPassword = this.hashPassword(password);
             const status = "active";
             const created_at = moment().utc().format('YYYY-MM-DD HH:mm:ss');
+            try {
+                // Only attempt to create Firebase token if service is initialized
+                const firebaseService = new this.FirebaseService();
+                const firebaseToken = await firebaseService.createCustomToken(userId);
+                if (firebaseToken) {
+                    firebase_user_token = JSON.stringify(firebaseToken);                   
+                }
+            } catch (error) {
+                const message = error.message || 'Failed to generate Firebase token';
+                console.warn('Firebase token generation skipped:', message);
+                ctx.data['error'] = message;            
+                return { success: false, message, key: 'response' };
+            }
             const userObject = {
                 uuid: userId,
                 email,
@@ -45,6 +62,7 @@ module.exports = {
                 status,
                 country_code,
                 platform,
+                firebase_token: firebase_user_token,
                 acl,
                 created_at
             };
@@ -52,38 +70,29 @@ module.exports = {
             const object = this.apiConfig.getConfigNode('users_v2','def');
             console.log("AllowRead:", object.allowRead);
             const token = await this.genToken(userObject, object.allowRead, "password");
-            
-            let response = {
+            // remove password from uerObject
+            delete userObject.password;
+            const response = {
                 token,
-                uuid: userId,
-                status,
-                email,
-                name,
-                gender,
-                created_at
+                user: userObject
             };
-
-            try {
-                // Only attempt to create Firebase token if service is initialized
-                const firebaseService = new this.FirebaseService();
-                const firebaseToken = await firebaseService.createCustomToken(userId);
-                if (firebaseToken) {
-                    response.firebase_user_token = firebaseToken;
-                }
-            } catch (error) {
-                console.warn('Firebase token generation skipped:', error.message);
-            }
-
-            return response;
+            
+            this.response.setResponse(200, "User created successfully", "", response, "registerUserPlugin");
+            ctx.data['response'] = JSON.stringify(response);
+            return { success: false, response, key: 'response' };
         } catch (error) {
-            console.error("Error in createUser:", error.message);
-            throw new Error(error.message);
+            const message = error.message || 'Failed to create user';
+            console.error("Error in createUser:", message);
+            ctx.data['error'] = message;            
+            return { success: false, message, key: 'response' };
         }
     },
-    async checkUserExists(dbConfig, email) {
+    async checkUserExists(ctx, dbConfig, email) {
         const user = await dbFunctions.read(dbConfig, 'users_v2', { email });
         if (user.length > 0) {
-            throw new Error('User already registered!');
+            result = "User already registered!";
+            ctx.data['response'] = result;
+            return { success: false, result, key: 'response' };
         }
     },
     async generateUniqueUUID(dbConfig) {
@@ -102,6 +111,9 @@ module.exports = {
     async createUserRecord(dbConfig, userData) {
         console.log("Creating user");
         await dbFunctions.create(dbConfig, 'users_v2', userData);
+    },
+    async updateUserToken(dbConfig, userId, token) {
+        await dbFunctions.update(dbConfig, 'users_v2', { uuid : userId }, { firebase_token: token });
     },
     async authenticateUser(email, password) {
         try {

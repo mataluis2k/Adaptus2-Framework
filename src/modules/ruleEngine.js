@@ -1,6 +1,6 @@
 'use strict';
 const consolelog = require('./logger');
-
+const { setContext } = require('./context');
 const DSLParser = require('./dslparser');
 
 // Define sha256 function in the global scope
@@ -284,14 +284,12 @@ class Rule {
   async _executeAction(actionContext, action, data) {
     const req = getContext('req');
     const method = req.method.toUpperCase(); // "GET", "POST", etc.
-    data.user = req.user;
-
-    // // // Only merge if it's POST/PUT/PATCH:
-    // if (req?.headers && ['POST', 'PUT', 'PATCH'].includes(method)) {
-    //    data.user_agent = req.headers['user-agent'];
-    //    data.ip_address = req.headers['x-forwarded-for'] || req.connection.remoteAddress;
-    //    console.log("Data with headers:", data);
-    // }
+    if (!data.user) {
+      console.log("User missing in data, restoring from req.user", req.user);
+      setContext('user', req.user);      
+      data.user = req.user;
+    }
+ 
  
     // Handle custom actions
     const customHandler = actionContext.actions[action.type];
@@ -473,7 +471,7 @@ class Rule {
    * (Optional) Interpolate placeholders like ${data.field} in a string.
    */
   _interpolatePlaceholders(obj, dataObj) {
-    consolelog.log("Interpolating placeholders in:", obj);
+    consolelog.log("Interpolating placeholders in:", obj, dataObj);
     // 1) If it's a string, do the placeholder replacement.
     if (typeof obj === 'string') {
       return obj.replace(/\${([^}]+)}/g, (match, inner) => {
