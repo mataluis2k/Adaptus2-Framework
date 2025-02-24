@@ -1820,6 +1820,31 @@ class Adaptus2Server {
         this.app.use(middleware);
     }
 
+    getRoutes(app) {
+        const routes = [];
+        app._router.stack.forEach((layer) => {
+          if (layer.route) {
+            // Direct route
+            routes.push({
+              path: layer.route.path,
+              methods: Object.keys(layer.route.methods)
+            });
+          } else if (layer.name === 'router' && layer.handle.stack) {
+            // This is a router middleware (sub-router)
+            layer.handle.stack.forEach((nestedLayer) => {
+              if (nestedLayer.route) {
+                routes.push({
+                  path: layer.regexp.toString() + nestedLayer.route.path,
+                  methods: Object.keys(nestedLayer.route.methods)
+                });
+              }
+            });
+          }
+        });
+        return routes;
+      }
+      
+
     setupSocketServer() {
         this.socketServer = net.createServer((socket) => {
             console.log("CLI client connected.");
@@ -2007,12 +2032,7 @@ class Adaptus2Server {
                             socket.write(`Loaded plugins: ${plugins.join(", ")}\n`);
                             break;
                         case "routes":
-                            const routes = this.app._router.stack
-                                .filter((layer) => layer.route)
-                                .map((layer) => ({
-                                    path: layer.route.path,
-                                    methods: Object.keys(layer.route.methods).join(", "),
-                                }));
+                            const routes = this.getRoutes(this.app);
                             socket.write(`Registered routes: ${JSON.stringify(routes, null, 2)}\n`);
                             break;
                         case "exit":
@@ -2490,9 +2510,6 @@ class Adaptus2Server {
         );
     }
 
-
-    
-
     // Initialize optional modules safely
     initializeOptionalModules(app) {
         // Initialize CMS if enabled
@@ -2502,9 +2519,12 @@ class Adaptus2Server {
                     dbType: process.env.DEFAULT_DBTYPE,
                     dbConnection: process.env.DEFAULT_DBCONNECTION
                 });
+                // Register CMS routes under /cms
+                this.cmsManager.registerRoutes(app);
                 console.log('CMS module initialized successfully');
             } catch (error) {
                 console.error('Failed to initialize CMS module:', error.message);
+                process.exit(1);
             }
         }
 
