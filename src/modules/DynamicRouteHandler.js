@@ -55,12 +55,12 @@ class DynamicRouteHandler {
   static registerDynamicRoute(app, endpoint) {
     const { route, allowMethods, sqlQuery, businessLogic, response, uuidMapping, keys } = endpoint;
     consolelog.log("Dynaroute:", endpoint);
-
+  
     if (!Array.isArray(allowMethods) || allowMethods.length === 0) {
       console.error(`Invalid or missing 'allowMethods' for route ${route}`);
       return;
     }
-
+  
     allowMethods.forEach((method) => {
       const middlewares = [];
       if (endpoint.auth) {
@@ -69,32 +69,12 @@ class DynamicRouteHandler {
       if (endpoint.acl) {
         middlewares.push(aclMiddleware(endpoint.acl));
       }
-
+  
       app[method.toLowerCase()](route, ...middlewares, async (req, res) => {
         try {
           // Data from query parameters (GET) or request body (others)
           const data = method === 'GET' ? req.query : req.body;
-
-          // Ensure the SQL query has a WHERE clause so we can safely append filters.
-          let finalSql = ensureWhereClause(sqlQuery);
-          const queryParams = [];
-
-          // If a filter is provided (e.g., id) and we have a defined key
-          if (data.id && keys && keys.length > 0) {
-            // If UUID mapping is enabled, convert the provided UUID to the real primary key.
-            if (uuidMapping) {
-              const realId = await redisClient.get(`uuidMapping:${data.id}`);
-              if (!realId) {
-                return res.status(404).json({ error: 'Record not found (invalid UUID)' });
-              }
-              data.id = realId;
-            }
-            // Assuming the primary key column is the first key (e.g., 'id').
-            // Append an additional filter.
-            finalSql += " AND m." + keys[0] + " = ?";
-            queryParams.push(data.id);
-          }
-
+  
           // Process business logic if defined (if any business logic is set, ignore SQL)
           if (businessLogic) {
             const businessLogicResult = await BusinessLogicProcessor.process(businessLogic, data);
@@ -103,25 +83,39 @@ class DynamicRouteHandler {
             }
             return res.json(businessLogicResult);
           }
-
+  
           // Execute SQL query if defined
           if (sqlQuery) {
+            let finalSql = ensureWhereClause(sqlQuery);
+            const queryParams = [];
+  
+            // If a filter is provided (e.g., id) and we have a defined key
+            if (data.id && keys && keys.length > 0) {
+              if (uuidMapping) {
+                const realId = await redisClient.get(`uuidMapping:${data.id}`);
+                if (!realId) {
+                  return res.status(404).json({ error: 'Record not found (invalid UUID)' });
+                }
+                data.id = realId;
+              }
+              // Append an additional filter for the primary key column
+              finalSql += " AND m." + keys[0] + " = ?";
+              queryParams.push(data.id);
+            }
+  
             const dbConnection = await getDbConnection(endpoint);
             const [queryResult] = await dbConnection.execute(finalSql, queryParams);
-
-            // If UUID mapping is enabled, iterate over the results to mask the primary key.
+  
+            // If UUID mapping is enabled, mask the primary key in the results
             if (uuidMapping && queryResult.length > 0) {
-              const primaryKeyField = keys[0]; // e.g., 'id'
+              const primaryKeyField = keys[0];
               for (const row of queryResult) {
                 const originalId = row[primaryKeyField];
-                // Check if there is already a UUID mapping for this originalId
                 const reverseKey = `uuidMapping:original:${originalId}`;
                 let existingUuid = await redisClient.get(reverseKey);
                 if (existingUuid) {
-                  // Reuse the existing UUID mapping.
                   row[primaryKeyField] = existingUuid;
                 } else {
-                  // Generate a new UUID, update the row, and store both forward and reverse mappings.
                   const newUuid = uuidv7();
                   row[primaryKeyField] = newUuid;
                   await redisClient.set(`uuidMapping:${newUuid}`, originalId);
@@ -129,10 +123,10 @@ class DynamicRouteHandler {
                 }
               }
             }
-
+  
             return res.json({ message: 'SQL query executed successfully', result: queryResult });
           }
-
+  
           // Fallback response if no SQL or business logic defined.
           const respond = res.status(responseBus.status).json({
             message: responseBus.message,
@@ -142,7 +136,7 @@ class DynamicRouteHandler {
           });
           responseBus.Reset();
           return respond;
-
+  
         } catch (error) {
           console.error(`Error processing route ${route}:`, error.message);
           return res.status(500).json({ error: 'Internal Server Error', details: error.message });
@@ -150,6 +144,7 @@ class DynamicRouteHandler {
       });
     });
   }
+  
 
   /**
    * Filter the response fields based on the configuration.
