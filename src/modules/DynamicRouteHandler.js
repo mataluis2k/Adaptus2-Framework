@@ -5,7 +5,7 @@ const BusinessLogicProcessor = require('./BusinessLogicProcessor');
 const consolelog = require('./logger');
 const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
 const responseBus = require('./response');
-
+const { getContext } = require('./context'); // Import the shared globalContext and getContext
 /**
  * Inspects the SQL query and ensures it contains a WHERE clause.
  * If no WHERE clause is found, it inserts "WHERE 1=1" before any ORDER BY.
@@ -53,7 +53,7 @@ class DynamicRouteHandler {
    * @param {Object} endpoint - Endpoint configuration from apiConfig.json.
    */
   static registerDynamicRoute(app, endpoint) {
-    const { route, allowMethods, sqlQuery, businessLogic, response, uuidMapping, keys } = endpoint;
+    let { route, allowMethods, sqlQuery, businessLogic, response, uuidMapping, keys } = endpoint;
     consolelog.log("Dynaroute:", endpoint);
   
     if (!Array.isArray(allowMethods) || allowMethods.length === 0) {
@@ -86,6 +86,21 @@ class DynamicRouteHandler {
   
           // Execute SQL query if defined
           if (sqlQuery) {
+              // We need to passed the sqlQuery to interpolation with the user object which comes on the JWT token the user object could have 
+              // user.id or user.username or user.email or any other field that is in the user object
+              // we need to interpolate the sqlQuery with the user object
+              // we need to get the user object from the context
+              const user = getContext('user');
+              if (user) {
+                // we need to interpolate the sqlQuery with the user object
+                // we need to get the keys of the user object
+                const keys = Object.keys(user);
+                // we need to iterate over the keys and replace the keys in the sqlQuery with the values of the user object
+                keys.forEach(key => {
+                  sqlQuery = sqlQuery.replace(new RegExp(`{${key}}`, 'g'), user[key]);
+                });
+              }
+
             let finalSql = ensureWhereClause(sqlQuery);
             const queryParams = [];
   
