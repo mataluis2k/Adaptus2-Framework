@@ -163,21 +163,24 @@ class DynamicRouteHandler {
   
             // If UUID mapping is enabled, mask the primary key in the results
             if (uuidMapping && queryResult.length > 0) {
-              const primaryKeyField = keys[0];
               for (const row of queryResult) {
-                const originalId = row[primaryKeyField];
-                const reverseKey = `uuidMapping:original:${originalId}`;
-                let existingUuid = await redisClient.get(reverseKey);
-                if (existingUuid) {
-                  row[primaryKeyField] = existingUuid;
-                } else {
-                  const newUuid = uuidv7();
-                  row[primaryKeyField] = newUuid;
-                  await redisClient.set(`uuidMapping:${newUuid}`, originalId);
-                  await redisClient.set(reverseKey, newUuid);
-                }
+                  for (const key of keys) { // Iterate over all keys in the array
+                      const originalId = row[key];
+                      if (!originalId) continue; // Skip if key does not exist in the row
+          
+                      const reverseKey = `uuidMapping:original:${originalId}`;
+                      let existingUuid = await redisClient.get(reverseKey);
+                      if (existingUuid) {
+                          row[key] = existingUuid;
+                      } else {
+                          const newUuid = uuidv7();
+                          row[key] = newUuid;
+                          await redisClient.set(`uuidMapping:${newUuid}`, originalId);
+                          await redisClient.set(reverseKey, newUuid);
+                      }
+                  }
               }
-            }
+          }
   
             return res.json({ message: 'SQL query executed successfully', result: queryResult });
           }
