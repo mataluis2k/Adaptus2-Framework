@@ -684,6 +684,7 @@ const registerFileUploadEndpoint = (app, config) => {
         const { file } = req;
         // uploaded_by should come from the jwt token        
         const uploaded_by = req.user; // Ensure this is passed in the request body
+        const user_id = req.user.id ? req.user.user_id : null; 
 
         if (!file) {
             return res.status(400).json({ error: 'No file uploaded' });
@@ -691,7 +692,7 @@ const registerFileUploadEndpoint = (app, config) => {
 
         const sql = `
             INSERT INTO ${dbTable} (${allowWrite.join(', ')})
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -699,6 +700,7 @@ const registerFileUploadEndpoint = (app, config) => {
             path.join(fileUpload.storagePath, file.filename),
             file.mimetype,
             uploaded_by,
+            user_id
         ];
 
         console.log(`Uploading file to ${route}:`, values);
