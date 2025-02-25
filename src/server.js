@@ -2830,6 +2830,10 @@ class Adaptus2Server {
                 await handleBuildCommand();
                 exit();
             }
+            if (process.argv.includes('--version')) {                            
+                console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
+                exit();
+            }
 
     
             // Handle the --generate-swagger flag

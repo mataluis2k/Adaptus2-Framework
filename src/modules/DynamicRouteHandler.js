@@ -45,6 +45,37 @@ function ensureWhereClause(sqlQuery) {
     // If none of the clauses are found, simply append the WHERE clause.
     return sqlQuery + " WHERE 1=1";
 }
+/**
+ * Adds the specified fields to the SELECT clause of the SQL query.
+ *  
+ * 
+ * @param {string} sqlQuery - The original SQL query.
+ * @param {string} include - The fields to include in the SELECT clause.
+ * @returns {string} The SQL query with the specified fields included in the SELECT clause.
+ * @throws {Error} If no FROM clause is found in the SQL query.
+ * 
+ */
+function addIncludes(sqlQuery, include) {
+  const fromIndex = sqlQuery.search(/FROM/i);
+  if (fromIndex === -1) {
+    throw new Error("Invalid SQL query, no FROM clause found.");
+  }
+  
+  let selectClause = sqlQuery.substring(0, fromIndex).trim();
+  const fromClause = sqlQuery.substring(fromIndex);
+  
+  // Ensure the select clause ends with a comma
+  if (!selectClause.endsWith(',')) {
+    selectClause += ',';
+  }
+  
+  // Process the include fields, trimming any extra spaces
+  const includeFields = include.split(',').map(field => field.trim());
+  const includeFieldsString = includeFields.map(field => `m.${field}`).join(',');
+  
+  sqlQuery = `${selectClause} ${includeFieldsString} ${fromClause}`;
+  return sqlQuery;
+}
 
 class DynamicRouteHandler {
   /**
@@ -86,6 +117,14 @@ class DynamicRouteHandler {
   
           // Execute SQL query if defined
           if (sqlQuery) {
+              // The user might send a include in the query parameters that will be used to include the fields in the response
+              // e.g. ?include=training-plans.workouts.images,training-plans.workouts.instructor,training-plans.workouts.workout-recommendations,mobile-image
+              // We need to parse the include and get those fields inside the sqlQuery 
+              const includes = data.include;
+              if (includes) {               
+                sqlQuery = addIncludes(sqlQuery, includes);
+              }
+                                
               // We need to passed the sqlQuery to interpolation with the user object which comes on the JWT token the user object could have 
               // user.id or user.username or user.email or any other field that is in the user object
               // we need to interpolate the sqlQuery with the user object
@@ -99,6 +138,7 @@ class DynamicRouteHandler {
                 keys.forEach(key => {
                   sqlQuery = sqlQuery.replace(new RegExp(`{${key}}`, 'g'), user[key]);
                 });
+                console.log("Interpolated sqlQuery:", sqlQuery);
               }
 
             let finalSql = ensureWhereClause(sqlQuery);
