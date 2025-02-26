@@ -6,6 +6,7 @@ const consolelog = require('./logger');
 const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
 const responseBus = require('./response');
 const { getContext } = require('./context'); // Import the shared globalContext and getContext
+
 /**
  * Inspects the SQL query and ensures it contains a WHERE clause.
  * If no WHERE clause is found, it inserts "WHERE 1=1" before any ORDER BY.
@@ -14,7 +15,7 @@ const { getContext } = require('./context'); // Import the shared globalContext 
  * @param {string} sqlQuery - The original SQL query.
  * @returns {string} The SQL query guaranteed to contain a WHERE clause.
  */
-function ensureWhereClause(sqlQuery) {
+function ensureWhereClause(sqlQuery = '') {
     // If a WHERE clause is already present, do nothing.
     if (/where\s+/i.test(sqlQuery)) {
       return sqlQuery;
@@ -45,6 +46,7 @@ function ensureWhereClause(sqlQuery) {
     // If none of the clauses are found, simply append the WHERE clause.
     return sqlQuery + " WHERE 1=1";
 }
+
 /**
  * Adds the specified fields to the SELECT clause of the SQL query.
  *  
@@ -103,6 +105,8 @@ class DynamicRouteHandler {
   
       app[method.toLowerCase()](route, ...middlewares, async (req, res) => {
         try {
+          responseBus.Reset(); // Reset the response object at the beginning of the request
+
           // Data from query parameters (GET) or request body (others)
           const data = method === 'GET' ? req.query : req.body;
   
@@ -186,13 +190,17 @@ class DynamicRouteHandler {
           }
   
           // Fallback response if no SQL or business logic defined.
+          if (!responseBus.data || Object.keys(responseBus.data).length === 0) {
+            responseBus.setResponse(200, 'Success', null, {}, responseBus.module);
+          }
+
           const respond = res.status(responseBus.status).json({
             message: responseBus.message,
             error: responseBus.error,
             data: responseBus.data,
             module: responseBus.module
           });
-          responseBus.Reset();
+
           return respond;
   
         } catch (error) {
