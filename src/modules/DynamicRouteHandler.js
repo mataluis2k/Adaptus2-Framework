@@ -6,6 +6,7 @@ const consolelog = require('./logger');
 const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
 const responseBus = require('./response');
 const { getContext } = require('./context'); // Import the shared globalContext and getContext
+
 /**
  * Inspects the SQL query and ensures it contains a WHERE clause.
  * If no WHERE clause is found, it inserts "WHERE 1=1" before any ORDER BY.
@@ -45,6 +46,7 @@ function ensureWhereClause(sqlQuery) {
     // If none of the clauses are found, simply append the WHERE clause.
     return sqlQuery + " WHERE 1=1";
 }
+
 /**
  * Adds the specified fields to the SELECT clause of the SQL query.
  *  
@@ -186,13 +188,18 @@ class DynamicRouteHandler {
           }
   
           // Fallback response if no SQL or business logic defined.
+          if (!responseBus.data || Object.keys(responseBus.data).length === 0) {
+            responseBus.setResponse(200, 'Success', null, {}, responseBus.module);
+          }
+
           const respond = res.status(responseBus.status).json({
             message: responseBus.message,
             error: responseBus.error,
             data: responseBus.data,
             module: responseBus.module
           });
-          responseBus.Reset();
+
+          responseBus.Reset(); // Reset the response object after sending the response
           return respond;
   
         } catch (error) {
