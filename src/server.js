@@ -2804,13 +2804,17 @@ class Adaptus2Server {
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught Exception:', error);
             // Perform graceful shutdown
-            this.shutdown(1);
+            if(process.env.SHUTDOWN_ON_UNCAUGHT === 'true') {
+                this.shutdown(1);
+            }
         });
 
         process.on('unhandledRejection', (reason, promise) => {
             logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
             // Perform graceful shutdown
-            this.shutdown(1);
+            if(process.env.SHUTDOWN_ON_REJECTION === 'true') {                
+                this.shutdown(1);
+            }
         });
 
         try {
@@ -2882,16 +2886,18 @@ class Adaptus2Server {
             this.setupDependencies();
             this.setupPluginLoader();
             autoloadPlugins(this.pluginManager);
-                       // Register validation middleware globally
-                       const validationMiddleware = createGlobalValidationMiddleware();
-                       this.app.use(validationMiddleware);
+           
             this.registerAnalyticsRoutes();
             this.registerDevTools();
             setupRag(this.apiConfig);
+             // Register validation middleware globally
+            const validationMiddleware = createGlobalValidationMiddleware();
+            this.app.use(validationMiddleware);
+
             extendContext();
             initializeRules();
             this.registerMiddleware();
-            
+            updateValidationRules();
  
 
             this.registerRoutes();
