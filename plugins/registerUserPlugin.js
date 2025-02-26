@@ -17,9 +17,10 @@ module.exports = {
         this.FirebaseService = customRequire('../src/services/firebaseService');
         this.validationMapping = customRequire('../src/middleware/validationMapping');
         const Joi = customRequire('joi');
-        const moment = customRequire('moment');
-        const bcrypt = customRequire('bcryptjs');
-        const { v7: uuidv7 } = customRequire('uuid');
+        this.moment = customRequire('moment');
+        this.bcrypt = customRequire('bcryptjs');
+        const { v7: uuidv7 } = require('uuid');
+        this.uuidv7 = uuidv7;
         express = customRequire('express'); // Import express
         baseURL = process.env.BASE_URL || 'http://localhost:3000';
         context.actions.registerUser = async (ctx, params) => {
@@ -112,7 +113,7 @@ module.exports = {
             const userId = await this.generateUniqueUUID(dbConfig);
             const hashedPassword = this.hashPassword(password);
             const status = "active";
-            const created_at = moment().utc().format('YYYY-MM-DD HH:mm:ss');
+            const created_at = this.moment().utc().format('YYYY-MM-DD HH:mm:ss');
             try {
                 // Only attempt to create Firebase token if service is initialized
                 const firebaseService = new this.FirebaseService();
@@ -179,7 +180,7 @@ module.exports = {
         try {
             let userId, isUnique = false;
             while (!isUnique) {
-                userId = uuidv7();
+                userId = this.uuidv7();
                 const existingUser = await dbFunctions.read(dbConfig, 'users_v2', { id: userId });
 
                 if (!existingUser || existingUser.length === 0) isUnique = true;
@@ -193,7 +194,7 @@ module.exports = {
     },
     hashPassword(password) {
         try {
-            return bcrypt.hashSync(password, 10);
+            return this.bcrypt.hashSync(password, 10);
         } catch (error) {
             const message = error.message || 'Failed to hash password';
             console.error("Error in hashPassword:", message);
