@@ -15,7 +15,7 @@ const { getContext } = require('./context'); // Import the shared globalContext 
  * @param {string} sqlQuery - The original SQL query.
  * @returns {string} The SQL query guaranteed to contain a WHERE clause.
  */
-function ensureWhereClause(sqlQuery) {
+function ensureWhereClause(sqlQuery = '') {
     // If a WHERE clause is already present, do nothing.
     if (/where\s+/i.test(sqlQuery)) {
       return sqlQuery;
@@ -105,6 +105,8 @@ class DynamicRouteHandler {
   
       app[method.toLowerCase()](route, ...middlewares, async (req, res) => {
         try {
+          responseBus.Reset(); // Reset the response object at the beginning of the request
+
           // Data from query parameters (GET) or request body (others)
           const data = method === 'GET' ? req.query : req.body;
   
@@ -199,7 +201,6 @@ class DynamicRouteHandler {
             module: responseBus.module
           });
 
-          responseBus.Reset(); // Reset the response object after sending the response
           return respond;
   
         } catch (error) {
