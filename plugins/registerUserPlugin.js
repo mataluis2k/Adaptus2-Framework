@@ -1,11 +1,3 @@
-const { v4: uuidv4 } = require('uuid');
-const bcrypt = require('bcryptjs');
-const axios = require('axios');
-const moment = require('moment');
-const express = require('express'); // Import express
-// validationMiddleware.js
-const Joi = require('joi');
-
 // Module-level variables for dependencies
 let dbFunctions = {};
 let firebaseService;
@@ -24,6 +16,11 @@ module.exports = {
         this.apiConfig = customRequire('../src/modules/apiConfig');
         this.FirebaseService = customRequire('../src/services/firebaseService');
         this.validationMapping = customRequire('../src/middleware/validationMapping');
+        const Joi = customRequire('joi');
+        const moment = customRequire('moment');
+        const bcrypt = customRequire('bcryptjs');
+        const { v7: uuidv7 } = customRequire('uuid');
+        express = customRequire('express'); // Import express
         baseURL = process.env.BASE_URL || 'http://localhost:3000';
         context.actions.registerUser = async (ctx, params) => {
             return await this.createUser(ctx, params.data);
@@ -182,7 +179,7 @@ module.exports = {
         try {
             let userId, isUnique = false;
             while (!isUnique) {
-                userId = uuidv4();
+                userId = uuidv7();
                 const existingUser = await dbFunctions.read(dbConfig, 'users_v2', { id: userId });
 
                 if (!existingUser || existingUser.length === 0) isUnique = true;
