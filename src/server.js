@@ -1470,8 +1470,7 @@ function initializeRules(app) {
         app.locals.ruleEngineMiddleware = ruleEngine;
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
-        console.error('Failed to initialize business rules:', error.message);   
-        process.exit(1); // Exit if initialization fails     
+        console.error('Failed to initialize business rules:', error.message);               
     }
 }
 
