@@ -111,6 +111,7 @@ const configFile = path.join(configDir, 'apiConfig.json');
 const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
+const { aarMiddleware } = require('./middleware/aarMiddleware');
 const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
@@ -257,7 +258,7 @@ const graphqlDbConnection = process.env.DEFAULT_DBCONNECTION;
 const mlAnalytics = new MLAnalytics();
 
 
-const { globalContext, middleware,getContext } = require('./modules/context');
+const { globalContext, middleware,getContext, setContext } = require('./modules/context');
 const e = require('express');
 
 globalContext.actions.log = (ctx, action) => {
@@ -492,8 +493,7 @@ function registerProxyEndpoints(app, apiConfig) {
                 consolelog.log(`Auth for route ${route}:`, auth); // 
                 app[method.toLowerCase()](
                     route,
-                    authenticateMiddleware(auth),
-                    aclMiddleware(acl),
+                    aarMiddleware(auth, acl, globalContext.ruleEngineMiddleware),                
                     async (req, res) => {
                         console.log(`Proxy request received on route: ${route} [${method}]`);
                         try {
@@ -642,22 +642,9 @@ function registerStaticRoute(app, endpoint) {
         return; // Skip invalid configuration
     }
 
-    const middlewares = [];
-    
-    // Add authentication middleware if specified
-    if (auth) {
-        middlewares.push(authenticateMiddleware(auth));
-    }
-
-    // Add access control middleware if specified
-    if (acl) {
-        middlewares.push(aclMiddleware(acl));
-    }
-
-
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions),cors(corsOptions), ...middlewares, express.static(folderPath));
+    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, acl, globalContext.ruleEngineMiddleware), express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -677,7 +664,7 @@ const registerFileUploadEndpoint = (app, config) => {
 
     const fieldName = fileUpload.fieldName || 'file'; // Default to 'file' if not specified
     
-    app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), upload.single(fieldName), async (req, res) => {
+    app.post(route, aarMiddleware(auth, acl, globalContext.ruleEngineMiddleware), upload.single(fieldName), async (req, res) => {
         const dbConnectionConfig = { dbType: config.dbType, dbConnection: config.dbConnection };
         console.log(req.body);
         // Extract file and metadata
@@ -1071,8 +1058,7 @@ function buildFilterClause(filterObj, dbTable) {
 
   app.get(
     `${route}${getParamPath}`,
-    authenticateMiddleware(auth),
-    aclMiddleware(acl, unauthorized),
+    aarMiddleware(auth, acl, globalContext.ruleEngineMiddleware),
     async (req, res) => {
       try {
         console.log("Incoming GET request:", {
@@ -1281,7 +1267,7 @@ function buildFilterClause(filterObj, dbTable) {
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl,unauthorized), async (req, res) => {
+            app.post(route,cors(corsOptions), aarMiddleware(auth, { acl, unauthorized }, globalContext.ruleEngineMiddleware), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -1309,9 +1295,8 @@ function buildFilterClause(filterObj, dbTable) {
                     // PUT Endpoint (Update)
                     // *******************************
                     app.put(
-                        `${route}/:${primaryKey}`,
-                        authenticateMiddleware(auth),
-                        aclMiddleware(acl, unauthorized),
+                        `${route}/:${primaryKey}`,                        
+                        aarMiddleware(auth, {acl, unauthorized}, globalContext.ruleEngineMiddleware),
                         async (req, res) => {
                             let recordId = req.params[primaryKey];
                 
@@ -1363,8 +1348,7 @@ function buildFilterClause(filterObj, dbTable) {
                     // *******************************
                     app.patch(
                         `${route}/:${primaryKey}`,
-                        authenticateMiddleware(auth),
-                        aclMiddleware(acl, unauthorized),
+                        aarMiddleware(auth, {acl, unauthorized}, globalContext.ruleEngineMiddleware),
                         async (req, res) => {
                             let recordId = req.params[primaryKey];
                 
@@ -1416,8 +1400,7 @@ function buildFilterClause(filterObj, dbTable) {
                     // *******************************
                     app.delete(
                         `${route}/:${primaryKey}`,
-                        authenticateMiddleware(auth),
-                        aclMiddleware(acl, unauthorized),
+                        aarMiddleware(auth, {acl, unauthorized}, globalContext.ruleEngineMiddleware),
                         async (req, res) => {
                             let recordId = req.params[primaryKey];
                 
@@ -1484,6 +1467,7 @@ function initializeRules() {
         }
         consolelog.log(ruleEngine);  
         globalContext.ruleEngine = ruleEngineInstance.rules;  
+        
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
         console.error('Failed to initialize business rules:', error.message);        
@@ -1959,7 +1943,10 @@ class Adaptus2Server {
                                 this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
                         
                                 if (PLUGIN_MANAGER === 'network') {
-                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
+                                    const sanitizedContext = { ...globalContext };
+                                    delete sanitizedContext.ruleEngineMiddleware;
+                                    delete sanitizedContext.ruleEngine;
+                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, sanitizedContext);
                                     subscribeToConfigUpdates((updatedConfig) => {
                                         this.apiConfig = updatedConfig.apiConfig;
                                         this.categorizedConfig = updatedConfig.categorizedConfig;
@@ -2426,8 +2413,8 @@ class Adaptus2Server {
         // Rule engine middleware
         consolelog.log('Rule Engine for Middleware', ruleEngine);
         const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
-        this.app.use(ruleEngineMiddleware.middleware());
-
+        globalContext.ruleEngineMiddleware = ruleEngineMiddleware;
+        setContext('ruleEngineMiddleware',ruleEngineMiddleware);
         // Global error handler with enhanced logging
         this.app.use((err, req, res, next) => {
             try {

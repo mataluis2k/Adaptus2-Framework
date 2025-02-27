@@ -3,7 +3,7 @@ const redisClient = require('./redisClient');         // Your Redis client modul
 const { getDbConnection } = require('./db');          // Your DB module
 const BusinessLogicProcessor = require('./BusinessLogicProcessor');
 const consolelog = require('./logger');
-const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
+const { aarMiddleware } = require('../middleware/aarMiddleware');
 const responseBus = require('./response');
 const { getContext } = require('./context'); // Import the shared globalContext and getContext
 
@@ -96,14 +96,11 @@ class DynamicRouteHandler {
   
     allowMethods.forEach((method) => {
       const middlewares = [];
-      if (endpoint.auth) {
-        middlewares.push(authenticateMiddleware(endpoint.auth));
-      }
-      if (endpoint.acl) {
-        middlewares.push(aclMiddleware(endpoint.acl));
-      }
+      const auth = endpoint.auth;
+      const acl = endpoint.acl;
+      const ruleEngineInstance = getContext('ruleEngineMiddleware');
   
-      app[method.toLowerCase()](route, ...middlewares, async (req, res) => {
+      app[method.toLowerCase()](route, aarMiddleware(auth, acl,ruleEngineInstance), async (req, res) => {
         try {
           responseBus.Reset(); // Reset the response object at the beginning of the request
 
