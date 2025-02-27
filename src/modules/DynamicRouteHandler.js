@@ -98,7 +98,9 @@ class DynamicRouteHandler {
       const middlewares = [];
       const auth = endpoint.auth;
       const acl = endpoint.acl;
-      const ruleEngineInstance = getContext('ruleEngineMiddleware');
+      
+      // Retrieve the rule engine instance from app.locals.
+      const ruleEngineInstance = app.locals.ruleEngineMiddleware;
   
       app[method.toLowerCase()](route, aarMiddleware(auth, acl,ruleEngineInstance), async (req, res) => {
         try {
