@@ -23,7 +23,9 @@ require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const requestLogger = require('./middleware/requestLoggingMiddleware');
-const createGlobalValidationMiddleware = require('./middleware/validationMiddleware');
+const { updateValidationRules , createGlobalValidationMiddleware }= require('./middleware/validationMiddleware');
+
+
 // Constants for configuration
 const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
 const DEFAULT_TIMEOUT = 30000; // 30 seconds
@@ -109,9 +111,14 @@ const configFile = path.join(configDir, 'apiConfig.json');
 const rulesConfigPath = path.join(configDir, 'businessRules.dsl'); // Path to the rules file
 const RuleEngineMiddleware = require('./middleware/RuleEngineMiddleware');
 const { authenticateMiddleware, aclMiddleware } = require('./middleware/authenticationMiddleware');
+const { aarMiddleware } = require('./middleware/aarMiddleware');
 const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
+const { generateDeterministicUUID } = require('./modules/dynamicUUID');
+
+const SECRET_SALT = process.env.SECRET_SALT || 'abcdc72ac166f371bd7e70a71e9c3182'; 
+
 
 ruleEngine = null; // Global variable to hold the rule engine
 const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
@@ -224,6 +231,25 @@ const REDIS_CHANNELS = {
 const redisPublisher = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 const redisSubscriber = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
 
+
+
+// Function to store mapping in Redis
+async function storeUUIDMapping(tableName, recordId, uuid) {
+    const key = `uuid_map:${tableName}:${uuid}`;
+    await redis.set(key, recordId);
+}
+
+// Function to retrieve original ID from UUID
+async function getOriginalIdFromUUID(tableName, uuid) {
+
+    const key = `uuid_map:${tableName}:${uuid}`;
+
+    const recordId = await redis.get(key); 
+
+    return recordId || null; // Return null if not found
+}
+
+
 consolelog.log('Current directory:', __dirname);
 
 const graphqlDbType = process.env.DEFAULT_DBTYPE;
@@ -232,7 +258,7 @@ const graphqlDbConnection = process.env.DEFAULT_DBCONNECTION;
 const mlAnalytics = new MLAnalytics();
 
 
-const { globalContext, middleware,getContext } = require('./modules/context');
+const { globalContext, middleware,getContext, setContext } = require('./modules/context');
 const e = require('express');
 
 globalContext.actions.log = (ctx, action) => {
@@ -268,41 +294,41 @@ globalContext.actions.log = (ctx, action) => {
     }
 };
 
-// globalContext.actions.response = (ctx, action) => {
-//     try {
-//         const consolelog = require('./modules/logger');
-//         const { key = "data" } = action;
+globalContext.actions.response = (ctx, action) => {
+    try {
+        const consolelog = require('./modules/logger');
+        const { key = "data" } = action;
 
-//         if (!ctx.data[key]) {
-//             ctx.data[key] = {};
-//             consolelog.log('Response Object:', {
-//                 status: 'initialized',
-//                 key: key,
-//                 timestamp: new Date().toISOString()
-//             });
-//         } else {
-//             consolelog.log('Response Object:', {
-//                 status: 'exists',
-//                 key: key,
-//                 timestamp: new Date().toISOString()
-//             });
-//         }
+        if (!ctx.data[key]) {
+            ctx.data[key] = {};
+            consolelog.log('Response Object:', {
+                status: 'initialized',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        } else {
+            consolelog.log('Response Object:', {
+                status: 'exists',
+                key: key,
+                timestamp: new Date().toISOString()
+            });
+        }
 
-//         return response;
-//     } catch (error) {
-//         try {
-//             const consolelog = require('./modules/logger');
-//             consolelog.error('Error in action.response:', {
-//                 error: error.stack || error.message,
-//                 timestamp: new Date().toISOString()
-//             });
-//         } catch (loggingError) {
-//             console.error('Failed to log response error:', loggingError);
-//             console.error('Original error:', error);
-//         }
-//         throw error;
-//     }
-// };
+        return response;
+    } catch (error) {
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('Error in action.response:', {
+                error: error.stack || error.message,
+                timestamp: new Date().toISOString()
+            });
+        } catch (loggingError) {
+            console.error('Failed to log response error:', loggingError);
+            console.error('Original error:', error);
+        }
+        throw error;
+    }
+};
 
 globalContext.actions.mergeTemplate = (ctx, params) => {
             const { data } = params;
@@ -343,12 +369,12 @@ globalContext.actions.notify = (ctx, target) => {
     console.log(`[NOTIFY]: Notification sent to ${target}`);
 };
 
-globalContext.actions.response = (ctx, params) => {
-    const { key, data } = params;    
-    console.log(`[RESPONSE]: Data stored under key: ${data}`);
-    response.setResponse(600, "done", null, data, 'response');
-    return response;    
-};
+// globalContext.actions.response = (ctx, params) => {
+//     const { key, data } = params;    
+//     console.log(`[RESPONSE]: Data stored under key: ${data}`);
+//     response.setResponse(600, "done", null, data, 'response');
+//     return response;    
+// };
 
 globalContext.actions.end = (ctx, params) => {
     console.log('[END]: End of action sequence');
@@ -467,8 +493,7 @@ function registerProxyEndpoints(app, apiConfig) {
                 consolelog.log(`Auth for route ${route}:`, auth); // 
                 app[method.toLowerCase()](
                     route,
-                    authenticateMiddleware(auth),
-                    aclMiddleware(acl),
+                    aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware),                
                     async (req, res) => {
                         console.log(`Proxy request received on route: ${route} [${method}]`);
                         try {
@@ -617,22 +642,9 @@ function registerStaticRoute(app, endpoint) {
         return; // Skip invalid configuration
     }
 
-    const middlewares = [];
-    
-    // Add authentication middleware if specified
-    if (auth) {
-        middlewares.push(authenticateMiddleware(auth));
-    }
-
-    // Add access control middleware if specified
-    if (acl) {
-        middlewares.push(aclMiddleware(acl));
-    }
-
-
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions),cors(corsOptions), ...middlewares, express.static(folderPath));
+    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware), express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
@@ -652,13 +664,14 @@ const registerFileUploadEndpoint = (app, config) => {
 
     const fieldName = fileUpload.fieldName || 'file'; // Default to 'file' if not specified
     
-    app.post(route, authenticateMiddleware(auth), aclMiddleware(acl), upload.single(fieldName), async (req, res) => {
+    app.post(route, aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware), upload.single(fieldName), async (req, res) => {
         const dbConnectionConfig = { dbType: config.dbType, dbConnection: config.dbConnection };
         console.log(req.body);
         // Extract file and metadata
         const { file } = req;
         // uploaded_by should come from the jwt token        
         const uploaded_by = req.user; // Ensure this is passed in the request body
+        const user_id = req.user.id ? req.user.user_id : null; 
 
         if (!file) {
             return res.status(400).json({ error: 'No file uploaded' });
@@ -666,7 +679,7 @@ const registerFileUploadEndpoint = (app, config) => {
 
         const sql = `
             INSERT INTO ${dbTable} (${allowWrite.join(', ')})
-            VALUES (?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
         `;
 
         const values = [
@@ -674,6 +687,7 @@ const registerFileUploadEndpoint = (app, config) => {
             path.join(fileUpload.storagePath, file.filename),
             file.mimetype,
             uploaded_by,
+            user_id
         ];
 
         console.log(`Uploading file to ${route}:`, values);
@@ -855,7 +869,10 @@ function registerRoutes(app, apiConfig) {
 
     apiConfig.forEach((endpoint, index) => {
         const { route, dbTable, dbConnection: connString, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache, auth, authentication, encryption } = endpoint;
-        
+        const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
+        const unauthorized = (endpoint.errorCodes && endpoint.errorCodes['unauthorized']) 
+            ? endpoint.errorCodes['unauthorized'] 
+            : defaultUnauthorized;
         // Validate required configuration
         if (!connString || !dbTable || !route) {
             console.error(`Invalid endpoint configuration at index ${index}:`, {
@@ -1037,208 +1054,220 @@ function buildFilterClause(filterObj, dbTable) {
     };
   }
   
-  const getParamPath =
-  keys && keys.length > 0 ? `/:${keys[0]}?` : "";
-app.get(
-  `${route}${getParamPath}`,
-  authenticateMiddleware(auth),
-  aclMiddleware(acl),
-  async (req, res) => {
-    try {
-      console.log("Incoming GET request:", {
-        route,
-        params: req.params,
-        query: req.query,
-      });
+  const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
 
-      const connection = await getDbConnection(endpoint);
-      if (!connection) {
-        console.error(`Database connection failed for ${endpoint.dbConnection}`);
-        return res
-          .status(500)
-          .json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-      }
-
-      // Sanitize query parameters.
-      const sanitizedQuery = Object.fromEntries(
-        Object.entries(req.query).map(([key, value]) => [
-          key,
-          String(value).replace(/^['"]|['"]$/g, ""),
-        ])
-      );
-
-      // Pagination parameters.
-      const limit = parseInt(sanitizedQuery.limit, 10) || 20;
-      const offset = parseInt(sanitizedQuery.offset, 10) || 0;
-      if (limit < 0 || offset < 0) {
-        console.error("Invalid pagination parameters:", { limit, offset });
-        return res
-          .status(400)
-          .json({ error: "Limit and offset must be non-negative integers" });
-      }
-
-      // Determine if a single record was requested.
-      // Use the key defined in keys if available; otherwise check for a parameter named "id".
-      const recordKey = keys && keys.length > 0 ? keys[0] : "id";
-      const recordId = req.params[recordKey];
-
-      let whereClause = "";
-      let params = [];
-
-      if (recordId) {
-        // Use recordKey in the SQL query.
-        whereClause = `WHERE ${dbTable}.${recordKey} = ?`;
-        params.push(recordId);
-      } else {
-        let filterClause = "";
-        let filterValues = [];
-        if (sanitizedQuery.filter && typeof sanitizedQuery.filter === "object") {
-          const { clause, values } = buildFilterClause(sanitizedQuery.filter, dbTable);
-          filterClause = clause;
-          filterValues = values;
-        }
-
-        const queryKeys = endpoint.keys
-          ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
-          : Object.keys(sanitizedQuery);
-        const equalityClause = queryKeys
-          .map((key) => `${dbTable}.${key} = ?`)
-          .join(" AND ");
-        const equalityValues = queryKeys.map((key) => sanitizedQuery[key]);
-
-        const clauses = [];
-        if (equalityClause) clauses.push(equalityClause);
-        if (filterClause) clauses.push(filterClause);
-        if (clauses.length) {
-          whereClause = `WHERE ${clauses.join(" AND ")}`;
-          params = [...equalityValues, ...filterValues];
-        }
-      }
-
-      // Enforce record ownership if configured.
-      if (endpoint.owner) {
-        const user = getContext('user');
-        if (!user) {
-          return res.status(401).json({ error: "Unauthorized" });
-        }
-        if (whereClause) {
-          whereClause += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-        } else {
-          whereClause = `WHERE ${dbTable}.${endpoint.owner.column} = ?`;
-        }
-        params.push(user[endpoint.owner.tokenField]);
-      }
-
-      // Validate requested fields.
-      const requestedFields = sanitizedQuery.fields
-        ? sanitizedQuery.fields.split(",").filter((field) => endpoint.allowRead.includes(field))
-        : endpoint.allowRead;
-      if (!requestedFields.length) {
-        console.error("No valid fields requested:", sanitizedQuery.fields);
-        return res.status(400).json({ error: "No valid fields requested" });
-      }
-      const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(", ");
-
-      // Process relationships.
-      let joinClause = "";
-      let relatedFields = "";
-      if (Array.isArray(endpoint.relationships)) {
-        endpoint.relationships.forEach((rel) => {
-          const joinType = rel.joinType || "LEFT JOIN";
-          joinClause += ` ${joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
-          if (Array.isArray(rel.fields) && rel.fields.length > 0) {
-            relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(", ")}`;
-          }
+  app.get(
+    `${route}${getParamPath}`,
+    aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware),
+    async (req, res) => {
+      try {
+        console.log("Incoming GET request:", {
+          route,
+          params: req.params,
+          query: req.query,
         });
-      }
-      const queryFields = `${fields}${relatedFields}`;
-      const paginationClause = recordId ? "" : `LIMIT ${limit} OFFSET ${offset}`;
-      const dataQuery = `
-        SELECT ${queryFields}
-        FROM ${dbTable}
-        ${joinClause}
-        ${whereClause}
-        ${paginationClause}
-      `;
-      const countQuery = `
-        SELECT COUNT(*) as totalCount
-        FROM ${dbTable}
-        ${joinClause}
-        ${whereClause}
-      `;
-
-      const cacheKey = `cache:${route}:${JSON.stringify(req.params)}:${JSON.stringify(req.query)}`;
-      if (endpoint.cache === 1) {
-        const cachedData = await redis.get(cacheKey);
-        if (cachedData) {
-          console.log("Cache hit for key:", cacheKey);
-          return res.json(JSON.parse(cachedData));
+  
+        const connection = await getDbConnection(endpoint);
+        if (!connection) {
+          console.error(`Database connection failed for ${endpoint.dbConnection}`);
+          return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
         }
-      }
-      console.log("Cache miss or caching disabled. Executing queries.");
-
-      let totalCount = 0;
-      if (!recordId) {
-        if (whereClause.trim() === "") {
-          const [tables] = await connection.execute(
-            "SELECT TABLE_NAME FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?",
-            ["table_stats"]
-          );
-          if (tables.length > 0) {
-            const approxQuery = "SELECT row_count as totalCount FROM table_stats WHERE table_name = ?";
-            try {
-              const [approxResult] = await connection.execute(approxQuery, [dbTable]);
-              totalCount = approxResult[0]?.totalCount || 0;
-            } catch (err) {
-              console.error("Error executing approximate count query:", err);
-              totalCount = 0;
+  
+        // Sanitize query parameters.
+        const sanitizedQuery = Object.fromEntries(
+          Object.entries(req.query).map(([key, value]) => [
+            key,
+            String(value).replace(/^['"]|['"]$/g, ""),
+          ])
+        );
+  
+        // Pagination parameters.
+        const limit = parseInt(sanitizedQuery.limit, 10) || 20;
+        const offset = parseInt(sanitizedQuery.offset, 10) || 0;
+        if (limit < 0 || offset < 0) {
+          console.error("Invalid pagination parameters:", { limit, offset });
+          return res.status(400).json({ error: "Limit and offset must be non-negative integers" });
+        }
+  
+        // Determine if a single record was requested.
+        const recordKey = keys && keys.length > 0 ? keys[0] : "id";
+        let recordId = req.params[recordKey];
+  
+        let whereClause = "";
+        let params = [];
+  
+        if (recordId) {
+          // Convert UUID back to original ID if needed.
+          if (endpoint.uuidMapping) {
+            const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+            if (!decodedId) {
+              return res.status(400).json({ error: "Invalid UUID provided" });
             }
-          } else {
-            console.log("table_stats table not found; disabling record count.");
-            totalCount = 0;
+            recordId = decodedId;
           }
+  
+          // Use recordKey in the SQL query.
+          whereClause = `WHERE ${dbTable}.${recordKey} = ?`;
+          params.push(recordId);
         } else {
+          let filterClause = "";
+          let filterValues = [];
+          if (sanitizedQuery.filter && typeof sanitizedQuery.filter === "object") {
+            const { clause, values } = buildFilterClause(sanitizedQuery.filter, dbTable);
+            filterClause = clause;
+            filterValues = values;
+          }
+            // If UUID mapping is enabled and the query contains a "uuid" parameter,
+            // assign it to the primary key field (keys[0]) and remove the "uuid" key.
+            if (endpoint.uuidMapping && sanitizedQuery.uuid !== undefined) {
+                sanitizedQuery[endpoint.keys[0]] = sanitizedQuery.uuid;
+                delete sanitizedQuery.uuid;
+            }
+  
+          const queryKeys = endpoint.keys
+            ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
+            : Object.keys(sanitizedQuery);
+          const equalityClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(" AND ");
+          const equalityValues = [];
+          for (const key of queryKeys) {
+            let value = sanitizedQuery[key];
+            // Only convert the value if this key is the primary key.
+            if (endpoint.uuidMapping && key === (endpoint.keys && endpoint.keys[0])) {
+              const decodedValue = await getOriginalIdFromUUID(dbTable, value);
+              if (!decodedValue) {                
+                if(endpoint.errorCodes.notFound){
+                    return res.status(endpoint.errorCodes.notFound.httpCode).json({ error: endpoint.errorCodes
+                        .notFound.message });
+                }
+                return res
+                  .status(400)
+                  .json({ error: `Sorry, record not Found` });
+              }
+              equalityValues.push(decodedValue);
+            } else {
+              equalityValues.push(value);
+            }
+          }
+          const clauses = [];
+          if (equalityClause) clauses.push(equalityClause);
+          if (filterClause) clauses.push(filterClause);
+          if (clauses.length) {
+            whereClause = `WHERE ${clauses.join(" AND ")}`;
+            params = [...equalityValues, ...filterValues];
+          }
+        }
+  
+        // Enforce record ownership if configured.
+        if (endpoint.owner) {
+          const user = getContext("user");
+          if (!user) {
+            return res.status(401).json({ error: "Unauthorized" });
+          }
+          whereClause += whereClause ? ` AND ${dbTable}.${endpoint.owner.column} = ?` : `WHERE ${dbTable}.${endpoint.owner.column} = ?`;
+          params.push(user[endpoint.owner.tokenField]);
+        }
+  
+        // Validate requested fields.
+        const requestedFields = sanitizedQuery.fields
+          ? sanitizedQuery.fields.split(",").filter((field) => endpoint.allowRead.includes(field))
+          : endpoint.allowRead;
+        if (!requestedFields.length) {
+          console.error("No valid fields requested:", sanitizedQuery.fields);
+          return res.status(400).json({ error: "No valid fields requested" });
+        }
+        const fields = requestedFields.map((field) => `${dbTable}.${field}`).join(", ");
+  
+        // Process relationships.
+        let joinClause = "";
+        let relatedFields = "";
+        if (Array.isArray(endpoint.relationships)) {
+          endpoint.relationships.forEach((rel) => {
+            const joinType = rel.joinType || "LEFT JOIN";
+            joinClause += ` ${joinType} ${rel.relatedTable} ON ${dbTable}.${rel.foreignKey} = ${rel.relatedTable}.${rel.relatedKey}`;
+            if (Array.isArray(rel.fields) && rel.fields.length > 0) {
+              relatedFields += `, ${rel.fields.map((field) => `${rel.relatedTable}.${field}`).join(", ")}`;
+            }
+          });
+        }
+        const queryFields = `${fields}${relatedFields}`;
+        const paginationClause = recordId ? "" : `LIMIT ${limit} OFFSET ${offset}`;
+        const dataQuery = `
+          SELECT ${queryFields}, ${recordKey} as originalId
+          FROM ${dbTable}
+          ${joinClause}
+          ${whereClause}
+          ${paginationClause}
+        `;
+        const countQuery = `
+          SELECT COUNT(*) as totalCount
+          FROM ${dbTable}
+          ${joinClause}
+          ${whereClause}
+        `;
+  
+        const cacheKey = `cache:${route}:${JSON.stringify(req.params)}:${JSON.stringify(req.query)}`;
+        if (endpoint.cache === 1) {
+          const cachedData = await redis.get(cacheKey);
+          if (cachedData) {
+            console.log("Cache hit for key:", cacheKey);
+            return res.json(JSON.parse(cachedData));
+          }
+        }
+        console.log("Cache miss or caching disabled. Executing queries.");
+  
+        let totalCount = 0;
+        if (!recordId) {
           const [countResult] = await connection.execute(countQuery, params);
           totalCount = countResult[0]?.totalCount || 0;
         }
-      }
-
-      const [results] = await connection.execute(dataQuery, params);
-      let response;
-      if (recordId) {
-        if (!results.length) {
-          return res.status(404).json({ error: "Record not found" });
+  
+        const [results] = await connection.execute(dataQuery, params);
+  
+        // Convert IDs to UUIDs before returning response
+        if (endpoint.uuidMapping) {
+          results.forEach((record) => {
+            record.uuid = generateDeterministicUUID(dbTable, record.originalId, SECRET_SALT);
+            storeUUIDMapping(dbTable, record.originalId, record.uuid)
+            delete record.originalId;
+            delete record[recordKey]; 
+          });
         }
-        response = results[0];
-      } else {
-        response = {
-          data: results,
-          metadata: {
-            totalRecords: totalCount,
-            limit,
-            offset,
-            totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
-          },
-        };
+  
+        let response;
+        if (recordId) {
+          if (!results.length) {
+            return res.status(404).json({ error: "Record not found" });
+          }
+          response = results[0];
+        } else {
+          response = {
+            data: results,
+            metadata: {
+              totalRecords: totalCount,
+              limit,
+              offset,
+              totalPages: limit > 0 ? Math.ceil(totalCount / limit) : 0,
+            },
+          };
+        }
+  
+        if (endpoint.cache === 1) {
+          console.log("Caching response for key:", cacheKey);
+          await redis.set(cacheKey, JSON.stringify(response), "EX", 300);
+        }
+        res.json(response);
+      } catch (error) {
+        console.error(`Error in GET ${route}:`, error.stack);
+        res.status(500).json({ error: error.message });
       }
-
-      if (endpoint.cache === 1) {
-        console.log("Caching response for key:", cacheKey);
-        await redis.set(cacheKey, JSON.stringify(response), "EX", 300);
-      }
-      res.json(response);
-    } catch (error) {
-      console.error(`Error in GET ${route}:`, error.stack);
-      res.status(500).json({ error: error.message });
     }
-  }
-);
-
+  );
+  
     
         
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
-            app.post(route,cors(corsOptions), authenticateMiddleware(auth), aclMiddleware(acl), async (req, res) => {
+            app.post(route,cors(corsOptions), aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware), async (req, res) => {
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });
@@ -1259,133 +1288,165 @@ app.get(
             });
         }
                 // For endpoints that require a primary key (PUT, PATCH, DELETE), register them only if keys is defined.
-        if (keys && keys.length > 0) {
-            const primaryKey = keys[0];
-
-            // *******************************
-            // PUT endpoint adjustments
-            // *******************************
-            app.put(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                if (keys && keys.length > 0) {
+                    const primaryKey = keys[0];
+                
+                    // *******************************
+                    // PUT Endpoint (Update)
+                    // *******************************
+                    app.put(
+                        `${route}/:${primaryKey}`,                        
+                        aarMiddleware(auth, {acl, unauthorized}, app.locals.ruleEngineMiddleware),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
+                            if (writableFields.length === 0) {
+                                return res.status(400).json({ error: 'No writable fields provided' });
+                            }
+                
+                            const values = writableFields.map((key) => req.body[key]);
+                            const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
+                            let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+                            const params = [...values, recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record updated' });
+                            } catch (error) {
+                                console.error(`Error in PUT ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                
+                    // *******************************
+                    // PATCH Endpoint (Partial Update)
+                    // *******************************
+                    app.patch(
+                        `${route}/:${primaryKey}`,
+                        aarMiddleware(auth, {acl, unauthorized}, app.locals.ruleEngineMiddleware),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
+                            if (writableFields.length === 0) {
+                                return res.status(400).json({ error: 'No writable fields provided' });
+                            }
+                
+                            const values = writableFields.map((key) => req.body[key]);
+                            const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
+                            let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
+                            const params = [...values, recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record partially updated' });
+                            } catch (error) {
+                                console.error(`Error in PATCH ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                
+                    // *******************************
+                    // DELETE Endpoint
+                    // *******************************
+                    app.delete(
+                        `${route}/:${primaryKey}`,
+                        aarMiddleware(auth, {acl, unauthorized}, app.locals.ruleEngineMiddleware),
+                        async (req, res) => {
+                            let recordId = req.params[primaryKey];
+                
+                            // Check if UUID obfuscation is enabled
+                            if (endpoint.uuidMapping) {
+                                const decodedId = await getOriginalIdFromUUID(dbTable, recordId);
+                                if (!decodedId) {
+                                    return res.status(400).json({ error: "Invalid UUID provided" });
+                                }
+                                recordId = decodedId;
+                            }
+                
+                            if (!recordId) {
+                                return res.status(400).json({ error: 'Record key is missing in URL path' });
+                            }
+                
+                            let query = `DELETE FROM ${dbTable} WHERE ${primaryKey} = ?`;
+                            const params = [recordId];
+                
+                            if (endpoint.owner) {
+                                const user = getContext('user');
+                                if (!user) {
+                                    return res.status(401).json({ error: "Unauthorized" });
+                                }
+                                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                                params.push(user[endpoint.owner.tokenField]);
+                            }
+                
+                            try {
+                                const connection = await getDbConnection(endpoint);
+                                await connection.execute(query, params);
+                                res.status(200).json({ message: 'Record deleted' });
+                            } catch (error) {
+                                console.error(`Error in DELETE ${route}:`, error);
+                                res.status(500).json({ error: 'Internal Server Error' });
+                            }
+                        }
+                    );
+                } else {
+                    console.log(`Skipping PUT, PATCH, DELETE for ${route} as no keys are defined.`);
                 }
-                const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
-                if (writableFields.length === 0) {
-                return res.status(400).json({ error: 'No writable fields provided' });
-                }
-                const values = writableFields.map((key) => req.body[key]);
-                const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
-                const params = [...values, recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record updated' });
-                } catch (error) {
-                console.error(`Error in PUT ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-
-            // *******************************
-            // PATCH endpoint adjustments
-            // *******************************
-            app.patch(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
-                }
-                const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
-                if (writableFields.length === 0) {
-                return res.status(400).json({ error: 'No writable fields provided' });
-                }
-                const values = writableFields.map((key) => req.body[key]);
-                const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
-                let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
-                const params = [...values, recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record partially updated' });
-                } catch (error) {
-                console.error(`Error in PATCH ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-
-            // *******************************
-            // DELETE endpoint adjustments
-            // *******************************
-            app.delete(
-            `${route}/:${primaryKey}`,
-            authenticateMiddleware(auth),
-            aclMiddleware(acl),
-            async (req, res) => {
-                const recordId = req.params[primaryKey];
-                if (!recordId) {
-                return res.status(400).json({ error: 'Record key is missing in URL path' });
-                }
-                let query = `DELETE FROM ${dbTable} WHERE ${primaryKey} = ?`;
-                const params = [recordId];
-
-                if (endpoint.owner) {
-                const user = getContext('user');
-                if (!user) {
-                    return res.status(401).json({ error: "Unauthorized" });
-                }
-                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-                params.push(user[endpoint.owner.tokenField]);
-                }
-
-                try {
-                const connection = await getDbConnection(endpoint);
-                await connection.execute(query, params);
-                res.status(200).json({ message: 'Record deleted' });
-                } catch (error) {
-                console.error(`Error in DELETE ${route}:`, error);
-                res.status(500).json({ error: 'Internal Server Error' });
-                }
-            }
-            );
-        } else {
-            // Optionally, log that update/delete operations are skipped because no keys are defined.
-            console.log(`Skipping PUT, PATCH, DELETE for ${route} as no keys are defined.`);
-        }
+                
     });
 }
 
-function initializeRules() {
+function initializeRules(app) {
     try {
 
         if (require.cache[require.resolve(rulesConfigPath)]) {
@@ -1405,10 +1466,11 @@ function initializeRules() {
             ruleEngine = ruleEngineInstance;
         }
         consolelog.log(ruleEngine);  
-        globalContext.ruleEngine = ruleEngineInstance.rules;  
+        globalContext.ruleEngine = ruleEngine;
+        app.locals.ruleEngineMiddleware = ruleEngine;
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
-        console.error('Failed to initialize business rules:', error.message);        
+        console.error('Failed to initialize business rules:', error.message);               
     }
 }
 
@@ -1715,6 +1777,7 @@ class Adaptus2Server {
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
+        this.app.use(express.json());
         
         if(process.env.CORS_ENABLED === 'true') {
             this.app.use(cors(corsOptions));
@@ -1742,6 +1805,31 @@ class Adaptus2Server {
         this.streamingServer = null;
         this.app.use(middleware);
     }
+
+    getRoutes(app) {
+        const routes = [];
+        app._router.stack.forEach((layer) => {
+          if (layer.route) {
+            // Direct route
+            routes.push({
+              path: layer.route.path,
+              methods: Object.keys(layer.route.methods)
+            });
+          } else if (layer.name === 'router' && layer.handle.stack) {
+            // This is a router middleware (sub-router)
+            layer.handle.stack.forEach((nestedLayer) => {
+              if (nestedLayer.route) {
+                routes.push({
+                  path: layer.regexp.toString() + nestedLayer.route.path,
+                  methods: Object.keys(nestedLayer.route.methods)
+                });
+              }
+            });
+          }
+        });
+        return routes;
+      }
+      
 
     setupSocketServer() {
         this.socketServer = net.createServer((socket) => {
@@ -1842,10 +1930,11 @@ class Adaptus2Server {
                             try {                               
                                 consolelog.log('Reloading configuration...');
                                 clearRedisCache();
-                                initializeRules();
+                                initializeRules(this.app);
                                 this.apiConfig = await loadConfig();
                                 consolelog.log(this.apiConfig);
                                 this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
+                                updateValidationRules();
                         
                                 // CLEAR ALL ROUTES (Fixes issue)
                                 this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
@@ -1858,6 +1947,8 @@ class Adaptus2Server {
                                 this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
                         
                                 if (PLUGIN_MANAGER === 'network') {
+
+
                                     await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
                                     subscribeToConfigUpdates((updatedConfig) => {
                                         this.apiConfig = updatedConfig.apiConfig;
@@ -1933,12 +2024,7 @@ class Adaptus2Server {
                             socket.write(`Loaded plugins: ${plugins.join(", ")}\n`);
                             break;
                         case "routes":
-                            const routes = this.app._router.stack
-                                .filter((layer) => layer.route)
-                                .map((layer) => ({
-                                    path: layer.route.path,
-                                    methods: Object.keys(layer.route.methods).join(", "),
-                                }));
+                            const routes = this.getRoutes(this.app);
                             socket.write(`Registered routes: ${JSON.stringify(routes, null, 2)}\n`);
                             break;
                         case "exit":
@@ -2329,9 +2415,8 @@ class Adaptus2Server {
 
         // Rule engine middleware
         consolelog.log('Rule Engine for Middleware', ruleEngine);
-        const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
-        this.app.use(ruleEngineMiddleware.middleware());
-
+        const ruleEngineMiddleware = new RuleEngineMiddleware(globalContext.ruleEngine, this.dependencyManager);
+        this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;        
         // Global error handler with enhanced logging
         this.app.use((err, req, res, next) => {
             try {
@@ -2416,9 +2501,6 @@ class Adaptus2Server {
         );
     }
 
-
-    
-
     // Initialize optional modules safely
     initializeOptionalModules(app) {
         // Initialize CMS if enabled
@@ -2428,9 +2510,12 @@ class Adaptus2Server {
                     dbType: process.env.DEFAULT_DBTYPE,
                     dbConnection: process.env.DEFAULT_DBCONNECTION
                 });
+                // Register CMS routes under /cms
+                this.cmsManager.registerRoutes(app);
                 console.log('CMS module initialized successfully');
             } catch (error) {
                 console.error('Failed to initialize CMS module:', error.message);
+                process.exit(1);
             }
         }
 
@@ -2708,13 +2793,17 @@ class Adaptus2Server {
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught Exception:', error);
             // Perform graceful shutdown
-            this.shutdown(1);
+            if(process.env.SHUTDOWN_ON_UNCAUGHT === 'true') {
+                this.shutdown(1);
+            }
         });
 
         process.on('unhandledRejection', (reason, promise) => {
             logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
             // Perform graceful shutdown
-            this.shutdown(1);
+            if(process.env.SHUTDOWN_ON_REJECTION === 'true') {                
+                this.shutdown(1);
+            }
         });
 
         try {
@@ -2734,6 +2823,10 @@ class Adaptus2Server {
             }
             if (process.argv.includes('--build')) {
                 await handleBuildCommand();
+                exit();
+            }
+            if (process.argv.includes('--version')) {                            
+                console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
                 exit();
             }
 
@@ -2782,16 +2875,18 @@ class Adaptus2Server {
             this.setupDependencies();
             this.setupPluginLoader();
             autoloadPlugins(this.pluginManager);
-                       // Register validation middleware globally
-                       const validationMiddleware = createGlobalValidationMiddleware();
-                       this.app.use(validationMiddleware);
+           
             this.registerAnalyticsRoutes();
             this.registerDevTools();
             setupRag(this.apiConfig);
+             // Register validation middleware globally
+            const validationMiddleware = createGlobalValidationMiddleware();
+            this.app.use(validationMiddleware);
+
             extendContext();
-            initializeRules();
+            initializeRules(this.app);
             this.registerMiddleware();
-            
+            updateValidationRules();
  
 
             this.registerRoutes();

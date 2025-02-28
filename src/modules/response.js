@@ -18,6 +18,7 @@ const response = {
         this.message = message;
         this.error = error;
         this.response = data;
+        this.data = data;
         this.module = module;
         return this;
     },

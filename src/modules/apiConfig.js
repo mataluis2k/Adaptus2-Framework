@@ -3,6 +3,7 @@ const consolelog = require('./logger');
 const { exit } = require('process');
 const path = require('path');
 const { config } = require('dotenv');
+const CMS_TABLE_SCHEMA = require('./cmsDefinition');
 require('dotenv').config({ path: __dirname + '/.env' });
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 const configPath = path.join(configDir, 'apiConfig.json');
@@ -160,6 +161,11 @@ const loadConfig = async (configFile = configPath) => {
         consolelog.log('Loading configuration...', configFile);
         const configData = fs.readFileSync(configFile, 'utf-8');
         apiConfig = JSON.parse(configData);
+        
+        // Add CMS_TABLE_SCHEMA to apiConfig
+        if (!apiConfig.find(config => config.dbTable === CMS_TABLE_SCHEMA.dbTable)) {
+            apiConfig.push(CMS_TABLE_SCHEMA);
+        }
         categorizedConfig = categorizeApiConfig(apiConfig);
 
         // Update global context resources

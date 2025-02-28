@@ -114,6 +114,7 @@ class RuleEngineMiddleware {
                 res.req = async (responseData) => {
                     console.log(`Processing inbound ${eventType} on ${entityName} with data:`, responseData);
                     try {
+                       
                         // Parse response data if it's a string; handle invalid JSON gracefully
                         let parsedData;
                         try {
@@ -178,6 +179,10 @@ class RuleEngineMiddleware {
 
                 // this handles the return payload on response
                 res.send = async (responseData) => {
+                    if (res.statusCode > 200) {
+                        console.log(`Skipping rule processing because status is 404 for ${entityName}`);
+                        return originalSend.call(res, responseData);
+                    }
                     console.log(`Processing outbound ${eventType} on ${entityName} with data:`, responseData);
                     try {
                         // Parse response data if it's a string; handle invalid JSON gracefully

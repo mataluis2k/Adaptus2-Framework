@@ -119,6 +119,11 @@ function prompt() {
         if (line === "shutdown") {
             exit = true;
         }
+        // Avoid sending empty lines 
+        if (line.trim() === "") {
+            prompt();
+            return;
+        }
         socket.write(line);
     });
 }

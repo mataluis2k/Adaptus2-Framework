@@ -4,7 +4,8 @@ const { authenticateMiddleware } = require("../middleware/authenticationMiddlewa
 const { Ollama }= require('ollama');
 
 // Configure Ollama client with base URL
-const ollamaClient = new Ollama({ host: 'http://localhost:11434' });
+const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
+const ollamaClient = new Ollama({ host: OLLAMA_HOST });
 
 class OllamaModule {
     constructor() {

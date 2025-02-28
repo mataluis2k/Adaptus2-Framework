@@ -4,33 +4,11 @@ const sharp = require("sharp");
 const { v4: uuidv4 } = require("uuid");
 const { create, read, update, delete: deleteRecord, query } = require('./db');
 const logger = require('./logger');
-
-// CMS table schema definition
-const CMS_TABLE_SCHEMA = {
-    routeType: 'def',
-    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
-    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
-    dbTable: 'cms_content',
-    allowWrite: ['content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id'],
-    allowRead: ['id', 'content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id', 'created_at', 'updated_at'],
-    keys: ['id'],
-    acl: ['adminAccess'],
-    cache: 0,
-    columnDefinitions: {
-        id: 'VARCHAR(36) PRIMARY KEY',
-        content_type: 'VARCHAR(50) NOT NULL',
-        title: 'VARCHAR(255) NOT NULL',
-        slug: 'VARCHAR(255) NOT NULL',
-        content: 'TEXT',
-        file_path: 'TEXT',
-        metadata: 'JSON',
-        status: 'VARCHAR(20) DEFAULT "draft"',
-        author_id: 'VARCHAR(36)',
-        created_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
-        updated_at: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP',
-        INDEX: ['idx_content_type(content_type)', 'idx_slug(slug)', 'idx_status(status)']
-    }
-};
+const cmsConfig = require(path.join(process.cwd(), 'config', 'cmsManager.json'));
+const { authenticateMiddleware, aclMiddleware } = require("../middleware/authenticationMiddleware");
+const express = require('express');
+const CMS_TABLE_SCHEMA = require('./cmsDefinition');
+const crypto = require('crypto');
 
 class CMSManager {
     constructor(globalContext, dbConfig) {
@@ -95,8 +73,41 @@ class CMSManager {
         this.globalContext.actions.cms_search_content = this.searchContent.bind(this);
     }
 
+    
+
+    generateFingerprint(user) {
+    // Create a shallow clone of the user object
+    const userClone = { ...user };
+    
+    // Remove the properties we want to ignore
+    delete userClone.iat;
+    delete userClone.exp;
+    
+    // Create a canonical (sorted) JSON string
+    const canonicalString = JSON.stringify(this.sortKeys(userClone));
+    
+    // Generate a hash (SHA-256)
+    return crypto.createHash('sha256').update(canonicalString).digest('hex');
+    }
+
+    // Helper function to sort object keys recursively
+    sortKeys(obj) {
+    if (Array.isArray(obj)) {
+        return obj.map(sortKeys);
+    } else if (obj !== null && typeof obj === 'object') {
+        return Object.keys(obj)
+        .sort()
+        .reduce((sorted, key) => {
+            sorted[key] = sortKeys(obj[key]);
+            return sorted;
+        }, {});
+    }
+    return obj;
+    }
+
     async createContent(ctx, params) {
         try {
+            console.log(ctx);
             const { contentType, title, slug, content, file, metadata = {}, status = "draft" } = params;
 
             // Input validation
@@ -119,13 +130,19 @@ class CMSManager {
                 throw new Error("Content with this slug already exists");
             }
 
-            let filePath = null;
+            let filePath = "";
             let processedMetadata = metadata;
 
             // Handle file upload if present
             if (file && ['image', 'video', 'document'].includes(contentType)) {
                 filePath = await this.handleFileUpload(ctx, file, contentType);
                 processedMetadata = await this.extractMetadata(filePath, contentType);
+            }
+
+            let author_id = 'missing';
+            if(ctx.user){
+            // Find an unique identifier for the author_id field , either ctx.user.id or ctx.user.email or ctx.user.username or generate fingerprint from ctx.user
+                author_id = ctx.user.id || ctx.user.email || ctx.user.username || this.generateFingerprint(ctx.user);
             }
 
             const contentData = {
@@ -137,7 +154,7 @@ class CMSManager {
                 file_path: filePath,
                 metadata: JSON.stringify(processedMetadata),
                 status,
-                author_id: ctx.user?.id
+                author_id: author_id
             };
 
             const result = await create(this.dbConfig, CMS_TABLE_SCHEMA.dbTable, contentData);
@@ -167,8 +184,9 @@ class CMSManager {
 
             // Parse metadata JSON
             const result = content[0];
+            
             if (result.metadata) {
-                result.metadata = JSON.parse(result.metadata);
+                result.metadata = typeof result.metadata === 'string' ? JSON.parse(result.metadata) : result.metadata;
             }
 
             return result;
@@ -254,19 +272,21 @@ class CMSManager {
 
             // Build query with pagination
             const listQuery = {
-                text: `SELECT * FROM ${CMS_TABLE_SCHEMA.dbTable}
-                       ${Object.keys(filters).length > 0 ? 'WHERE ' + Object.keys(filters).map(key => `${key} = ?`).join(' AND ') : ''}
+                text: `SELECT * FROM ${CMS_TABLE_SCHEMA.dbTable} ${Object.keys(filters).length > 0 ? 'WHERE ' + Object.keys(filters).map(key => `${key} = ?`).join(' AND ') : ''}
                        ORDER BY created_at DESC
-                       LIMIT ? OFFSET ?`,
-                values: [...Object.values(filters), pageSize, offset]
+                       LIMIT ${pageSize} OFFSET ${offset}`,
+                values: [...Object.values(filters)]
             };
 
+            console.log(listQuery);
+
             const result = await query(this.dbConfig, listQuery.text, listQuery.values);
+            console.log(result);
 
             // Parse metadata for each item
             return result.map(item => ({
                 ...item,
-                metadata: item.metadata ? JSON.parse(item.metadata) : null
+                metadata: typeof item.metadata === 'string' ? JSON.parse(item.metadata) : item.metadata
             }));
         } catch (error) {
             logger.error('Error listing content:', error);
@@ -344,6 +364,106 @@ class CMSManager {
             logger.warn('Failed to delete file:', filePath, error);
         }
     }
+    registerRoutes(app) {
+        
+        // Load CMS configuration from the /config folder at the project root
+        const cmsConfig = require(path.join(process.cwd(), 'config', 'cmsManager.json'));
+        const router = express.Router();
+    
+        // POST /cms/create – Create Content
+        router.post(
+          '/create',
+          authenticateMiddleware(cmsConfig.routes.create.auth),
+          aclMiddleware(cmsConfig.routes.create.acl),
+          async (req, res) => {
+            try {
+              const result = await this.createContent(req, req.body);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // GET /cms/get – Retrieve Content (by id or slug)
+        router.get(
+          '/get',
+          authenticateMiddleware(cmsConfig.routes.get.auth),
+          aclMiddleware(cmsConfig.routes.get.acl),
+          async (req, res) => {
+            try {
+              const result = await this.getContent(req, req.query);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // PUT /cms/update – Update Content
+        router.put(
+          '/update',
+          authenticateMiddleware(cmsConfig.routes.update.auth),
+          aclMiddleware(cmsConfig.routes.update.acl),
+          async (req, res) => {
+            try {
+              const result = await this.updateContent(req, req.body);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // DELETE /cms/delete – Delete Content
+        router.delete(
+          '/delete',
+          authenticateMiddleware(cmsConfig.routes.delete.auth),
+          aclMiddleware(cmsConfig.routes.delete.acl, cmsConfig.routes.delete.errorCodes.unauthorized),
+          async (req, res) => {
+            try {
+              // You can pass parameters via query string or body, as needed
+              const result = await this.deleteContent(req, req.query);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // GET /cms/list – List Content
+        router.get(
+          '/list',
+          authenticateMiddleware(cmsConfig.routes.list.auth),
+          aclMiddleware(cmsConfig.routes.list.acl),
+          async (req, res) => {
+            try {
+              const result = await this.listContent(req, req.query);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // GET /cms/search – Search Content
+        router.get(
+          '/search',
+          authenticateMiddleware(cmsConfig.routes.search.auth),
+          aclMiddleware(cmsConfig.routes.search.acl),
+          async (req, res) => {
+            try {
+              const result = await this.searchContent(req, req.query);
+              res.json(result);
+            } catch (error) {
+              res.status(500).json({ error: error.message });
+            }
+          }
+        );
+    
+        // Mount the CMS router under /cms
+        app.use('/cms', router);
+      }
 }
 
 module.exports = CMSManager;
