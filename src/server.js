@@ -1807,7 +1807,11 @@ class Adaptus2Server {
                             socket.write(JSON.stringify(this.apiConfig, null, 2));
                             break;   
                         case "showRules":
-                            socket.write(JSON.stringify(globalContext.ruleEngine));
+                            if (ruleEngine) {
+                                socket.write(JSON.stringify(ruleEngine.getRules(), null, 2));
+                            } else {
+                                socket.write("No rules currently loaded.\n");
+                            }
                             break;
                         case "nodeInfo":
                             if (args.length < 2) {

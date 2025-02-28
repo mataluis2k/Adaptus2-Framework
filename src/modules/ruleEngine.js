@@ -520,6 +520,10 @@ class RuleEngine {
     this.response = { status: 200, message: 'Success', error: null };
   }
 
+  getRules() {
+    return this.rules;
+  }
+
     /**
    * Reload the rules in the engine.
    * @param {Array} newRules - New set of rules to replace the current rules.
