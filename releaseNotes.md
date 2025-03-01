@@ -1,6 +1,65 @@
 # Relase Notes
 ## Going to try to keep this upto date to make it simpler to track changes and enhancements 
 
+## As of March 1st 2025
+### Release Notes – [Version 2.1.64]
+
+#### Overview
+
+This release focuses on improving error handling, refining middleware configuration, enhancing caching strategies, and ensuring that business rules (DSL) remain synchronized across a clustered environment. These changes address several issues including unexpected application crashes when unsupported HTTP methods are invoked, misconfiguration of ACL parameters, and an over-aggressive cache flush on configuration reload.
+
+---
+
+#### Changes and Fixes
+
+1. **Graceful Handling of Unsupported HTTP Methods**
+   - **Issue:** The application was crashing with a "Cannot read properties of null (reading 'httpCode')" error when a DELETE request was executed—even though only GET was defined in the configuration.
+   - **Fix:**  
+     - Adjusted the route registration logic to ensure that only the HTTP methods explicitly specified in the configuration (e.g., "GET") are registered.
+     - Provided a fallback in the ACL middleware for error configurations, ensuring that if a custom error configuration is null or missing its `httpCode`, a default `{ httpCode: 403, message: 'Access Denied' }` is used.
+   - **Impact:** Requests for unsupported methods will now return a proper 404 or access-denied response without causing the application to crash.
+
+2. **Refinement of ACL and aarMiddleware Configuration**
+   - **Issue:** The middleware expected an ACL configuration as an array; however, the code was sending an object. This led to incorrect extraction of allowed roles and unintended access denials.
+   - **Fix:**  
+     - Updated the `aarMiddleware` function to handle both arrays and objects for the ACL configuration.  
+     - The new logic extracts allowed roles from either an `acl` or `config` property and uses the `unauthorized` or `message` property for custom error messages.
+   - **Impact:** This change ensures that the ACL middleware always receives a proper array of allowed roles and a valid error configuration, thereby reducing false negatives in access validation.
+
+3. **Separation of Database Caching vs. Configuration Caching**
+   - **Issue:** On configuration reload, the current implementation cleared the entire Redis cache (via `flushall()`), which inadvertently wiped out cached database records.
+   - **Proposed Improvement (Less Intrusive Change):**  
+     - Introduce distinct key prefixes for different caching domains. For instance, continue to use a key pattern like `cache:...` for database records while using a separate prefix (e.g., `config:`) for configuration data.
+     - Implement a new function (e.g., `clearConfigCache()`) that only deletes Redis keys starting with the configuration prefix rather than flushing the entire cache.
+   - **Impact:** Database query caching remains intact during a configuration reload, preserving performance and reducing unnecessary database hits.
+
+4. **Business Rules Synchronization Across the Cluster**
+   - **Issue:** Although API configuration was being propagated across the cluster, the business rules (DSL) used to initialize the RuleEngine were only loaded from disk on startup and were not synchronized.
+   - **Fix:**  
+     - Modified the configuration reload logic to check for an updated DSL text in the global context.
+     - When a new DSL text is detected (i.e., `updatedConfig.globalContext.dslText` exists), the RuleEngine is reinitialized using `RuleEngine.fromDSL`, and both the `globalContext.ruleEngine` and `app.locals.ruleEngineMiddleware` are updated.
+   - **Impact:** This ensures that business rules remain consistent across all nodes in the cluster. Any changes to the DSL (business rules) are propagated, so all instances operate with the same set of rules.
+
+5. **Cluster Configuration Update Propagation**
+   - **Enhancement:**  
+     - When running in network mode (`PLUGIN_MANAGER === 'network'`), a “safe” copy of the global context (with the existing rule engine removed via a custom replacer) is broadcasted using `broadcastConfigUpdate`.
+     - Nodes subscribe to configuration updates via `subscribeToConfigUpdates`, which not only updates the API configuration but also triggers the reinitialization of business rules if the DSL has changed.
+   - **Impact:** This mechanism ensures that any configuration changes—including updates to business rules—are propagated to all cluster nodes, maintaining a consistent application state.
+
+---
+
+#### Summary
+
+- **Error Handling:** Improved robustness by preventing crashes when unsupported HTTP methods are invoked and by ensuring a fallback error configuration in ACL middleware.
+- **Middleware Configuration:** Enhanced `aarMiddleware` to correctly process ACL configuration objects, leading to more accurate access control.
+- **Caching Strategy:** Proposed separation of configuration and database caching to avoid unnecessary cache wipes during config reloads.
+- **Business Rules Synchronization:** Added cluster-wide propagation of business rule updates, ensuring consistency across nodes.
+- **Cluster Communication:** Improved synchronization via Redis, enabling smooth configuration updates and business rules propagation in network mode.
+
+These changes collectively improve the stability, performance, and consistency of the application, especially in a clustered deployment.
+
+
+
 ## As of Feb 24th 2025
 
 Below are the release notes summarizing the fixes and improvements made today:
