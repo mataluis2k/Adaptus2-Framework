@@ -3,6 +3,7 @@ const JWT_SECRET = process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
 const consolelog = require('../modules/logger');
 const { setContext } = require('../modules/context');
 const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
+
 /**
  * ACL Middleware: Ensures user has one of the allowed roles.
  */
@@ -13,8 +14,9 @@ const aclMiddleware = (allowedRoles, customMessage = defaultUnauthorized) => {
             const userRole = req.user?.acl; // Adjust based on your user object structure
             if (!userRole || !allowedRoles.includes(userRole)) {
                 consolelog.log('User Denied access, mismatch in ACL Middleware:', allowedRoles);
-                // Use customMessage for the response
-                return res.status(customMessage.httpCode).json({ error: customMessage.message });
+                // Ensure a valid error configuration is used:
+                const errorConfig = (customMessage && customMessage.httpCode) ? customMessage : defaultUnauthorized;
+                return res.status(errorConfig.httpCode).json({ error: errorConfig.message });
             }
         }
         next(); // Proceed if ACL passes
@@ -30,15 +32,13 @@ const authenticateToken = (req, res, next) => {
 
     if (!token) {
         consolelog.log('Authorization header missing or token not provided', req.ip);
-        return res.status(401).json({ error: 'Unauthorized' }); // Stop execution
+        return res.status(401).json({ error: 'Unauthorized' });
     }
-    const decoded = jwt.decode(token);
-   
 
     jwt.verify(token, JWT_SECRET, (err, user) => {
         if (err) {
             consolelog.log('User Denied access, Invalid token', req.ip);
-            return res.status(403).json({ error: 'Forbidden' }); // Stop execution
+            return res.status(403).json({ error: 'Forbidden' });
         }
 
         req.user = user; // Attach user data to the request
@@ -52,7 +52,6 @@ const authenticateToken = (req, res, next) => {
  * Authentication Middleware: Optionally applies token authentication.
  */
 const authenticateMiddleware = (auth) => {
-    
     if (auth) {
         // Return `authenticateToken` if authentication is required
         return authenticateToken;

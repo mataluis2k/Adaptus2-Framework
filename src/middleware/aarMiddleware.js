@@ -24,13 +24,24 @@ function aarMiddleware(authConfig, aclConfig, ruleEngineInstance) {
 
   // Process ACL middleware if aclConfig is provided.
   if (aclConfig != null) {
-    // If aclConfig is an array, wrap it in an object with a null message.
+    let allowedRoles;
+    let message = null;
     if (Array.isArray(aclConfig)) {
-      aclConfig = { config: aclConfig, message: null };
+      // If aclConfig is an array, use it directly.
+      allowedRoles = aclConfig;
+    } else if (typeof aclConfig === 'object') {
+      // Try to extract allowed roles from the acl or config property.
+      allowedRoles = aclConfig.acl || aclConfig.config || [];
+      // Extract error message from unauthorized or message property.
+      message = aclConfig.unauthorized || aclConfig.message || null;
+    } else {
+      allowedRoles = [];
     }
-    // Destructure with default values to avoid errors.
-    const { config = [], message = null } = aclConfig;
-    middlewares.push(aclMiddleware(config, message));
+    // If allowedRoles is not already an array, wrap it.
+    if (!Array.isArray(allowedRoles)) {
+      allowedRoles = [allowedRoles];
+    }
+    middlewares.push(aclMiddleware(allowedRoles, message));
   }
 
   // Always include the RuleEngine middleware.
