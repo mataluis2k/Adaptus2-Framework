@@ -1,20 +1,36 @@
 const crypto = require('crypto');
 
-// Function to generate a UUID deterministically from an ID
-function generateDeterministicUUID(tableName, recordId, secretSalt) {
+module.exports = (redis) => {
+  // Function to store mapping in Redis using a column-specific key.
+  async function storeUUIDMapping(tableName, column, recordId, uuid) {
+    // Build a key that includes the table name, column, and UUID.
+    const key = `uuid_map:${tableName}:${column}:${uuid}`;
+    await redis.set(key, recordId);
+  }
+
+  // Function to retrieve the original ID from a UUID using a column-specific key.
+  async function getOriginalIdFromUUID(tableName, column, uuid) {
+    const key = `uuid_map:${tableName}:${column}:${uuid}`;
+    const recordId = await redis.get(key);
+    return recordId || null; // Return null if not found
+  }
+
+  // Function to generate a UUID deterministically from an ID and column name.
+  function generateDeterministicUUID(tableName, column, recordId, secretSalt) {
     const hmac = crypto.createHmac("sha256", secretSalt);
-    hmac.update(`${tableName}:${recordId}`);
+    // Incorporate table name, column, and recordId for a column-specific hash.
+    hmac.update(`${tableName}:${column}:${recordId}`);
     const hash = hmac.digest("hex");
-
-    // Format into UUID v7 style (version '7' in the UUID)
+    // Use the first 32 hex digits to format into a UUID-like string.
+    const shortHash = hash.substring(0, 32);
     return [
-        hash.substring(0, 8),
-        hash.substring(8, 4),
-        "7" + hash.substring(12, 3), // Set UUID v7 version
-        hash.substring(16, 4),
-        hash.substring(20, 12),
+      shortHash.substring(0, 8),
+      shortHash.substring(8, 12),
+      "7" + shortHash.substring(13, 16), // Force version '7'
+      shortHash.substring(16, 20),
+      shortHash.substring(20, 32),
     ].join("-");
-}
+  }
 
-
-module.exports = { generateDeterministicUUID };
+  return { storeUUIDMapping, getOriginalIdFromUUID, generateDeterministicUUID };
+};
