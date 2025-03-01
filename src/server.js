@@ -1467,6 +1467,7 @@ function initializeRules(app) {
         }
         consolelog.log(ruleEngine);  
         globalContext.ruleEngine = ruleEngine;
+        globalContext.dslText = dslText;
         app.locals.ruleEngineMiddleware = ruleEngine;
         consolelog.log('Business rules initialized successfully.');
     } catch (error) {
@@ -1766,6 +1767,13 @@ async function handleBuildCommand() {
     }
 }
 
+function removeRuleEngine(key, value) {
+    if (key === 'ruleEngine') {
+      return undefined;
+    }
+    return value;
+  }
+
 class Adaptus2Server {
     constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
         // Initialize API Analytics and DevTools
@@ -1947,13 +1955,21 @@ class Adaptus2Server {
                                 this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
                         
                                 if (PLUGIN_MANAGER === 'network') {
-
-
-                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, globalContext);
+                                    const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
+                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
                                     subscribeToConfigUpdates((updatedConfig) => {
                                         this.apiConfig = updatedConfig.apiConfig;
                                         this.categorizedConfig = updatedConfig.categorizedConfig;
                                         globalContext.resources = updatedConfig.globalContext.resources || {};
+                                        globalContext.actions = updatedConfig.globalContext.actions || {};
+                                        if(updatedConfig.globalContext.dslText) {
+                                            globalContext.dslText = updatedConfig.globalContext.dslText;
+                                            const New_ruleEngine = RuleEngine.fromDSL(dslText, globalContext);
+                                            if(New_ruleEngine) {
+                                                globalContext.ruleEngine = New_ruleEngine;
+                                                app.locals.ruleEngineMiddleware = New_ruleEngine;
+                                            }
+                                        }
                                         console.log('Configuration updated from cluster.');
                                     });
                                 }                                                              

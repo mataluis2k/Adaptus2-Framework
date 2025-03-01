@@ -21,9 +21,17 @@ async function broadcastConfigUpdate(apiConfig, categorizedConfig, globalContext
             version: currentTimestamp, // Add version
             serverId: process.env.SERVER_ID || 'unknown', // Include server ID for debugging
         };
+        // Use a custom replacer to remove the circular reference.
+        const safeConfigData = JSON.stringify(configData, (key, value) => {
+            // Omit the ruleEngine property anywhere in the structure.
+            if (key === 'ruleEngine') {
+                return undefined;
+            }
+            return value;
+        });
 
         // Store configuration in Redis
-        await publisherRedis.set(CONFIG_STORAGE_KEY, JSON.stringify(configData));
+        await publisherRedis.set(CONFIG_STORAGE_KEY, safeConfigData);
 
         // Publish update notification
         await publisherRedis.publish(CONFIG_UPDATE_CHANNEL, JSON.stringify({ action: 'update', version: currentTimestamp }));
