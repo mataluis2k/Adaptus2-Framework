@@ -1,6 +1,44 @@
 # Relase Notes
 ## Going to try to keep this upto date to make it simpler to track changes and enhancements 
 
+## As of March 2nd 2025
+
+The ML analytics middleware has been enhanced to support detailed record responses for all model types:
+
+**Recommendation Model:**
+
+* Standard: `/ml/{table}/recommendation/{id}`
+* Detailed: `/ml/{table}/recommendation/{id}?detailed=true`
+    * Returns records with similarity scores attached as `'similarity_score'`
+
+**Sentiment Analysis Model:**
+
+* Standard: `/ml/{table}/sentiment`
+* Detailed: `/ml/{table}/sentiment?detailed=true`
+    * Returns records with:
+        * `sentiment_score`: The calculated sentiment value
+        * `sentiment_confidence`: Confidence level of the analysis
+        * `word_count`: Number of words analyzed
+
+**Anomaly Detection Model:**
+
+* Standard: `/ml/{table}/anomaly`
+* Detailed: `/ml/{table}/anomaly?detailed=true`
+    * Returns records with:
+        * `is_anomaly`: Always true for anomalous records
+        * `anomaly_data`: The processed data that led to anomaly detection
+
+Each model type now supports both the original ML response format and a detailed format that includes the actual database records with their respective ML attributes attached. The enhancement maintains backward compatibility while providing a more user-friendly option to get the actual records with their ML-derived attributes.
+
+**Key improvements:**
+
+* Consistent detailed response format across all model types
+* Proper database connection handling with automatic release
+* Error handling for database operations
+* Preservation of model-specific statistics in responses
+* Sorting and scoring maintained for all record types
+
+
 ## As of March 1st 2025
 ### Release Notes – [Version 2.1.64]
 

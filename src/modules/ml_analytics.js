@@ -1166,63 +1166,192 @@ class MLAnalytics {
      * Middleware to expose ML endpoints.
      */
     middleware() {
-        return (req, res, next) => {
-            // Extract the model key and optional key ID from the request path
-            const pathParts = req.originalUrl.split('/').filter((part) => part !== ''); // Ignore empty parts
-            if (pathParts.length < 3) {
-                // Not an ML-specific route; pass control to the next middleware or route handler
-                return next();
-            }
-    
-            // ml/articles/recommendation/1
-            const table = pathParts[1]; // e.g., "articles"
-            const model = pathParts[2]; // e.g., "recommendation"
-            const keyId = pathParts[3] ? parseInt(pathParts[3], 10) : null; // e.g., "1"
-    
-            const modelKey = `${table}_${model}`;
-            const modelData = this.models[modelKey];
-            if (!modelData) {
-                return res.status(404).json({ error: `Model not found for ${model}` });
-            }
-    
-            // For recommendations, process the request with the key ID
-            if (model === 'recommendation' && keyId !== null) {
-                if (modelData.error) {
-                    return res.status(500).json({ error: modelData.error });
+        return async (req, res, next) => {
+            try {
+                // Extract the model key and optional key ID from the request path
+                const pathParts = req.originalUrl.split('/').filter((part) => part !== '');
+                if (pathParts.length < 3) {
+                    return next();
                 }
 
-                // Find which cluster contains our target keyId
-                const targetCluster = modelData.clusters.find(cluster => 
-                    cluster.points.includes(keyId)
-                );
+                // ml/articles/recommendation/1
+                const table = pathParts[1]; // e.g., "articles"
+                const model = pathParts[2]; // e.g., "recommendation"
+                const keyId = pathParts[3] ? parseInt(pathParts[3], 10) : null; // e.g., "1"
+                const detailed = req.query.detailed === 'true'; // Check if detailed response is requested
 
-                if (!targetCluster) {
-                    return res.status(404).json({ 
-                        error: `Key ${keyId} not found in any cluster` 
-                    });
+                const modelKey = `${table}_${model}`;
+                const modelData = this.models[modelKey];
+                if (!modelData) {
+                    return res.status(404).json({ error: `Model not found for ${model}` });
                 }
 
-                // Get recommendations from the same cluster, excluding the target key
-                const recommendations = targetCluster.points
-                    .filter(pointIdx => pointIdx !== keyId)
-                    .map(pointIdx => ({
-                        id: pointIdx,
-                        similarity: targetCluster.similarities[
-                            targetCluster.points.indexOf(pointIdx)
-                        ]
-                    }))
-                    .sort((a, b) => b.similarity - a.similarity); // Sort by similarity descending
+                // Handle different model types
+                switch (model) {
+                    case 'recommendation':
+                        if (keyId !== null) {
+                            if (modelData.error) {
+                                return res.status(500).json({ error: modelData.error });
+                            }
 
-                return res.json({
-                    key: keyId,
-                    cluster_id: targetCluster.id,
-                    cluster_size: targetCluster.size,
-                    recommendations
-                });
+                            // Find which cluster contains our target keyId
+                            const targetCluster = modelData.clusters.find(cluster => 
+                                cluster.points.includes(keyId)
+                            );
+
+                            if (!targetCluster) {
+                                return res.status(404).json({ 
+                                    error: `Key ${keyId} not found in any cluster` 
+                                });
+                            }
+
+                            // Get recommendations from the same cluster, excluding the target key
+                            const recommendations = targetCluster.points
+                                .filter(pointIdx => pointIdx !== keyId)
+                                .map(pointIdx => ({
+                                    id: pointIdx,
+                                    similarity: targetCluster.similarities[
+                                        targetCluster.points.indexOf(pointIdx)
+                                    ]
+                                }))
+                                .sort((a, b) => b.similarity - a.similarity);
+
+                            if (detailed) {
+                                const endpoint = this.mainConfig.find(ep => ep.dbTable === table);
+                                if (!endpoint) {
+                                    return res.status(500).json({ error: `Configuration not found for table ${table}` });
+                                }
+
+                                const connection = await getDbConnection(endpoint);
+                                if (!connection) {
+                                    return res.status(500).json({ error: 'Database connection failed' });
+                                }
+
+                                try {
+                                    const recommendationIds = recommendations.map(r => r.id);
+                                    const [records] = await connection.query(
+                                        `SELECT * FROM ${table} WHERE id IN (?)`,
+                                        [recommendationIds]
+                                    );
+
+                                    const recordsWithSimilarity = records.map(record => {
+                                        const recommendation = recommendations.find(r => r.id === record.id);
+                                        return {
+                                            ...record,
+                                            similarity_score: recommendation ? recommendation.similarity : 0
+                                        };
+                                    }).sort((a, b) => b.similarity_score - a.similarity_score);
+
+                                    return res.json({
+                                        key: keyId,
+                                        cluster_id: targetCluster.id,
+                                        cluster_size: targetCluster.size,
+                                        recommendations: recordsWithSimilarity
+                                    });
+                                } finally {
+                                    connection.release();
+                                }
+                            }
+
+                            return res.json({
+                                key: keyId,
+                                cluster_id: targetCluster.id,
+                                cluster_size: targetCluster.size,
+                                recommendations
+                            });
+                        }
+                        break;
+
+                    case 'sentiment':
+                        if (detailed) {
+                            const endpoint = this.mainConfig.find(ep => ep.dbTable === table);
+                            if (!endpoint) {
+                                return res.status(500).json({ error: `Configuration not found for table ${table}` });
+                            }
+
+                            const connection = await getDbConnection(endpoint);
+                            if (!connection) {
+                                return res.status(500).json({ error: 'Database connection failed' });
+                            }
+
+                            try {
+                                // Get all records with sentiment scores
+                                const recordIds = modelData.data.map(item => item.id);
+                                const [records] = await connection.query(
+                                    `SELECT * FROM ${table} WHERE id IN (?)`,
+                                    [recordIds]
+                                );
+
+                                // Map sentiment scores to records
+                                const recordsWithSentiment = records.map(record => {
+                                    const sentimentData = modelData.data.find(item => item.id === record.id);
+                                    return {
+                                        ...record,
+                                        sentiment_score: sentimentData ? sentimentData.sentiment : null,
+                                        sentiment_confidence: sentimentData ? sentimentData.confidence : null,
+                                        word_count: sentimentData ? sentimentData.wordCount : null
+                                    };
+                                });
+
+                                return res.json({
+                                    stats: modelData.stats,
+                                    records: recordsWithSentiment
+                                });
+                            } finally {
+                                connection.release();
+                            }
+                        }
+                        break;
+
+                    case 'anomaly':
+                        if (detailed) {
+                            const endpoint = this.mainConfig.find(ep => ep.dbTable === table);
+                            if (!endpoint) {
+                                return res.status(500).json({ error: `Configuration not found for table ${table}` });
+                            }
+
+                            const connection = await getDbConnection(endpoint);
+                            if (!connection) {
+                                return res.status(500).json({ error: 'Database connection failed' });
+                            }
+
+                            try {
+                                // Get all anomalous records
+                                const anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
+                                const [records] = await connection.query(
+                                    `SELECT * FROM ${table} WHERE id IN (?)`,
+                                    [anomalyIds]
+                                );
+
+                                // Map anomaly data to records
+                                const recordsWithAnomalyData = records.map(record => {
+                                    const anomalyData = modelData.anomalies.find(
+                                        anomaly => anomaly.originalData.id === record.id
+                                    );
+                                    return {
+                                        ...record,
+                                        is_anomaly: true,
+                                        anomaly_data: anomalyData ? anomalyData.processedData : null
+                                    };
+                                });
+
+                                return res.json({
+                                    stats: modelData.stats,
+                                    anomalies: recordsWithAnomalyData
+                                });
+                            } finally {
+                                connection.release();
+                            }
+                        }
+                        break;
+                }
+
+                // If not detailed or no specific handling, return raw model data
+                res.json({ data: modelData });
+            } catch (error) {
+                console.error('Error in ML middleware:', error);
+                res.status(500).json({ error: 'Internal server error' });
             }
-    
-            // Default behavior: Return raw model data
-            res.json({ data: modelData });
         };
     }
     
