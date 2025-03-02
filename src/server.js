@@ -1964,52 +1964,66 @@ class Adaptus2Server {
                                 }  
                             }
                             break;
-                        case "configReload":
-                            try {                               
-                                consolelog.log('Reloading configuration...');
-                                clearRedisCache();
-                                initializeRules(this.app);
-                                this.apiConfig = await loadConfig();
-                                consolelog.log(this.apiConfig);
-                                this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
-                                updateValidationRules();
-                        
-                                // CLEAR ALL ROUTES (Fixes issue)
-                                this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
-                                
-                                // RE-REGISTER ALL ROUTE TYPES
-                                registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
-                                registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
-                                this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
-                                this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app,route));
-                                this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
-                        
-                                if (PLUGIN_MANAGER === 'network') {
-                                    const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
-                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
-                                    subscribeToConfigUpdates((updatedConfig) => {
-                                        this.apiConfig = updatedConfig.apiConfig;
-                                        this.categorizedConfig = updatedConfig.categorizedConfig;
-                                        globalContext.resources = updatedConfig.globalContext.resources || {};
-                                        globalContext.actions = updatedConfig.globalContext.actions || {};
-                                        if(updatedConfig.globalContext.dslText) {
-                                            globalContext.dslText = updatedConfig.globalContext.dslText;
-                                            const New_ruleEngine = RuleEngine.fromDSL(dslText, globalContext);
-                                            if(New_ruleEngine) {
-                                                globalContext.ruleEngine = New_ruleEngine;
-                                                app.locals.ruleEngineMiddleware = New_ruleEngine;
-                                            }
+                            case "configReload":
+                                try {                               
+                                    consolelog.log('Reloading configuration...');
+                                    clearRedisCache();
+                                    initializeRules(this.app);
+                                    this.apiConfig = await loadConfig();
+                                    consolelog.log(this.apiConfig);
+                                    this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
+                                    updateValidationRules();
+                                    
+                                    // Create new RuleEngineMiddleware instance with reloaded ruleEngine
+                                    const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
+                                    this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
+                            
+                                    // CLEAR ALL ROUTES
+                                    this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
+                                    
+                                    // RE-REGISTER ROUTES
+                                    registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
+                                    registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
+                                    this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
+                                    this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app, route));
+                                    this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
+                            
+                                    if (PLUGIN_MANAGER === 'network') {
+                                        const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
+                            
+                                        // Only broadcast if this is NOT a self-originating request
+                                        if (!process.env.SERVER_ID || process.env.SERVER_ID !== this.serverId) {
+                                            await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
                                         }
-                                        console.log('Configuration updated from cluster.');
-                                    });
-                                }                                                              
-                                consolelog.log("API config reloaded successfully.");
-                                socket.write("API config reloaded successfully.");
-                            } catch (error) {
-                                consolelog.error(`Error reloading API config: ${error.message}`);
-                                socket.write(`Error reloading API config: ${error.message}`);
-                            }
-                            break;
+                            
+                                        subscribeToConfigUpdates((updatedConfig, sourceServerId) => {
+                                            if (sourceServerId === process.env.SERVER_ID) {
+                                                consolelog.log(`Ignoring config update from self (Server ID: ${sourceServerId})`);
+                                                return;
+                                            }
+                                            this.apiConfig = updatedConfig.apiConfig;
+                                            this.categorizedConfig = updatedConfig.categorizedConfig;
+                                            globalContext.resources = updatedConfig.globalContext.resources || {};
+                                            globalContext.actions = updatedConfig.globalContext.actions || {};
+                                            if (updatedConfig.globalContext.dslText) {
+                                                globalContext.dslText = updatedConfig.globalContext.dslText;
+                                                const newRuleEngine = RuleEngine.fromDSL(updatedConfig.globalContext.dslText, globalContext);
+                                                if (newRuleEngine) {
+                                                    globalContext.ruleEngine = newRuleEngine;
+                                                    app.locals.ruleEngineMiddleware = new RuleEngineMiddleware(newRuleEngine);
+                                                }
+                                            }
+                                            console.log('Configuration updated from cluster.');
+                                        });
+                                    }                                                              
+                                    consolelog.log("API config reloaded successfully.");
+                                    socket.write("API config reloaded successfully.");
+                                } catch (error) {
+                                    consolelog.error(`Error reloading API config: ${error.message}`);
+                                    socket.write(`Error reloading API config: ${error.message}`);
+                                }
+                                break;
+                            
                         case "listPlugins":
                             try {
                                 const plugins = fs.readdirSync(this.pluginDir)

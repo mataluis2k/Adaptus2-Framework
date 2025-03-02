@@ -42,8 +42,19 @@ async function broadcastConfigUpdate(apiConfig, categorizedConfig, globalContext
     }
 }
 
-function subscribeToConfigUpdates(onUpdateCallback) {
-    let localVersion = 0; // Track the latest version applied locally
+async function subscribeToConfigUpdates(onUpdateCallback) {
+    let localVersion = 0; // Placeholder
+
+    // Fetch the latest version from Redis on startup
+    try {
+        const configData = JSON.parse(await publisherRedis.get(CONFIG_STORAGE_KEY));
+        if (configData && configData.version) {
+            localVersion = configData.version;
+            console.log(`Initialized local config version to ${localVersion}`);
+        }
+    } catch (error) {
+        console.error('Error initializing local config version from Redis:', error.message);
+    }
 
     subscriberRedis.subscribe(CONFIG_UPDATE_CHANNEL, (err) => {
         if (err) {
@@ -58,14 +69,17 @@ function subscribeToConfigUpdates(onUpdateCallback) {
             try {
                 const { action, version } = JSON.parse(message);
 
+                // Avoid redundant updates if the version is the same
                 if (action === 'update' && version > localVersion) {
                     const configData = JSON.parse(await publisherRedis.get(CONFIG_STORAGE_KEY));
                     if (configData && configData.version > localVersion) {
-                        // Update local state
+                        const sourceServerId = configData.serverId || 'unknown'; // Extract serverId
                         localVersion = configData.version; // Update local version
-                        onUpdateCallback(configData);
-                        console.log(`Configuration updated to version ${configData.version} from server ${configData.serverId}.`);
+                        onUpdateCallback(configData, sourceServerId); // Pass serverId
+                        console.log(`Configuration updated to version ${configData.version} from server ${sourceServerId}.`);
                     }
+                } else {
+                    console.log(`Ignoring duplicate or older config update (version ${version}), local version is ${localVersion}`);
                 }
             } catch (error) {
                 console.error('Error handling config update:', error.message);
@@ -73,6 +87,8 @@ function subscribeToConfigUpdates(onUpdateCallback) {
         }
     });
 }
+
+
 
 
 module.exports = { broadcastConfigUpdate, subscribeToConfigUpdates };

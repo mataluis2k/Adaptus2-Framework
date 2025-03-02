@@ -6,7 +6,7 @@ const path = require("path");
 const fs = require("fs");
 const Redis = require("ioredis");
 const consolelog = require('./logger');
-
+const { query } = require("./db");
 // Configure ffmpeg and ffprobe
 ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
 ffmpeg.setFfprobePath(require("@ffprobe-installer/ffprobe").path);
