@@ -4,7 +4,7 @@ const schedule = require('node-schedule');
 const natural = require('natural'); // Sentiment analysis
 const { kmeans } = require('ml-kmeans'); // Correct import for KMeans
 const tf = require('@tensorflow/tfjs-node'); // TensorFlow.js with Node.js backend
-
+const consolelog = require('./logger');
 const { DBSCAN } = require('density-clustering'); // Anomaly detection
 const { getDbConnection } = require(path.join(__dirname,'db'));
 require('dotenv').config();
