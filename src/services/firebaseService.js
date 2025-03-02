@@ -93,6 +93,41 @@ class FirebaseService {
         }
     }
 
+      /**
+     * Sends a push notification using Firebase Cloud Messaging (FCM)
+     * @param {string} deviceToken - The recipient device's FCM token
+     * @param {Object} messageData - The notification payload
+     * @returns {Promise<Object>} - Firebase response
+     */
+      async sendPushNotification(deviceToken, messageData) {
+        try {
+            if (!deviceToken) {
+                throw new Error('Device token is required');
+            }
+
+            if (!admin.apps.length) {
+                logger.warn('Firebase not initialized. Skipping push notification.');
+                return null;
+            }
+
+            const message = {
+                token: deviceToken,
+                notification: {
+                    title: messageData.title || 'Notification',
+                    body: messageData.body || 'You have a new message',
+                },
+                data: messageData.data || {}, // Additional data payload
+            };
+
+            const response = await admin.messaging().send(message);
+            logger.info(`Push notification sent successfully: ${response}`);
+            return response;
+        } catch (error) {
+            logger.error('Error sending push notification:', error);
+            throw error;
+        }
+    }
+
     extendContext() {
         globalContext.actions.firebaseToken = async (ctx, params) => {
             console.log('Creating custom token with params:', params);
@@ -106,7 +141,11 @@ class FirebaseService {
         globalContext.actions.firebaseVerify = async (ctx, params) => {
             const { idToken } = params;
             return await this.verifyIdToken(idToken);
-        }
+        };
+        globalContext.actions.firebasePushNotification = async (ctx, params) => {
+            const { deviceToken, messageData } = params.data;
+            return await this.sendPushNotification(deviceToken, messageData);
+        };
     }
 }
 

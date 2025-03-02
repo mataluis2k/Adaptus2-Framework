@@ -1,10 +1,11 @@
 const { v7: uuidv7 } = require('uuid');            // UUID generator
-const redisClient = require('./redisClient');         // Your Redis client module
-const { getDbConnection } = require('./db');          // Your DB module
+const redisClient = require('./redisClient');        // Your Redis client module
+const { getDbConnection } = require('./db');         // Your DB module
 const BusinessLogicProcessor = require('./BusinessLogicProcessor');
 const consolelog = require('./logger');
-const { authenticateMiddleware, aclMiddleware } = require('../middleware/authenticationMiddleware');
+const { aarMiddleware } = require('../middleware/aarMiddleware');
 const responseBus = require('./response');
+const { getContext } = require('./context');         // Import the shared globalContext and getContext
 
 /**
  * Inspects the SQL query and ensures it contains a WHERE clause.
@@ -14,36 +15,64 @@ const responseBus = require('./response');
  * @param {string} sqlQuery - The original SQL query.
  * @returns {string} The SQL query guaranteed to contain a WHERE clause.
  */
-function ensureWhereClause(sqlQuery) {
-    // If a WHERE clause is already present, do nothing.
-    if (/where\s+/i.test(sqlQuery)) {
-      return sqlQuery;
+function ensureWhereClause(sqlQuery = '') {
+  // If a WHERE clause is already present, do nothing.
+  if (/where\s+/i.test(sqlQuery)) {
+    return sqlQuery;
+  }
+
+  // List possible clause keywords in the order they appear in a typical SQL query.
+  // We look for the first occurrence of any of these.
+  const clauses = ["group\\s+by", "order\\s+by", "limit"];
+  let firstClauseIndex = -1;
+
+  clauses.forEach((clause) => {
+    const regex = new RegExp(clause, "i");
+    const match = sqlQuery.match(regex);
+    if (match && (firstClauseIndex === -1 || match.index < firstClauseIndex)) {
+      firstClauseIndex = match.index;
     }
+  });
+
+  if (firstClauseIndex !== -1) {
+    // Insert "WHERE 1=1" right before the first encountered clause.
+    const beforeClause = sqlQuery.substring(0, firstClauseIndex);
+    const afterClause = sqlQuery.substring(firstClauseIndex);
+    return beforeClause + " WHERE 1=1 " + afterClause;
+  }
+
+  // If none of the clauses are found, simply append the WHERE clause.
+  return sqlQuery + " WHERE 1=1";
+}
+
+/**
+ * Adds the specified fields to the SELECT clause of the SQL query.
+ *  
+ * @param {string} sqlQuery - The original SQL query.
+ * @param {string} include - The fields to include in the SELECT clause.
+ * @returns {string} The SQL query with the specified fields included in the SELECT clause.
+ * @throws {Error} If no FROM clause is found in the SQL query.
+ */
+function addIncludes(sqlQuery, include) {
+  const fromIndex = sqlQuery.search(/FROM/i);
+  if (fromIndex === -1) {
+    throw new Error("Invalid SQL query, no FROM clause found.");
+  }
   
-    // List possible clause keywords in the order they appear in a typical SQL query.
-    // We look for the first occurrence of any of these.
-    const clauses = ["group\\s+by", "order\\s+by", "limit"];
-    let firstClauseIndex = -1;
-    let firstClauseKeyword = "";
+  let selectClause = sqlQuery.substring(0, fromIndex).trim();
+  const fromClause = sqlQuery.substring(fromIndex);
   
-    clauses.forEach((clause) => {
-      const regex = new RegExp(clause, "i");
-      const match = sqlQuery.match(regex);
-      if (match && (firstClauseIndex === -1 || match.index < firstClauseIndex)) {
-        firstClauseIndex = match.index;
-        firstClauseKeyword = clause;
-      }
-    });
+  // Ensure the select clause ends with a comma
+  if (!selectClause.endsWith(',')) {
+    selectClause += ',';
+  }
   
-    if (firstClauseIndex !== -1) {
-      // Insert "WHERE 1=1" right before the first encountered clause.
-      const beforeClause = sqlQuery.substring(0, firstClauseIndex);
-      const afterClause = sqlQuery.substring(firstClauseIndex);
-      return beforeClause + " WHERE 1=1 " + afterClause;
-    }
+  // Process the include fields, trimming any extra spaces
+  const includeFields = include.split(',').map(field => field.trim());
+  const includeFieldsString = includeFields.map(field => `${field}`).join(',');
   
-    // If none of the clauses are found, simply append the WHERE clause.
-    return sqlQuery + " WHERE 1=1";
+  sqlQuery = `${selectClause} ${includeFieldsString} ${fromClause}`;
+  return sqlQuery;
 }
 
 class DynamicRouteHandler {
@@ -53,7 +82,11 @@ class DynamicRouteHandler {
    * @param {Object} endpoint - Endpoint configuration from apiConfig.json.
    */
   static registerDynamicRoute(app, endpoint) {
-    const { route, allowMethods, sqlQuery, businessLogic, response, uuidMapping, keys } = endpoint;
+    // Expect:
+    // - keys: an array of all searchable keys.
+    // - uuidMapping: an array of keys (a subset of keys) that should be encoded as UUIDs,
+    //   or a boolean (for backwards compatibility) where true means only keys[0] is encoded.
+    let { route, allowMethods, sqlQuery, businessLogic, response, uuidMapping, keys } = endpoint;
     consolelog.log("Dynaroute:", endpoint);
 
     if (!Array.isArray(allowMethods) || allowMethods.length === 0) {
@@ -61,39 +94,33 @@ class DynamicRouteHandler {
       return;
     }
 
+    // Backwards compatibility: if uuidMapping is a boolean and true, then set it to [keys[0]]
+    if (typeof uuidMapping === 'boolean' && uuidMapping === true) {
+      if (Array.isArray(keys) && keys.length > 0) {
+        uuidMapping = [keys[0]];
+      } else {
+        uuidMapping = []; // or leave it as an empty array if no keys are provided
+      }
+    }
+  
     allowMethods.forEach((method) => {
-      const middlewares = [];
-      if (endpoint.auth) {
-        middlewares.push(authenticateMiddleware(endpoint.auth));
+      const auth = endpoint.auth;
+      const acl = endpoint.acl;
+      
+      // Retrieve the rule engine instance from app.locals.
+      const ruleEngineInstance = app.locals.ruleEngineMiddleware;
+      
+      if(method.toLowerCase() === 'get'){
+        const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
+        route = `${route}${getParamPath}`;
       }
-      if (endpoint.acl) {
-        middlewares.push(aclMiddleware(endpoint.acl));
-      }
-
-      app[method.toLowerCase()](route, ...middlewares, async (req, res) => {
+  
+      app[method.toLowerCase()](route, aarMiddleware(auth, acl, ruleEngineInstance), async (req, res) => {
         try {
+          responseBus.Reset(); // Reset the response object at the beginning of the request
+
           // Data from query parameters (GET) or request body (others)
-          const data = method === 'GET' ? req.query : req.body;
-
-          // Ensure the SQL query has a WHERE clause so we can safely append filters.
-          let finalSql = ensureWhereClause(sqlQuery);
-          const queryParams = [];
-
-          // If a filter is provided (e.g., id) and we have a defined key
-          if (data.id && keys && keys.length > 0) {
-            // If UUID mapping is enabled, convert the provided UUID to the real primary key.
-            if (uuidMapping) {
-              const realId = await redisClient.get(`uuidMapping:${data.id}`);
-              if (!realId) {
-                return res.status(404).json({ error: 'Record not found (invalid UUID)' });
-              }
-              data.id = realId;
-            }
-            // Assuming the primary key column is the first key (e.g., 'id').
-            // Append an additional filter.
-            finalSql += " AND m." + keys[0] + " = ?";
-            queryParams.push(data.id);
-          }
+          const data = method.toLowerCase() === 'get' ? { ...req.query, ...req.params } : req.body;
 
           // Process business logic if defined (if any business logic is set, ignore SQL)
           if (businessLogic) {
@@ -103,46 +130,92 @@ class DynamicRouteHandler {
             }
             return res.json(businessLogicResult);
           }
-
+  
           // Execute SQL query if defined
           if (sqlQuery) {
-            const dbConnection = await getDbConnection(endpoint);
-            const [queryResult] = await dbConnection.execute(finalSql, queryParams);
+              // The user might send an "include" in the query parameters that will be used to include the fields in the response
+              const includes = data.include;
+              if (includes) {               
+                sqlQuery = addIncludes(sqlQuery, includes);
+              }
+                                
+              // Interpolate the sqlQuery with the user object from context
+              const user = getContext('user');
+              if (user) {
+                // Get the keys from the user object for interpolation (renamed to avoid conflict)
+                const userKeys = Object.keys(user);
+                userKeys.forEach(key => {
+                  sqlQuery = sqlQuery.replace(new RegExp(`{${key}}`, 'g'), user[key]);
+                });
+                console.log("Interpolated sqlQuery:", sqlQuery);
+              }
 
-            // If UUID mapping is enabled, iterate over the results to mask the primary key.
-            if (uuidMapping && queryResult.length > 0) {
-              const primaryKeyField = keys[0]; // e.g., 'id'
-              for (const row of queryResult) {
-                const originalId = row[primaryKeyField];
-                // Check if there is already a UUID mapping for this originalId
-                const reverseKey = `uuidMapping:original:${originalId}`;
-                let existingUuid = await redisClient.get(reverseKey);
-                if (existingUuid) {
-                  // Reuse the existing UUID mapping.
-                  row[primaryKeyField] = existingUuid;
-                } else {
-                  // Generate a new UUID, update the row, and store both forward and reverse mappings.
-                  const newUuid = uuidv7();
-                  row[primaryKeyField] = newUuid;
-                  await redisClient.set(`uuidMapping:${newUuid}`, originalId);
-                  await redisClient.set(reverseKey, newUuid);
+            let finalSql = ensureWhereClause(sqlQuery);
+            const queryParams = [];
+  
+            // Process each searchable key specified in the keys array.
+            // For each key present in the request data, add a filter.
+            if (Array.isArray(keys) && keys.length > 0) {
+              for (const searchKey of keys) {
+                if (data[searchKey] !== undefined) {
+                  let searchValue = data[searchKey];
+                  // If the key should be encoded as UUID, convert the provided UUID to the real value.
+                  if (Array.isArray(uuidMapping) && uuidMapping.includes(searchKey)) {
+                    // Use a key that includes the searchKey to avoid collisions across columns
+                    const realId = await redisClient.get(`uuidMapping:${searchKey}:${searchValue}`);
+                    if (!realId) {
+                      return res.status(404).json({ error: `Record not found (invalid UUID for ${searchKey})` });
+                    }
+                    searchValue = realId;
+                  }
+                  
+                  finalSql += " AND " + searchKey + " = ?";
+                  queryParams.push(searchValue);
                 }
               }
             }
+  
+            const dbConnection = await getDbConnection(endpoint);
+            const [queryResult] = await dbConnection.execute(finalSql, queryParams);
+  
+            // For response encryption, iterate over the keys in uuidMapping only.
+            if (Array.isArray(uuidMapping) && queryResult.length > 0) {
+              for (const row of queryResult) {
+                for (const key of uuidMapping) { // Only encrypt the keys specified in the uuidMapping array
+                  const originalId = row[key];
+                  if (!originalId) continue; // Skip if key does not exist in the row
+          
+                  const reverseKey = `uuidMapping:original:${key}:${originalId}`;
+                  let existingUuid = await redisClient.get(reverseKey);
+                  if (existingUuid) {
+                    row[key] = existingUuid;
+                  } else {
+                    const newUuid = uuidv7();
+                    row[key] = newUuid;
+                    // Store forward mapping with the key in the Redis key
+                    await redisClient.set(`uuidMapping:${key}:${newUuid}`, originalId);
+                    await redisClient.set(reverseKey, newUuid);
+                  }
 
+                }
+              }
+            }
+  
             return res.json({ message: 'SQL query executed successfully', result: queryResult });
           }
-
+  
           // Fallback response if no SQL or business logic defined.
-          const respond = res.status(responseBus.status).json({
+          if (!responseBus.data || Object.keys(responseBus.data).length === 0) {
+            responseBus.setResponse(200, 'Success', null, {}, responseBus.module);
+          }
+
+          return res.status(responseBus.status).json({
             message: responseBus.message,
             error: responseBus.error,
             data: responseBus.data,
             module: responseBus.module
           });
-          responseBus.Reset();
-          return respond;
-
+  
         } catch (error) {
           console.error(`Error processing route ${route}:`, error.message);
           return res.status(500).json({ error: 'Internal Server Error', details: error.message });
@@ -150,7 +223,7 @@ class DynamicRouteHandler {
       });
     });
   }
-
+  
   /**
    * Filter the response fields based on the configuration.
    * @param {Object|Array} data - Data to filter.

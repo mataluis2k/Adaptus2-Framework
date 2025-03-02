@@ -2,6 +2,7 @@
 const Joi = require('joi');
 const validationMapping = require('./validationMapping');
 const { getApiConfig } = require('../modules/apiConfig');
+const { getContext } = require('../modules/context');
 
 /**
  * Generates a Joi validation schema from the validation rules.
@@ -162,6 +163,9 @@ function createGlobalValidationMiddleware() {
         Object.assign(dataToValidate, req.query || {});
       } else if (['POST', 'PUT', 'PATCH'].includes(method)) {
         dataToValidate = req.body || {};
+        if(!dataToValidate) {
+          dataToValidate = getContext('req').body || {};
+        }
       }
       
       console.log('Data to validate:', dataToValidate);

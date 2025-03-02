@@ -1,19 +1,23 @@
 const express = require("express");
 const AWS = require("aws-sdk");
 const ffmpeg = require("fluent-ffmpeg");
-const { promisify } = require("util");
-const { getDbConnection , query } = require("./db");
 const mime = require("mime-types");
 const path = require("path");
 const fs = require("fs");
 const Redis = require("ioredis");
 const consolelog = require('./logger');
-const cors = require('cors'); // Import the cors middleware
-const { corsOptions } = require('./context');
+const { query } = require("./db");
 // Configure ffmpeg and ffprobe
 ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
 ffmpeg.setFfprobePath(require("@ffprobe-installer/ffprobe").path);
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
+const VIDEO_TABLE = process.env.VIDEO_TABLE || "video_catalog";
+const VIDEO_ID_COLUMN = process.env.VIDEO_ID_COLUMN || "videoID";
+const VIDEO_PATH_COLUMN = process.env.VIDEO_PATH_COLUMN || "videoPath";
+const VIDEO_HLS_COLUMN = process.env.VIDEO_HLS_COLUMN || "hls";
+const VIDEO_SOURCE_COLUMN = process.env.VIDEO_SOURCE_COLUMN || "source";
+const VIDEO_FILENAME_COLUMN = process.env.VIDEO_FILENAME_COLUMN || "filename";
+const VIDEO_PARAM_NAME = process.env.VIDEO_PARAM_NAME || "videoID";
 
 // Redis client configuration
 consolelog.log("hls_output: ",path.join(__dirname, "hls_output"));
@@ -49,33 +53,28 @@ function profileToOutputOptions(profile) {
   
 const ffmpegOptions = profileToOutputOptions(selectedProfile || ffmpegProfiles["mediumBandwidth"]);
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-// Function to retrieve original ID from UUID
-async function getOriginalIdFromUUID(tableName, uuid) {
 
-    const key = `uuid_map:${tableName}:${uuid}`;
 
-    const recordId = await redis.get(key); 
 
-    return recordId || null; // Return null if not found
-}
-
-const getAsync = async (cacheKey) => {
-    return await redis.get(cacheKey);
-};
-/* Set Async function  params: cacheKey, data, ttl */
-const setAsync = async (cacheKey, data, ttl) => {
-    return await redis.setex(cacheKey, ttl, JSON.stringify(data));
-};
 
 class StreamingServer {
-    constructor(app, s3Config) {
+    constructor(app, s3Config,redis) {
         this.app = app;
         this.s3 = new AWS.S3({
             accessKeyId: s3Config.accessKeyId,
             secretAccessKey: s3Config.secretAccessKey,
             region: s3Config.region,
         });
+        this.redis = redis;
+        // Use the shared uuidTools instance
+        this.uuidTools = require('./dynamicUUID')(redis);
+        this.getAsync = async (cacheKey) => {
+            return await redis.get(cacheKey);
+        };
+        /* Set Async function  params: cacheKey, data, ttl */
+        this.setAsync = async (cacheKey, data, ttl) => {
+            return await redis.setex(cacheKey, ttl, JSON.stringify(data));
+        };
     }
 
     async generateBulkHLS() {
@@ -84,15 +83,15 @@ class StreamingServer {
 
             const config = { 'dbType': dbType, 'dbConnection': dbConnection } ;            
             // If not in cache, query the database
-            const video = query(config,'SELECT * FROM video_catalog WHERE hls is null', []);
+            const video = query(config,`SELECT * FROM ${VIDEO_TABLE} WHERE ${VIDEO_HLS_COLUMN} is null`, []);
             if (video.length > 0) {
                 video.forEach(element => {
                     consolelog.log("Video: ",element);
                     // call the function that will generate the hls
                     // need to create a fake http request and response object
-                    const req = { params: { videoID: element.videoID } };
+                    const req = { params: { [VIDEO_PARAM_NAME]: element[VIDEO_ID_COLUMN] } };
                     const res = { json: (data) => console.log(data) };
-                    this.generateHls(req, res , element.videoID, element.videoPath);
+                    this.generateHls(req, res, element[VIDEO_ID_COLUMN], element[VIDEO_PATH_COLUMN]);
                 });
             }
             return null;
@@ -101,11 +100,11 @@ class StreamingServer {
     async getVideoById(videoID) {
         // Attempt to get video details from cache first
         //Check if videoID is UUID and get the original ID
-        const originalId = await getOriginalIdFromUUID('video_catalog', videoID);
+        const originalId = await this.uuidTools.getOriginalIdFromUUID(VIDEO_TABLE, VIDEO_ID_COLUMN, videoID);
         if (originalId) {
             videoID = originalId;
         }
-        var video = await getAsync(videoID);
+        var video = await this.getAsync(videoID);
         if (video) {
             return JSON.parse(video);
         }
@@ -114,7 +113,7 @@ class StreamingServer {
         const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
         
         // If not in cache, query the database
-        video = await query({ dbType, dbConnection },'SELECT * FROM video_catalog WHERE videoID = ?', [videoID]);
+        video = await query({ dbType, dbConnection },`SELECT * FROM ${VIDEO_TABLE} WHERE ${VIDEO_ID_COLUMN} = ?`, [videoID]);
         if (video.length > 0) {
             // Cache the video data for future requests
             //await setAsync(videoID, JSON.stringify(video[0]), 'EX', 3600); // Cache for 1 hour
@@ -199,7 +198,7 @@ class StreamingServer {
         }
 
         const cacheKey = `hls:${videoID}`;
-        const cachedPlaylist = await getAsync(cacheKey);
+        const cachedPlaylist = await this.getAsync(cacheKey);
         const link = `/hls/${videoID}/playlist.m3u8`;
 
         if (cachedPlaylist) {
@@ -216,7 +215,7 @@ class StreamingServer {
             .output(outputFile)
             .on("end", async () => {
                 consolelog.log("HLS conversion complete");
-                await setAsync(cacheKey, link, 3600); // Cache for 1 hour
+                await this.setAsync(cacheKey, link, 3600); // Cache for 1 hour
                 res.json({
                     message: "HLS playlist generated",
                     playlist: link,
@@ -233,24 +232,24 @@ class StreamingServer {
     registerRoutes() {
         // Stream video by ID
         const LOCAL_VIDEO_PATH = process.env.STREAMING_FILESYSTEM_PATH || "./videos";
-        this.app.get("/stream/:videoID", async (req, res) => {
-            const { videoID } = req.params;
+        this.app.get(`/stream/:${VIDEO_PARAM_NAME}`, async (req, res) => {
+            const videoID = req.params[VIDEO_PARAM_NAME];
             const video = await this.getVideoById(videoID);
             if (!video) return res.status(404).send("Video not found");
 
-            if (video.source === "local") {
-                const filePath = path.join(LOCAL_VIDEO_PATH, video.filename);
+            if (video[VIDEO_SOURCE_COLUMN] === "local") {
+                const filePath = path.join(LOCAL_VIDEO_PATH, video[VIDEO_FILENAME_COLUMN]);
                 this.streamFromFileSystem(req, res, filePath);
-            } else if (video.source === "S3") {
-                this.streamFromS3(req, res, S3_BUCKET_NAME, video.filename);
+            } else if (video[VIDEO_SOURCE_COLUMN] === "S3") {
+                this.streamFromS3(req, res, S3_BUCKET_NAME, video[VIDEO_FILENAME_COLUMN]);
             } else {
                 res.status(400).send("Invalid video source");
             }
         });
 
             // Generate or Retrieve HLS from video ID
-        this.app.get("/hls/generate/:videoID", async (req, res) => {
-            const { videoID } = req.params;
+        this.app.get(`/hls/generate/:${VIDEO_PARAM_NAME}`, async (req, res) => {
+            const videoID = req.params[VIDEO_PARAM_NAME];
 
             try {
                 const video = await this.getVideoById(videoID);
@@ -260,16 +259,16 @@ class StreamingServer {
                 }
 
                 // If the HLS field is not null, return the existing playlist
-                if (video.hls) {
+                if (video[VIDEO_HLS_COLUMN]) {
                     return res.json({
                         message: "HLS playlist",
-                        playlist: video.hls, // Assuming this contains the path to the playlist
+                        playlist: video[VIDEO_HLS_COLUMN], // Assuming this contains the path to the playlist
                     });
                 }
 
                 // If the HLS field is null, generate the playlist
-                if (video.source === "local") {
-                    const filePath = path.join(LOCAL_VIDEO_PATH, video.filename);
+                if (video[VIDEO_SOURCE_COLUMN] === "local") {
+                    const filePath = path.join(LOCAL_VIDEO_PATH, video[VIDEO_FILENAME_COLUMN]);
 
                     // Generate HLS and update the database with the new playlist path
                     this.generateHLS(req, res, filePath, videoID);

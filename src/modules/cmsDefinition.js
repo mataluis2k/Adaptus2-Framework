@@ -25,4 +25,66 @@ const CMS_TABLE_SCHEMA = {
     }
 };
 
+const CMS_ROUTES = [{
+    routeType: 'def',
+    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
+    dbTable: 'cms_content',
+    route: '/cms/create',
+    method: ['POST'],
+    allowWrite: ['id','content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id'],
+    allowRead: ['id', 'content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id', 'created_at', 'updated_at'],
+    keys: ['id'],
+    acl: ['adminAccess'],
+    cache: 0
+},{
+    routeType: 'def',
+    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
+    dbTable: 'cms_content',
+    route: '/cms/update',
+    method: ['PUT'],
+    allowWrite: ['id','content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id'],
+    allowRead: ['id', 'content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id', 'created_at', 'updated_at'],
+    keys: ['id'],
+    acl: ['adminAccess'],
+    cache: 0
+},{
+    routeType: 'def',
+    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
+    dbTable: 'cms_content',
+    route: '/cms/delete',
+    method: ['DELETE'],
+    allowWrite: ['id'],
+    allowRead: ['id'],
+    keys: ['id'],
+    acl: ['adminAccess'],
+    cache: 0
+},{
+    routeType: 'def',
+    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
+    dbTable: 'cms_content',
+    route: '/cms/get',
+    method: ['GET'],
+    allowWrite: ['id'],
+    allowRead: ['id', 'content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id', 'created_at', 'updated_at'],
+    keys: ['id'],
+    acl: ['adminAccess'],
+    cache: 0
+},{
+    routeType: 'def',
+    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+    dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1',
+    dbTable: 'cms_content',
+    route: '/cms/list',
+    method: ['GET'],
+    allowWrite: ['id'],
+    allowRead: ['id', 'content_type', 'title', 'slug', 'content', 'file_path', 'metadata', 'status', 'author_id', 'created_at', 'updated_at'],
+    keys: ['id'],
+    acl: ['adminAccess'],
+    cache: 0
+
+}]
 module.exports = CMS_TABLE_SCHEMA ;

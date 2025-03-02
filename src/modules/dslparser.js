@@ -151,10 +151,13 @@ class DSLParser {
       // Validate resource vs. global context
       if (!this.globalContext.resources[resource]) {
         console.log(`Unknown resource '${resource}'. Please register it in globalContext.resources.`);
+        if(process.env.SHUTDOWN_ON_UNCAUGHT){
+          throw new Error(`Missing Resource: ${resource}`);          
+        }
         return null;
       }
   
-      // We’ll store the final structure of the rule:
+      // We'll store the final structure of the rule:
       // {
       //   event: "NEW" | "UPDATE" | "DELETE" etc.
       //   resource: "order", "customer", ...
@@ -198,7 +201,12 @@ class DSLParser {
         ) {
           break;
         }
-        rule.thenActions.push(this._parseActionLine(line));
+        const action = this._parseActionLine(line);
+        if (action) {
+          rule.thenActions.push(action);
+        } else {
+          consolelog.log(`Skipping invalid action in THEN block: ${line}`);
+        }
         cursor++;
       }
   
@@ -208,7 +216,9 @@ class DSLParser {
         ruleLines[cursor].toUpperCase().startsWith(this.keywords.ELSE_IF)
       ) {
         const elseIfBlock = this._parseElseIfBlock(ruleLines, cursor);
-        rule.elseIfs.push(elseIfBlock.block);
+        if (elseIfBlock.block.actions.length > 0) {
+          rule.elseIfs.push(elseIfBlock.block);
+        }
         cursor = elseIfBlock.newCursor;
       }
   
@@ -229,13 +239,26 @@ class DSLParser {
           ) {
             break;
           }
-          elseActions.push(this._parseActionLine(nextLine));
+          const action = this._parseActionLine(nextLine);
+          if (action) {
+            elseActions.push(action);
+          } else {
+            consolelog.log(`Skipping invalid action in ELSE block: ${nextLine}`);
+          }
           cursor++;
         }
-        rule.elseActions = elseActions;
+        if (elseActions.length > 0) {
+          rule.elseActions = elseActions;
+        }
       }
   
-      return rule;
+      // Only return the rule if it has at least one valid action
+      if (rule.thenActions.length > 0 || rule.elseIfs.length > 0 || rule.elseActions.length > 0) {
+        return rule;
+      } else {
+        consolelog.log(`Skipping rule with no valid actions: ${firstLine}`);
+        return null;
+      }
     }
   
     /**
@@ -274,7 +297,12 @@ class DSLParser {
         ) {
           break;
         }
-        block.actions.push(this._parseActionLine(nextLine));
+        const action = this._parseActionLine(nextLine);
+        if (action) {
+          block.actions.push(action);
+        } else {
+          consolelog.log(`Skipping invalid action in ELSE IF block: ${nextLine}`);
+        }
         cursor++;
       }
   
@@ -478,7 +506,7 @@ class DSLParser {
             continue;
           }
   
-          // If it’s an 'IN' operator, parse up to bracket or parentheses
+          // If it's an 'IN' operator, parse up to bracket or parentheses
           if (op === 'IN') {
             // e.g. IN ["US","CA"]
             // We'll read the next token, hopefully something like ["US","CA"] or ('US','CA')
@@ -545,26 +573,43 @@ class DSLParser {
      *   - parse the rest as the "args" or "expression"
      */
     _parseActionLine(line) {
-      // Split the line into tokens: action type and arguments
-      const tokens = line.split(/\s+/);
-      if (tokens.length < 2) {
-          throw new Error(`Invalid action line: ${line}`);
-      }
-      var data = {};
-      const action = tokens[0];
+      try {
+        // Split the line into tokens: action type and arguments
+        const tokens = line.split(/\s+/);
+        if (tokens.length < 2) {
+          consolelog.log(`Invalid action line (too few tokens): ${line}`);
+          return null;
+        }
+        
+        const action = tokens[0];
+        let data = null;
 
-      if( action === 'update' ) { 
-          data = this._parseUpdateExpression(line);
-      } else{
-        if (!this.globalContext.actions[action]) {
-            throw new Error(`Unknown action '${action}'. Please register in globalContext.actions.`);
-        }       
-          data = parseCommand(line);
+        if (action === 'update') { 
+          try {
+            data = this._parseUpdateExpression(line);
+          } catch (error) {
+            consolelog.log(`Error parsing update expression: ${error.message}`);
+            return null;
+          }
+        } else {
+          if (!this.globalContext.actions[action]) {
+            consolelog.log(`Unknown action '${action}'. Please register in globalContext.actions`);
+            return null;
+          }       
+          try {
+            data = parseCommand(line);
+          } catch (error) {
+            consolelog.log(`Error parsing command: ${error.message}`);
+            return null;
+          }
+        }
+        
+        return data;
+      } catch (error) {
+        consolelog.log(`Error parsing action line: ${error.message}`);
+        return null;
       }
-    
-      return data;
-  }
-
+    }
 
     /**
      * Parse a line like:
@@ -641,4 +686,3 @@ class DSLParser {
     const parsedRules = parser.parse(dslScript);
     consolelog.log(JSON.stringify(parsedRules, null, 2));
   }
-  

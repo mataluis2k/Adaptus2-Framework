@@ -2,7 +2,6 @@ const fs = require('fs');
 const consolelog = require('./logger');
 const { exit } = require('process');
 const path = require('path');
-const { config } = require('dotenv');
 const CMS_TABLE_SCHEMA = require('./cmsDefinition');
 require('dotenv').config({ path: __dirname + '/.env' });
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
