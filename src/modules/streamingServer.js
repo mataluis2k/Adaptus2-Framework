@@ -1,19 +1,17 @@
 const express = require("express");
 const AWS = require("aws-sdk");
 const ffmpeg = require("fluent-ffmpeg");
-const { promisify } = require("util");
-const { getDbConnection , query } = require("./db");
 const mime = require("mime-types");
 const path = require("path");
 const fs = require("fs");
 const Redis = require("ioredis");
 const consolelog = require('./logger');
-const cors = require('cors'); // Import the cors middleware
-const { corsOptions } = require('./context');
+
 // Configure ffmpeg and ffprobe
 ffmpeg.setFfmpegPath(require("@ffmpeg-installer/ffmpeg").path);
 ffmpeg.setFfprobePath(require("@ffprobe-installer/ffprobe").path);
 const S3_BUCKET_NAME = process.env.S3_BUCKET_NAME;
+const VIDEO_TABLE= process.env.VIDEO_TABLE || "video_catalog";
 
 // Redis client configuration
 consolelog.log("hls_output: ",path.join(__dirname, "hls_output"));
@@ -49,33 +47,28 @@ function profileToOutputOptions(profile) {
   
 const ffmpegOptions = profileToOutputOptions(selectedProfile || ffmpegProfiles["mediumBandwidth"]);
 
-const redis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-// Function to retrieve original ID from UUID
-async function getOriginalIdFromUUID(tableName, uuid) {
 
-    const key = `uuid_map:${tableName}:${uuid}`;
 
-    const recordId = await redis.get(key); 
 
-    return recordId || null; // Return null if not found
-}
-
-const getAsync = async (cacheKey) => {
-    return await redis.get(cacheKey);
-};
-/* Set Async function  params: cacheKey, data, ttl */
-const setAsync = async (cacheKey, data, ttl) => {
-    return await redis.setex(cacheKey, ttl, JSON.stringify(data));
-};
 
 class StreamingServer {
-    constructor(app, s3Config) {
+    constructor(app, s3Config,redis) {
         this.app = app;
         this.s3 = new AWS.S3({
             accessKeyId: s3Config.accessKeyId,
             secretAccessKey: s3Config.secretAccessKey,
             region: s3Config.region,
         });
+        this.redis = redis;
+        // Will place here anything that has redis dependency injections
+        this.uuidTools = require('./dynamicUUID')(redis);
+        this.getAsync = async (cacheKey) => {
+            return await redis.get(cacheKey);
+        };
+        /* Set Async function  params: cacheKey, data, ttl */
+        this.setAsync = async (cacheKey, data, ttl) => {
+            return await redis.setex(cacheKey, ttl, JSON.stringify(data));
+        };
     }
 
     async generateBulkHLS() {
@@ -101,11 +94,11 @@ class StreamingServer {
     async getVideoById(videoID) {
         // Attempt to get video details from cache first
         //Check if videoID is UUID and get the original ID
-        const originalId = await getOriginalIdFromUUID('video_catalog', videoID);
+        const originalId = await this.uuidTools.getOriginalIdFromUUID(VIDEO_TABLE, videoID);
         if (originalId) {
             videoID = originalId;
         }
-        var video = await getAsync(videoID);
+        var video = await this.getAsync(videoID);
         if (video) {
             return JSON.parse(video);
         }
@@ -199,7 +192,7 @@ class StreamingServer {
         }
 
         const cacheKey = `hls:${videoID}`;
-        const cachedPlaylist = await getAsync(cacheKey);
+        const cachedPlaylist = await this.getAsync(cacheKey);
         const link = `/hls/${videoID}/playlist.m3u8`;
 
         if (cachedPlaylist) {
@@ -216,7 +209,7 @@ class StreamingServer {
             .output(outputFile)
             .on("end", async () => {
                 consolelog.log("HLS conversion complete");
-                await setAsync(cacheKey, link, 3600); // Cache for 1 hour
+                await this.setAsync(cacheKey, link, 3600); // Cache for 1 hour
                 res.json({
                     message: "HLS playlist generated",
                     playlist: link,

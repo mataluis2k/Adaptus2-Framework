@@ -2621,7 +2621,7 @@ class Adaptus2Server {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
                 region: process.env.AWS_REGION,
             };
-            this.streamingServer = new StreamingServer(this.app, s3Config);
+            this.streamingServer = new StreamingServer(this.app, s3Config, redis);
             this.streamingServer.registerRoutes();
             consolelog.log('Streaming server module initialized.');
         } catch (error) {
