@@ -1135,7 +1135,7 @@ function buildFilterClause(filterObj, dbTable) {
               const decodedValue = await uuidTools.getOriginalIdFromUUID(dbTable, key, value);
               if (!decodedValue) {
                 if (endpoint.errorCodes && endpoint.errorCodes.notFound) {
-                  return res.status(endpoint.errorCodes.notFound.httpCode).json({ error: endpoint.errorCodes.notFound.message });
+                  return res.status(endpoint.errorCodes.notFound.httpCode).json({ error: endpoint.errorCodes.notFound.message, code: endpoint.errorCodes.notFound.code });
                 }
                 return res.status(400).json({ error: `Sorry, record not Found` });
               }
@@ -1158,7 +1158,13 @@ function buildFilterClause(filterObj, dbTable) {
         if (endpoint.owner) {
           const user = getContext("user");
           if (!user) {
-            return res.status(401).json({ error: "Unauthorized" });
+
+            if (endpoint.errorCodes && endpoint.errorCodes.unauthorized) {
+              return res.status(endpoint.errorCodes.unauthorized.httpCode).json({ error: endpoint.errorCodes.unauthorized.message, code: endpoint.errorCodes.unauthorized.code });
+            } else {
+              return res.status(401).json({ error: "Unauthorized" });
+            }
+            
           }
           whereClause += whereClause ? ` AND ${dbTable}.${endpoint.owner.column} = ?` : `WHERE ${dbTable}.${endpoint.owner.column} = ?`;
           params.push(user[endpoint.owner.tokenField]);
@@ -1342,7 +1348,11 @@ if (keys && keys.length > 0) {
             if (endpoint.owner) {
             const user = getContext('user');
             if (!user) {
+              if (endpoint.errorCodes && endpoint.errorCodes.unauthorized) {
+                return res.status(endpoint.errorCodes.unauthorized.httpCode).json({ error: endpoint.errorCodes.unauthorized.message, code: endpoint.errorCodes.unauthorized.code });
+              } else {
                 return res.status(401).json({ error: "Unauthorized" });
+              }
             }
             query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
             params.push(user[endpoint.owner.tokenField]);
@@ -1400,7 +1410,11 @@ if (keys && keys.length > 0) {
             if (endpoint.owner) {
             const user = getContext('user');
             if (!user) {
+              if (endpoint.errorCodes && endpoint.errorCodes.unauthorized) {
+                return res.status(endpoint.errorCodes.unauthorized.httpCode).json({ error: endpoint.errorCodes.unauthorized.message, code: endpoint.errorCodes.unauthorized.code });
+              } else {
                 return res.status(401).json({ error: "Unauthorized" });
+              }
             }
             query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
             params.push(user[endpoint.owner.tokenField]);
@@ -1451,7 +1465,11 @@ if (keys && keys.length > 0) {
             if (endpoint.owner) {
             const user = getContext('user');
             if (!user) {
+              if (endpoint.errorCodes && endpoint.errorCodes.unauthorized) {
+                return res.status(endpoint.errorCodes.unauthorized.httpCode).json({ error: endpoint.errorCodes.unauthorized.message, code: endpoint.errorCodes.unauthorized.code });
+              } else {
                 return res.status(401).json({ error: "Unauthorized" });
+              }
             }
             query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
             params.push(user[endpoint.owner.tokenField]);
@@ -1964,66 +1982,52 @@ class Adaptus2Server {
                                 }  
                             }
                             break;
-                            case "configReload":
-                                try {                               
-                                    consolelog.log('Reloading configuration...');
-                                    clearRedisCache();
-                                    initializeRules(this.app);
-                                    this.apiConfig = await loadConfig();
-                                    consolelog.log(this.apiConfig);
-                                    this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
-                                    updateValidationRules();
-                                    
-                                    // Create new RuleEngineMiddleware instance with reloaded ruleEngine
-                                    const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
-                                    this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
-                            
-                                    // CLEAR ALL ROUTES
-                                    this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
-                                    
-                                    // RE-REGISTER ROUTES
-                                    registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
-                                    registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
-                                    this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
-                                    this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app, route));
-                                    this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
-                            
-                                    if (PLUGIN_MANAGER === 'network') {
-                                        const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
-                            
-                                        // Only broadcast if this is NOT a self-originating request
-                                        if (!process.env.SERVER_ID || process.env.SERVER_ID !== this.serverId) {
-                                            await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
+                        case "configReload":
+                            try {                               
+                                consolelog.log('Reloading configuration...');
+                                clearRedisCache();
+                                initializeRules(this.app);
+                                this.apiConfig = await loadConfig();
+                                consolelog.log(this.apiConfig);
+                                this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
+                                updateValidationRules();
+                        
+                                // CLEAR ALL ROUTES (Fixes issue)
+                                this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
+                                
+                                // RE-REGISTER ALL ROUTE TYPES
+                                registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
+                                registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
+                                this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
+                                this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app,route));
+                                this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
+                        
+                                if (PLUGIN_MANAGER === 'network') {
+                                    const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
+                                    await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
+                                    subscribeToConfigUpdates((updatedConfig) => {
+                                        this.apiConfig = updatedConfig.apiConfig;
+                                        this.categorizedConfig = updatedConfig.categorizedConfig;
+                                        globalContext.resources = updatedConfig.globalContext.resources || {};
+                                        globalContext.actions = updatedConfig.globalContext.actions || {};
+                                        if(updatedConfig.globalContext.dslText) {
+                                            globalContext.dslText = updatedConfig.globalContext.dslText;
+                                            const New_ruleEngine = RuleEngine.fromDSL(dslText, globalContext);
+                                            if(New_ruleEngine) {
+                                                globalContext.ruleEngine = New_ruleEngine;
+                                                app.locals.ruleEngineMiddleware = New_ruleEngine;
+                                            }
                                         }
-                            
-                                        subscribeToConfigUpdates((updatedConfig, sourceServerId) => {
-                                            if (sourceServerId === process.env.SERVER_ID) {
-                                                consolelog.log(`Ignoring config update from self (Server ID: ${sourceServerId})`);
-                                                return;
-                                            }
-                                            this.apiConfig = updatedConfig.apiConfig;
-                                            this.categorizedConfig = updatedConfig.categorizedConfig;
-                                            globalContext.resources = updatedConfig.globalContext.resources || {};
-                                            globalContext.actions = updatedConfig.globalContext.actions || {};
-                                            if (updatedConfig.globalContext.dslText) {
-                                                globalContext.dslText = updatedConfig.globalContext.dslText;
-                                                const newRuleEngine = RuleEngine.fromDSL(updatedConfig.globalContext.dslText, globalContext);
-                                                if (newRuleEngine) {
-                                                    globalContext.ruleEngine = newRuleEngine;
-                                                    app.locals.ruleEngineMiddleware = new RuleEngineMiddleware(newRuleEngine);
-                                                }
-                                            }
-                                            console.log('Configuration updated from cluster.');
-                                        });
-                                    }                                                              
-                                    consolelog.log("API config reloaded successfully.");
-                                    socket.write("API config reloaded successfully.");
-                                } catch (error) {
-                                    consolelog.error(`Error reloading API config: ${error.message}`);
-                                    socket.write(`Error reloading API config: ${error.message}`);
-                                }
-                                break;
-                            
+                                        console.log('Configuration updated from cluster.');
+                                    });
+                                }                                                              
+                                consolelog.log("API config reloaded successfully.");
+                                socket.write("API config reloaded successfully.");
+                            } catch (error) {
+                                consolelog.error(`Error reloading API config: ${error.message}`);
+                                socket.write(`Error reloading API config: ${error.message}`);
+                            }
+                            break;
                         case "listPlugins":
                             try {
                                 const plugins = fs.readdirSync(this.pluginDir)
@@ -2628,15 +2632,14 @@ class Adaptus2Server {
         //     console.error('Failed to initialize Payment Module:', error.message);
         // }
 
-            // Initialize Streaming Server Module
+        // Initialize Streaming Server Module
         try {
             const s3Config = {
                 accessKeyId: process.env.AWS_ACCESS_KEY_ID,
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
                 region: process.env.AWS_REGION,
             };
-            const redisClient = require('./modules/redisClient');
-            this.streamingServer = new StreamingServer(this.app, s3Config, redisClient);
+            this.streamingServer = new StreamingServer(this.app, s3Config);
             this.streamingServer.registerRoutes();
             consolelog.log('Streaming server module initialized.');
         } catch (error) {
