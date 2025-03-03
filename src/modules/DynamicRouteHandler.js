@@ -106,6 +106,7 @@ class DynamicRouteHandler {
     allowMethods.forEach((method) => {
       const auth = endpoint.auth;
       const acl = endpoint.acl;
+      const customErrors  = endpoint.errorCodes;
       
       // Retrieve the rule engine instance from app.locals.
       const ruleEngineInstance = app.locals.ruleEngineMiddleware;
@@ -115,7 +116,7 @@ class DynamicRouteHandler {
         route = `${route}${getParamPath}`;
       }
   
-      app[method.toLowerCase()](route, aarMiddleware(auth, acl, ruleEngineInstance), async (req, res) => {
+      app[method.toLowerCase()](route, aarMiddleware(auth, {acl, customErrors}, ruleEngineInstance), async (req, res) => {
         try {
           responseBus.Reset(); // Reset the response object at the beginning of the request
 
