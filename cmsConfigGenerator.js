@@ -37,7 +37,7 @@ function determineFormType(tableName) {
  * Determines the list type based on the table name
  */
 function determineListType(tableName) {
-  if (tableName.includes("media") || tableName.includes("image") || tableName.includes("video")) return "grid";
+  if (tableName.includes("media") || tableName.includes("image") || tableName.includes("video")) return "video-gallery";
   if (tableName.includes("content") || tableName.includes("page")) return "list";
   return "table"; // Default list type
 }
@@ -62,19 +62,24 @@ function generateCmsConfig() {
   };
 
   apiConfig.forEach((tableConfig) => {
-    if (!tableConfig.dbTable) return; // Skip invalid configurations
+    if (!tableConfig.dbTable ||!tableConfig.route) return; // Skip invalid configurations
+    // slips every table that is not a database or dynamic route
 
+    if(tableConfig.routeType != "database" && !tableConfig.routeType != "dynamic") {
+      return;
+    }
     const { dbTable, route, allowRead = [], allowWrite = [], columnDefinitions = {} } = tableConfig;
     const fields = {};
 
     Object.entries(columnDefinitions).forEach(([field, type]) => {
+      const readonly = allowWrite.includes(field) ? false : true;
       fields[field] = {
         label: field.replace(/_/g, " ").toUpperCase(),
         type: mapFieldType(type),
-        readonly: allowWrite.includes(field) ? false : true,
+        readonly: readonly,
         hidden: allowRead.includes(field) ? false : true,
         validation: {
-          required: !type.includes("NULL"), // If NULL is not in type, assume required
+          required: !readonly, // If readonly is false, then required is true
           maxLength: type.match(/\((\d+)\)/) ? parseInt(type.match(/\((\d+)\)/)[1]) : undefined,
         },
         ui: {

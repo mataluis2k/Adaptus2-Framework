@@ -8,9 +8,9 @@ const response = {
     module: '',
     setResponse: function(status, message, error, data, module){
         console.log('Updating response:', { status, message, error, data, module });
-        if(this.status > status){
-            return; // we don't want to override a status code that is already set
-        }
+        // if(this.status > status){
+        //     return; // we don't want to override a status code that is already set
+        // }
         this.status = status;
         if(status === 600){
             this.status = 200;
