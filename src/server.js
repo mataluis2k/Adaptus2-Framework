@@ -94,6 +94,10 @@ const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
 const FirebaseService = require('./services/firebaseService'); // Firebase Service
 const CMSManager = require('./modules/cmsManager'); // CMS Module
 
+// Mobile payments enablements 
+const applePay  = require('./modules/applePayController'); // Apple Payments Module
+const googlePay = require('./modules/googlePayments'); // Google Payments Module
+
 // Changes to enable clustering and plugin management
 const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
 const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
@@ -2617,17 +2621,21 @@ class Adaptus2Server {
                 console.error('Failed to initialize Chat Module:', error.message);
             }
         }
-        // // Initialize Payment Module
-        // try {
-        //     const dbConfig = {
-        //         getConnection: async () => await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }),
-        //     };
-        //     this.paymentModule = new PaymentModule(this.app, dbConfig);
-        //     consolelog.log('Payment module initialized.');
-        // } catch (error) {
-        //     console.error('Failed to initialize Payment Module:', error.message);
-        // }
-
+        if(process.env.MOBILE_PAYMENTS_ENABLED === 'true') {
+            try {
+                IF(process.env.MOBILE_PAYMENTS_APPLE==='true'){
+                    const applePay = new ApplePay(this.app);
+                    applePay.registerRoutes();
+                }
+                if(process.env.MOBILE_PAYMENTS_GOOGLE==='true'){
+                    const googlePay = new GooglePay(this.app);
+                    googlePay.registerRoutes();
+                }
+                consolelog.log('Mobile Payment module initialized.');
+            } catch (error) {
+                console.error('Failed to initialize Mobile Payment Module:', error.message);
+            }
+        }
             // Initialize Streaming Server Module
         try {
             const s3Config = {
