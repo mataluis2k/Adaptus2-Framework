@@ -457,6 +457,9 @@ function registerProxyEndpoints(app, apiConfig) {
             enrich,
             responseMapping,
         } = config;
+        const unauthorized = (config.errorCodes && config.errorCodes['unauthorized']) 
+        ? config.errorCodes['unauthorized'] 
+        : defaultUnauthorized;
         
         try {
             // Validate config structure
@@ -484,7 +487,7 @@ function registerProxyEndpoints(app, apiConfig) {
                 consolelog.log(`Auth for route ${route}:`, auth); // 
                 app[method.toLowerCase()](
                     route,
-                    aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware),                
+                    aarMiddleware(auth, {acl, unauthorized}, app.locals.ruleEngineMiddleware),                
                     async (req, res) => {
                         console.log(`Proxy request received on route: ${route} [${method}]`);
                         try {
@@ -627,6 +630,9 @@ function getMulterStorage(storagePath) {
 
 function registerStaticRoute(app, endpoint) {
     const { route, folderPath, auth, acl } = endpoint;
+    const unauthorized = (endpoint.errorCodes && endpoint.errorCodes['unauthorized']) 
+    ? endpoint.errorCodes['unauthorized'] 
+    : defaultUnauthorized;
 
     if (!route || !folderPath) {
         console.error(`Invalid or missing parameters for static route: ${JSON.stringify(endpoint)}`);
@@ -635,7 +641,7 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware), express.static(folderPath));
+    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, {acl,unauthorized}, app.locals.ruleEngineMiddleware), express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
