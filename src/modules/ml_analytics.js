@@ -481,6 +481,28 @@ class MLAnalytics {
             return existingModel; // Return existing model on error
         }
     }
+    /**
+     * Calculate similarity between two cluster centroids using cosine similarity
+     * @param {Array} centroid1 - First centroid vector
+     * @param {Array} centroid2 - Second centroid vector
+     * @returns {number} Similarity score between 0 and 1
+     */
+    calculateClusterSimilarity(centroid1, centroid2) {
+        // Calculate dot product
+        const dotProduct = centroid1.reduce((sum, val, idx) => sum + val * centroid2[idx], 0);
+        
+        // Calculate magnitudes
+        const magnitude1 = Math.sqrt(centroid1.reduce((sum, val) => sum + val * val, 0));
+        const magnitude2 = Math.sqrt(centroid2.reduce((sum, val) => sum + val * val, 0));
+        
+        // Avoid division by zero
+        if (magnitude1 === 0 || magnitude2 === 0) {
+            return 0;
+        }
+        
+        // Return cosine similarity
+        return dotProduct / (magnitude1 * magnitude2);
+    }
 
     updateRecommendationModel(existingModel, rows, endpoint) {
         if (!existingModel || !existingModel.clusters) {
@@ -554,7 +576,8 @@ class MLAnalytics {
 
             // Merge clusters and anomalies
             const mergedClusters = [...existingModel.clusters];
-            const mergedAnomalies = [...existingModel.anomalies];
+            // Check if anomalies exists and is an array before spreading
+            const mergedAnomalies = Array.isArray(existingModel.anomalies) ? [...existingModel.anomalies] : [];
 
             // Add new clusters if they're significantly different from existing ones
             newModel.clusters.forEach(newCluster => {
@@ -571,31 +594,35 @@ class MLAnalytics {
             });
 
             // Add new anomalies, avoiding duplicates based on similarity
-            newModel.anomalies.forEach(newAnomaly => {
-                const isDuplicate = mergedAnomalies.some(existingAnomaly => 
-                    this.calculateEuclideanDistance(
-                        newAnomaly.processedData,
-                        existingAnomaly.processedData
-                    ) < existingModel.params.eps
-                );
+            if (Array.isArray(newModel.anomalies)) {
+                newModel.anomalies.forEach(newAnomaly => {
+                    const isDuplicate = mergedAnomalies.some(existingAnomaly => 
+                        this.calculateEuclideanDistance(
+                            newAnomaly.processedData,
+                            existingAnomaly.processedData
+                        ) < existingModel.params.eps
+                    );
 
-                if (!isDuplicate) {
-                    mergedAnomalies.push(newAnomaly);
-                }
-            });
+                    if (!isDuplicate) {
+                        mergedAnomalies.push(newAnomaly);
+                    }
+                });
+            }
 
             return {
                 clusters: mergedClusters,
                 fieldProcessors: newModel.fieldProcessors, // Use latest processors
                 anomalies: mergedAnomalies,
                 params: newModel.params, // Use latest parameters
-                processedData: [...existingModel.processedData, ...newModel.processedData],
+                processedData: Array.isArray(existingModel.processedData) ? 
+                    [...existingModel.processedData, ...newModel.processedData] : 
+                    Array.isArray(newModel.processedData) ? [...newModel.processedData] : [],
                 stats: {
-                    totalPoints: existingModel.stats.totalPoints + newModel.stats.totalPoints,
-                    dimensions: newModel.stats.dimensions,
+                    totalPoints: (existingModel.stats?.totalPoints || 0) + (newModel.stats?.totalPoints || 0),
+                    dimensions: newModel.stats?.dimensions,
                     numClusters: mergedClusters.length,
                     numAnomalies: mergedAnomalies.length,
-                    anomalyPercentage: (mergedAnomalies.length / (existingModel.stats.totalPoints + newModel.stats.totalPoints)) * 100
+                    anomalyPercentage: (mergedAnomalies.length / ((existingModel.stats?.totalPoints || 0) + (newModel.stats?.totalPoints || 0))) * 100 || 0
                 }
             };
         } catch (error) {
