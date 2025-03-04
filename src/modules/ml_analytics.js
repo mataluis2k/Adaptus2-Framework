@@ -610,6 +610,29 @@ class MLAnalytics {
         );
     }
 
+    /**
+     * Calculate similarity between two cluster centroids using cosine similarity
+     * @param {Array} centroid1 - First centroid vector
+     * @param {Array} centroid2 - Second centroid vector
+     * @returns {number} Similarity score between 0 and 1
+     */
+    calculateClusterSimilarity(centroid1, centroid2) {
+        // Calculate dot product
+        const dotProduct = centroid1.reduce((sum, val, idx) => sum + val * centroid2[idx], 0);
+        
+        // Calculate magnitudes
+        const magnitude1 = Math.sqrt(centroid1.reduce((sum, val) => sum + val * val, 0));
+        const magnitude2 = Math.sqrt(centroid2.reduce((sum, val) => sum + val * val, 0));
+        
+        // Avoid division by zero
+        if (magnitude1 === 0 || magnitude2 === 0) {
+            return 0;
+        }
+        
+        // Return cosine similarity
+        return dotProduct / (magnitude1 * magnitude2);
+    }
+
     calculateClusterCenter(cluster, processedData) {
         const points = cluster.map(idx => processedData[idx]);
         const dimensions = points[0].length;
