@@ -2633,14 +2633,15 @@ class Adaptus2Server {
         //     console.error('Failed to initialize Payment Module:', error.message);
         // }
 
-        // Initialize Streaming Server Module
+            // Initialize Streaming Server Module
         try {
             const s3Config = {
                 accessKeyId: process.env.AWS_ACCESS_KEY_ID,
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
                 region: process.env.AWS_REGION,
             };
-            this.streamingServer = new StreamingServer(this.app, s3Config, redis);
+            const redisClient = require('./modules/redisClient');
+            this.streamingServer = new StreamingServer(this.app, s3Config, redisClient);
             this.streamingServer.registerRoutes();
             consolelog.log('Streaming server module initialized.');
         } catch (error) {
