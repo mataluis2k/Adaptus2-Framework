@@ -4,11 +4,15 @@ const sharp = require("sharp");
 const { v4: uuidv4 } = require("uuid");
 const { create, read, update, delete: deleteRecord, query } = require('./db');
 const logger = require('./logger');
-const cmsConfig = require(path.join(process.cwd(), 'config', 'cmsManager.json'));
-const { authenticateMiddleware, aclMiddleware } = require("../middleware/authenticationMiddleware");
+
+
 const express = require('express');
 const CMS_TABLE_SCHEMA = require('./cmsDefinition');
 const crypto = require('crypto');
+const { aarMiddleware } = require('../middleware/aarMiddleware');
+const defaultUnauthorized = { httpCode: 403, message: 'Access Denied', code: null };
+
+
 
 class CMSManager {
     constructor(globalContext, dbConfig) {
@@ -196,6 +200,53 @@ class CMSManager {
         }
     }
 
+    async fetchContent(ctx, params) {
+        try {
+          // Single record retrieval
+          if (params.id || params.slug) {
+            const { id, slug } = params;
+            if (!id && !slug) {
+              throw new Error("Missing required field: id or slug");
+            }
+            const queryObj = id ? { id } : { slug };
+            const content = await read(this.dbConfig, CMS_TABLE_SCHEMA.dbTable, queryObj);
+            if (!content || content.length === 0) {
+              throw new Error("Content not found");
+            }
+            let result = content[0];
+            if (result.metadata) {
+              result.metadata = typeof result.metadata === 'string' ? JSON.parse(result.metadata) : result.metadata;
+            }
+            return result;
+          }
+          
+          // Multiple records listing with filters and pagination
+          const { filters = {}, page = 1, pageSize = 10 } = params;
+          const offset = (page - 1) * pageSize;
+          const filterKeys = Object.keys(filters);
+          const whereClause = filterKeys.length > 0 
+            ? 'WHERE ' + filterKeys.map(key => `${key} = ?`).join(' AND ')
+            : '';
+          const listQuery = {
+            text: `SELECT * FROM ${CMS_TABLE_SCHEMA.dbTable} ${whereClause}
+                   ORDER BY created_at DESC
+                   LIMIT ${pageSize} OFFSET ${offset}`,
+            values: [...Object.values(filters)]
+          };
+          const results = await query(this.dbConfig, listQuery.text, listQuery.values);
+          return results.map(item => ({
+            ...item,
+            metadata: item.metadata && typeof item.metadata === 'string'
+                      ? JSON.parse(item.metadata)
+                      : item.metadata
+          }));
+        } catch (error) {
+          logger.error('Error fetching content:', error);
+          throw error;
+        }
+      }
+      
+
     async updateContent(ctx, params) {
         try {
             const { id, ...updates } = params;
@@ -365,104 +416,112 @@ class CMSManager {
         }
     }
     registerRoutes(app) {
-        
         // Load CMS configuration from the /config folder at the project root
         const cmsConfig = require(path.join(process.cwd(), 'config', 'cmsManager.json'));
         const router = express.Router();
-    
-        // POST /cms/create – Create Content
-        router.post(
-          '/create',
-          authenticateMiddleware(cmsConfig.routes.create.auth),
-          aclMiddleware(cmsConfig.routes.create.acl),
-          async (req, res) => {
-            try {
-              const result = await this.createContent(req, req.body);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
+      
+        // Ensure that the CMS configuration is loaded and its JSON structure is valid before proceeding
+        if (!cmsConfig || !cmsConfig.routes) {
+          throw new Error('Invalid CMS configuration');
+        }
+      
+        for (const key in cmsConfig.routes) {
+          const routeConfig = cmsConfig.routes[key];
+          const { auth, acl, errorCodes } = routeConfig;
+          const unauthorized = (errorCodes && errorCodes.unauthorized)
+            ? errorCodes.unauthorized
+            : defaultUnauthorized;
+      
+          // Define routes based on the key
+          if (key === 'cms') {
+            // Create Content: POST /cms
+            router.post(
+              routeConfig.route,
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.createContent(req, req.body);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
+      
+            // Retrieve Content: GET /cms/:id? (by id or slug)
+            router.get(
+              routeConfig.route + '/:id?',
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.fetchContent(req, req.query);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
+      
+            // Update Content: PUT /cms/:id?
+            router.put(
+              routeConfig.route + '/:id?',
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.updateContent(req, req.body);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
+      
+            // Delete Content: DELETE /cms/:id?
+            router.delete(
+              routeConfig.route + '/:id?',
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.deleteContent(req, req.query);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
+          } else if (key === 'list') {
+            // List Content: GET /cms/list
+            router.get(
+              routeConfig.route,
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.listContent(req, req.query);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
+          } else if (key === 'search') {
+            // Search Content: GET /cms/search
+            router.get(
+              routeConfig.route,
+              aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
+              async (req, res) => {
+                try {
+                  const result = await this.searchContent(req, req.query);
+                  res.json(result);
+                } catch (error) {
+                  res.status(500).json({ error: error.message });
+                }
+              }
+            );
           }
-        );
-    
-        // GET /cms/get – Retrieve Content (by id or slug)
-        router.get(
-          '/get',
-          authenticateMiddleware(cmsConfig.routes.get.auth),
-          aclMiddleware(cmsConfig.routes.get.acl),
-          async (req, res) => {
-            try {
-              const result = await this.getContent(req, req.query);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
-          }
-        );
-    
-        // PUT /cms/update – Update Content
-        router.put(
-          '/update',
-          authenticateMiddleware(cmsConfig.routes.update.auth),
-          aclMiddleware(cmsConfig.routes.update.acl),
-          async (req, res) => {
-            try {
-              const result = await this.updateContent(req, req.body);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
-          }
-        );
-    
-        // DELETE /cms/delete – Delete Content
-        router.delete(
-          '/delete',
-          authenticateMiddleware(cmsConfig.routes.delete.auth),
-          aclMiddleware(cmsConfig.routes.delete.acl, cmsConfig.routes.delete.errorCodes.unauthorized),
-          async (req, res) => {
-            try {
-              // You can pass parameters via query string or body, as needed
-              const result = await this.deleteContent(req, req.query);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
-          }
-        );
-    
-        // GET /cms/list – List Content
-        router.get(
-          '/list',
-          authenticateMiddleware(cmsConfig.routes.list.auth),
-          aclMiddleware(cmsConfig.routes.list.acl),
-          async (req, res) => {
-            try {
-              const result = await this.listContent(req, req.query);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
-          }
-        );
-    
-        // GET /cms/search – Search Content
-        router.get(
-          '/search',
-          authenticateMiddleware(cmsConfig.routes.search.auth),
-          aclMiddleware(cmsConfig.routes.search.acl),
-          async (req, res) => {
-            try {
-              const result = await this.searchContent(req, req.query);
-              res.json(result);
-            } catch (error) {
-              res.status(500).json({ error: error.message });
-            }
-          }
-        );
-    
-        // Mount the CMS router under /cms
-        app.use('/cms', router);
+        }
+      
+        // Mount the CMS router
+        app.use(router);
       }
 }
 
