@@ -94,9 +94,7 @@ const DynamicRouteHandler = require('./modules/DynamicRouteHandler');
 const FirebaseService = require('./services/firebaseService'); // Firebase Service
 const CMSManager = require('./modules/cmsManager'); // CMS Module
 
-// Mobile payments enablements 
-const applePay  = require('./modules/applePayController'); // Apple Payments Module
-const googlePay = require('./modules/googlePayments'); // Google Payments Module
+
 
 // Changes to enable clustering and plugin management
 const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
@@ -2633,12 +2631,16 @@ class Adaptus2Server {
             }
         }
         if(process.env.MOBILE_PAYMENTS_ENABLED === 'true') {
-            try {
-                IF(process.env.MOBILE_PAYMENTS_APPLE==='true'){
+            try {// Mobile payments enablements                               
+                if(process.env.MOBILE_PAYMENTS_APPLE === 'true'){
+                    console.log('Apple Pay enabled');
+                    const ApplePay  = require('./modules/applePayController'); // Apple Payments Module
                     const applePay = new ApplePay(this.app);
                     applePay.registerRoutes();
                 }
-                if(process.env.MOBILE_PAYMENTS_GOOGLE==='true'){
+                if(process.env.MOBILE_PAYMENTS_GOOGLE === 'true'){
+                    console.log('Google Pay enabled');
+                    const GooglePay = require('./modules/googlePayments'); // Google Payments Module
                     const googlePay = new GooglePay(this.app);
                     googlePay.registerRoutes();
                 }
