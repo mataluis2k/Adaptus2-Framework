@@ -16,8 +16,12 @@ const { Document } = require('langchain/document');
 const fs = require("fs");
 const path = require("path");
 const { getDbConnection } = require(path.join(__dirname,'db'));
-// Global variable to store the vector store
+// Global variables to store the vector store and conversation history
 let vectorStore;
+// Store the last 5 conversation exchanges
+let conversationHistory = [];
+// Maximum number of exchanges to store (each exchange is a query-response pair)
+const MAX_HISTORY_LENGTH = 100;
 
 /**
  * Utility to load the initial configuration and prepare documents.
@@ -81,10 +85,15 @@ async function initializeRAG(apiConfig) {
 }
 
 
+/**
+ * Handles RAG queries with conversation memory
+ * @param {string} query - The user's query
+ * @returns {Object} - The response from the LLM
+ */
 async function handleRAG(query) {
     const openAIApiKey = process.env.OPENAI_API_KEY;
-    const model = process.env.OPENAI_MODEL || "gpt-3.5-turbo-instruct";
-    const temperature = process.env.OPENAI_TEMPERATURE || 0.7;
+    const modelName = process.env.OPENAI_MODEL || "gpt-3.5-turbo-instruct";
+    const temperature = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.7;
 
     if (!openAIApiKey) {
       throw new Error("OpenAI API Key not found. Please set OPENAI_API_KEY environment variable.");
@@ -98,7 +107,7 @@ async function handleRAG(query) {
       const model = new OpenAI({
         openAIApiKey: openAIApiKey,
         temperature: temperature,
-        modelName: model,
+        modelName: modelName,
       });
     
       const chain = RetrievalQAChain.fromLLM(
@@ -107,12 +116,34 @@ async function handleRAG(query) {
         {
             returnSourceDocuments: false,
         }
-    );
-    
-    const chat_history = [];
-    const response = await chain.invoke({query: query, chat_history: chat_history });
+      );
+      
+      // Format the conversation history for the LLM
+      const formattedHistory = conversationHistory.map(exchange => 
+        `Human: ${exchange.query}\nAI: ${exchange.response}`
+      ).join('\n');
+      
+      console.log(`Using conversation history with ${conversationHistory.length} previous exchanges`);
+      
+      // Pass the conversation history to the chain
+      const response = await chain.invoke({
+        query: query, 
+        chat_history: formattedHistory
+      });
+      
+      // Add the current exchange to the history
+      conversationHistory.push({
+        query: query,
+        response: response.text
+      });
+      
+      // Limit history to the last MAX_HISTORY_LENGTH exchanges
+      if (conversationHistory.length > MAX_HISTORY_LENGTH) {
+        conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
+      }
       
       console.log("Response:", response);
+      console.log(`Conversation history now has ${conversationHistory.length} exchanges`);
   
       return response;
     } catch (error) {
@@ -122,7 +153,16 @@ async function handleRAG(query) {
   }
 
 
+/**
+ * Clears the conversation history
+ */
+function clearConversationHistory() {
+  conversationHistory = [];
+  console.log("Conversation history cleared");
+}
+
 module.exports = {
     initializeRAG,
     handleRAG,
+    clearConversationHistory
   };

@@ -71,6 +71,7 @@ class LLMModule {
 
         try {
             const history = this.getHistory(messageData.senderId);
+            console.log('history:', history);
             const response = await axios.post(
                 'https://api.openai.com/v1/chat/completions',
                 {

@@ -3,9 +3,11 @@ const jwt = require("jsonwebtoken");
 const mysql = require("mysql2/promise");
 const { getDbConnection } = require("./db");
 const llmModule = require("./llmModule");
+const{ handleRAG } = require("./ragHandler1");
 
 // AI trigger prefix
 const AI_TRIGGER = "/ai";
+const RAG_TRIGGER = "/rag";
 class ChatModule {
     constructor(httpServer, app, jwtSecret, dbConfig, corsOptions) {
         // Initialize Socket.IO
@@ -78,6 +80,7 @@ class ChatModule {
                 try {
                     const recipientSocketId = this.connectedUsers.get(recipientId);
                     const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
+                    const isRagQuery = message.trim().toLowerCase().startsWith(RAG_TRIGGER);
 
                     // Save message in the database
                     const messageData = {
@@ -108,6 +111,7 @@ class ChatModule {
                             ...messageData,
                             message: aiPrompt
                         });
+                        console.log("AI response:", aiResponse);
 
                         // Remove all the text between <think> and </think> tags including the tags themselves
                         aiResponse.message = aiResponse.message.replace(/<think(?:\s[^>]*)?>[^]*?<\/think>/g, '');
@@ -119,17 +123,52 @@ class ChatModule {
                             text: aiResponse.message,
                             timestamp: new Date().toISOString(),
                         });
-
-                        // If recipient is online, also send them the AI response
-                        if (recipientSocketId) {
-                            this.io.to(recipientSocketId).emit("privateMessage", {
-                                from: "AI_Assistant",
-                                to: recipientId,
-                                text: aiResponse.message,
+                    }
+                    // Adding RAG handler
+                    if (isRagQuery) {
+                        try {
+                            const ragPrompt = message.slice(RAG_TRIGGER.length).trim();
+                            const ragResponse = await handleRAG(ragPrompt);
+                            console.log("RAG response:", ragResponse);
+                            
+                            // Send Back RAG response to the sender
+                            socket.emit("privateMessage", {
+                                from: "RAG_Assistant",
+                                to: socket.user.username,
+                                text: ragResponse.text || ragResponse,
+                                timestamp: new Date().toISOString(),
+                            });
+                            
+                            // If recipient is online, also send them the RAG response
+                            if (recipientSocketId) {
+                                this.io.to(recipientSocketId).emit("privateMessage", {
+                                    from: "RAG_Assistant",
+                                    to: recipientId,
+                                    text: ragResponse.text || ragResponse,
+                                    timestamp: new Date().toISOString(),
+                                });
+                            }
+                        } catch (error) {
+                            console.error("RAG Error:", error.message);
+                            socket.emit("privateMessage", {
+                                from: "RAG_Assistant",
+                                to: socket.user.username,
+                                text: "Error processing RAG query: " + error.message,
                                 timestamp: new Date().toISOString(),
                             });
                         }
                     }
+
+                    // If recipient is online and AI was triggered, send them the AI response
+                    if (recipientSocketId && isAiQuery) {
+                        this.io.to(recipientSocketId).emit("privateMessage", {
+                            from: "AI_Assistant",
+                            to: recipientId,
+                            text: aiResponse.message,
+                            timestamp: new Date().toISOString(),
+                        });
+                    }
+                    
             } catch (error) {
                 console.error("Error handling privateMessage event:", error.message);
                 socket.emit("error", "An error occurred while sending your message.");
