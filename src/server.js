@@ -119,7 +119,7 @@ const { aarMiddleware } = require('./middleware/aarMiddleware');
 const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
-
+const defaultUnauthorized = { httpCode: 403, message: 'Access Denied', code: null };
 
 const SECRET_SALT = process.env.SECRET_SALT || 'abcdc72ac166f371bd7e70a71e9c3182'; 
 
@@ -461,7 +461,10 @@ function registerProxyEndpoints(app, apiConfig) {
             enrich,
             responseMapping,
         } = config;
-
+        const unauthorized = (config.errorCodes && config.errorCodes['unauthorized']) 
+        ? config.errorCodes['unauthorized'] 
+        : defaultUnauthorized;
+        
         try {
             // Validate config structure
             if (config.routeType !== "proxy") {
@@ -488,7 +491,7 @@ function registerProxyEndpoints(app, apiConfig) {
                 consolelog.log(`Auth for route ${route}:`, auth); // 
                 app[method.toLowerCase()](
                     route,
-                    aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware),                
+                    aarMiddleware(auth, {acl, unauthorized}, app.locals.ruleEngineMiddleware),                
                     async (req, res) => {
                         console.log(`Proxy request received on route: ${route} [${method}]`);
                         try {
@@ -631,6 +634,9 @@ function getMulterStorage(storagePath) {
 
 function registerStaticRoute(app, endpoint) {
     const { route, folderPath, auth, acl } = endpoint;
+    const unauthorized = (endpoint.errorCodes && endpoint.errorCodes['unauthorized']) 
+    ? endpoint.errorCodes['unauthorized'] 
+    : defaultUnauthorized;
 
     if (!route || !folderPath) {
         console.error(`Invalid or missing parameters for static route: ${JSON.stringify(endpoint)}`);
@@ -639,13 +645,18 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware), express.static(folderPath));
+    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, {acl,unauthorized}, app.locals.ruleEngineMiddleware), express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
     consolelog.log(config);
-    const { route, dbTable, allowWrite, fileUpload , acl, auth } = config;
+    const { route, dbTable, allowWrite, fileUpload , acl, auth  } = config;
     consolelog.log(fileUpload);
+    
+    const unauthorized = (config.errorCodes && config.errorCodes['unauthorized']) 
+    ? config.errorCodes['unauthorized'] 
+    : defaultUnauthorized;
+
     const upload = multer({        
         storage: getMulterStorage(fileUpload.storagePath),
         fileFilter: (req, file, cb) => {
@@ -659,7 +670,7 @@ const registerFileUploadEndpoint = (app, config) => {
 
     const fieldName = fileUpload.fieldName || 'file'; // Default to 'file' if not specified
     
-    app.post(route, aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware), upload.single(fieldName), async (req, res) => {
+    app.post(route, aarMiddleware(auth, {acl , unauthorized} , app.locals.ruleEngineMiddleware), upload.single(fieldName), async (req, res) => {
         const dbConnectionConfig = { dbType: config.dbType, dbConnection: config.dbConnection };
         console.log(req.body);
         // Extract file and metadata
@@ -864,7 +875,7 @@ function registerRoutes(app, apiConfig) {
 
     apiConfig.forEach((endpoint, index) => {
         const { route, dbTable, dbConnection: connString, allowRead, allowWrite, keys, acl, relationships, allowMethods, cache, auth, authentication, encryption } = endpoint;
-        const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
+       
         const unauthorized = (endpoint.errorCodes && endpoint.errorCodes['unauthorized']) 
             ? endpoint.errorCodes['unauthorized'] 
             : defaultUnauthorized;
@@ -1053,7 +1064,7 @@ function buildFilterClause(filterObj, dbTable) {
 
   app.get(
     `${route}${getParamPath}`,
-    aarMiddleware(auth, acl, app.locals.ruleEngineMiddleware),
+    aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware),
     async (req, res) => {
       try {
         console.log("Incoming GET request:", {
