@@ -229,7 +229,8 @@ For more information, visit: https://ollama.ai/download
             authenticateMiddleware(true),
             async (req, res) => {
                 try {
-                    const models = await this.ollama.list();
+                    const modelsResponse = await this.ollama.list();
+                    const models = modelsResponse.models || [];
                     const modelStatus = models.find(m => m.name === this.model);
                     
                     res.json({

@@ -1855,29 +1855,53 @@ class Adaptus2Server {
         this.app.use(middleware);
     }
 
-    getRoutes(app) {
-        const routes = [];
-        app._router.stack.forEach((layer) => {
-          if (layer.route) {
-            // Direct route
-            routes.push({
-              path: layer.route.path,
-              methods: Object.keys(layer.route.methods)
-            });
-          } else if (layer.name === 'router' && layer.handle.stack) {
-            // This is a router middleware (sub-router)
-            layer.handle.stack.forEach((nestedLayer) => {
-              if (nestedLayer.route) {
-                routes.push({
-                  path: layer.regexp.toString() + nestedLayer.route.path,
-                  methods: Object.keys(nestedLayer.route.methods)
-                });
-              }
-            });
+  getRoutes(app) {
+    const routes = [];
+    
+    // Process router stack to find routes
+    const processRouterStack = (stack, basePath = '') => {
+      stack.forEach((layer) => {
+        if (layer.route) {
+          // Direct route
+          routes.push({
+            path: basePath + layer.route.path,
+            methods: Object.keys(layer.route.methods)
+          });
+        } else if (layer.name === 'router' && layer.handle.stack) {
+          // This is a router middleware (sub-router)
+          // Extract the base path from the regexp
+          let path = '';
+          if (layer.regexp && layer.regexp.toString() !== '/^\\/?(?=\\/|$)/i') {
+            const match = layer.regexp.toString().match(/^\/\^(\\\/[^\\]+).*$/);
+            if (match) {
+              path = match[1].replace(/\\\//g, '/');
+            }
           }
-        });
-        return routes;
-      }
+          processRouterStack(layer.handle.stack, basePath + path);
+        } else if (layer.name === 'bound dispatch' && layer.handle && layer.handle.name === 'middleware') {
+          // This might be a middleware that defines routes, like ml_analytics middleware
+          // Add a special entry for middleware routes
+          routes.push({
+            path: basePath + '/ml/*',
+            methods: ['GET'],
+            source: 'ml_analytics middleware'
+          });
+        }
+      });
+    };
+    
+    // Start processing from the main router stack
+    if (app._router && app._router.stack) {
+      processRouterStack(app._router.stack);
+    }
+    if(app.locals.ml_routes){
+        routes.push(...app.locals.ml_routes);
+    }
+   
+    
+    
+    return routes;
+  }
       
 
     setupSocketServer() {
@@ -2658,7 +2682,7 @@ class Adaptus2Server {
 
         app.use(cors(corsOptions));
         mlAnalytics.loadConfig();
-        mlAnalytics.trainModels();
+        mlAnalytics.trainModels(app);
         mlAnalytics.scheduleTraining();
 
         app.use('/ml', mlAnalytics.middleware());
