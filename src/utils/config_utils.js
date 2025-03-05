@@ -20,7 +20,7 @@ function getDefaultConfig() {
 
         // Sentiment analysis defaults
         sentimentConfig: {
-            Language: 'English',
+            language: 'English',
             textPreprocessing: true,
             minTextLength: 3,
             combineFields: false
