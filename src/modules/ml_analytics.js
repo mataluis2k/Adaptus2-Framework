@@ -349,7 +349,10 @@ class MLAnalytics {
         });
     }
 
-    async trainModels() {
+    async trainModels(app) {
+        if(!app.locals.ml_routes){
+            app.locals.ml_routes = [];
+        }
         for (const endpoint of this.mainConfig) {
             const { dbTable, mlmodel } = endpoint;
 
@@ -380,6 +383,7 @@ class MLAnalytics {
             try {
                 // Load existing models if available
                 for (const modelType of mlmodel) {
+                    app.locals.ml_routes.push({"path":`/ml/${dbTable}/${modelType}/:id?`});
                     const modelKey = `${dbTable}_${modelType}`;
                     if (incrementalTraining) {
                         const existingModel = this.loadModel(modelKey);
@@ -614,8 +618,9 @@ class MLAnalytics {
                 fieldProcessors: newModel.fieldProcessors, // Use latest processors
                 anomalies: mergedAnomalies,
                 params: newModel.params, // Use latest parameters
-                processedData: Array.isArray(existingModel.processedData) ? 
+                processedData: Array.isArray(existingModel.processedData) && Array.isArray(newModel.processedData) ? 
                     [...existingModel.processedData, ...newModel.processedData] : 
+                    Array.isArray(existingModel.processedData) ? [...existingModel.processedData] :
                     Array.isArray(newModel.processedData) ? [...newModel.processedData] : [],
                 stats: {
                     totalPoints: (existingModel.stats?.totalPoints || 0) + (newModel.stats?.totalPoints || 0),
@@ -1254,30 +1259,26 @@ class MLAnalytics {
                                     return res.status(500).json({ error: 'Database connection failed' });
                                 }
 
-                                try {
-                                    const recommendationIds = recommendations.map(r => r.id);
-                                    const [records] = await connection.query(
-                                        `SELECT * FROM ${table} WHERE id IN (?)`,
-                                        [recommendationIds]
-                                    );
+                                const recommendationIds = recommendations.map(r => r.id);
+                                const [records] = await connection.query(
+                                    `SELECT * FROM ${table} WHERE id IN (?)`,
+                                    [recommendationIds]
+                                );
 
-                                    const recordsWithSimilarity = records.map(record => {
-                                        const recommendation = recommendations.find(r => r.id === record.id);
-                                        return {
-                                            ...record,
-                                            similarity_score: recommendation ? recommendation.similarity : 0
-                                        };
-                                    }).sort((a, b) => b.similarity_score - a.similarity_score);
+                                const recordsWithSimilarity = records.map(record => {
+                                    const recommendation = recommendations.find(r => r.id === record.id);
+                                    return {
+                                        ...record,
+                                        similarity_score: recommendation ? recommendation.similarity : 0
+                                    };
+                                }).sort((a, b) => b.similarity_score - a.similarity_score);
 
-                                    return res.json({
-                                        key: keyId,
-                                        cluster_id: targetCluster.id,
-                                        cluster_size: targetCluster.size,
-                                        recommendations: recordsWithSimilarity
-                                    });
-                                } finally {
-                                    connection.release();
-                                }
+                                return res.json({
+                                    key: keyId,
+                                    cluster_id: targetCluster.id,
+                                    cluster_size: targetCluster.size,
+                                    recommendations: recordsWithSimilarity
+                                });
                             }
 
                             return res.json({
@@ -1301,32 +1302,44 @@ class MLAnalytics {
                                 return res.status(500).json({ error: 'Database connection failed' });
                             }
 
-                            try {
-                                // Get all records with sentiment scores
-                                const recordIds = modelData.data.map(item => item.id);
-                                const [records] = await connection.query(
-                                    `SELECT * FROM ${table} WHERE id IN (?)`,
-                                    [recordIds]
-                                );
+                            // Get all records with sentiment scores
+                            let recordIds = modelData.data.map(item => item.id);
+                            // if keyId is not null, only return that record if it exists in recordIds
+                            if (keyId !== null) {
+                                if (!recordIds.includes(keyId)) {
+                                    return res.status(404).json({ error: `Record ${keyId} not found`
+                                    });
+                                }
+                                recordIds = [keyId];
+                            }
 
-                                // Map sentiment scores to records
-                                const recordsWithSentiment = records.map(record => {
-                                    const sentimentData = modelData.data.find(item => item.id === record.id);
-                                    return {
-                                        ...record,
-                                        sentiment_score: sentimentData ? sentimentData.sentiment : null,
-                                        sentiment_confidence: sentimentData ? sentimentData.confidence : null,
-                                        word_count: sentimentData ? sentimentData.wordCount : null
-                                    };
-                                });
-
+                            // if recordIds is empty, return empty array
+                            if (recordIds.length === 0) {
                                 return res.json({
                                     stats: modelData.stats,
-                                    records: recordsWithSentiment
+                                    records: []
                                 });
-                            } finally {
-                                connection.release();
                             }
+                            const [records] = await connection.query(
+                                `SELECT * FROM ${table} WHERE id IN (?)`,
+                                [recordIds]
+                            );
+
+                            // Map sentiment scores to records
+                            const recordsWithSentiment = records.map(record => {
+                                const sentimentData = modelData.data.find(item => item.id === record.id);
+                                return {
+                                    ...record,
+                                    sentiment_score: sentimentData ? sentimentData.sentiment : null,
+                                    sentiment_confidence: sentimentData ? sentimentData.confidence : null,
+                                    word_count: sentimentData ? sentimentData.wordCount : null
+                                };
+                            });
+
+                            return res.json({
+                                stats: modelData.stats,
+                                records: recordsWithSentiment
+                            });
                         }
                         break;
 
@@ -1342,33 +1355,44 @@ class MLAnalytics {
                                 return res.status(500).json({ error: 'Database connection failed' });
                             }
 
-                            try {
-                                // Get all anomalous records
-                                const anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
-                                const [records] = await connection.query(
-                                    `SELECT * FROM ${table} WHERE id IN (?)`,
-                                    [anomalyIds]
-                                );
-
-                                // Map anomaly data to records
-                                const recordsWithAnomalyData = records.map(record => {
-                                    const anomalyData = modelData.anomalies.find(
-                                        anomaly => anomaly.originalData.id === record.id
-                                    );
-                                    return {
-                                        ...record,
-                                        is_anomaly: true,
-                                        anomaly_data: anomalyData ? anomalyData.processedData : null
-                                    };
-                                });
-
+                            // Get all anomalous records
+                            let anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
+                            // if anomalyIds is empty, return empty array
+                            if (anomalyIds.length === 0) {
                                 return res.json({
                                     stats: modelData.stats,
-                                    anomalies: recordsWithAnomalyData
+                                    anomalies: []
                                 });
-                            } finally {
-                                connection.release();
                             }
+                            // if keyId is not null, only return that record if it exists in anomalyIds
+                            if (keyId !== null) {
+                                if (!anomalyIds.includes(keyId)) {
+                                    return res.status(404).json({ error: `Anomaly ${keyId} not found`
+                                    });
+                                }
+                                anomalyIds = [keyId];
+                            }
+                            const [records] = await connection.query(
+                                `SELECT * FROM ${table} WHERE id IN (?)`,
+                                [anomalyIds]
+                            );
+
+                            // Map anomaly data to records
+                            const recordsWithAnomalyData = records.map(record => {
+                                const anomalyData = modelData.anomalies.find(
+                                    anomaly => anomaly.originalData.id === record.id
+                                );
+                                return {
+                                    ...record,
+                                    is_anomaly: true,
+                                    anomaly_data: anomalyData ? anomalyData.processedData : null
+                                };
+                            });
+
+                            return res.json({
+                                stats: modelData.stats,
+                                anomalies: recordsWithAnomalyData
+                            });
                         }
                         break;
                 }
