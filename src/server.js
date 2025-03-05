@@ -80,7 +80,7 @@ const { loadConfig, apiConfig, categorizedConfig, categorizeApiConfig } = requir
 const { getDbConnection, extendContext } = require(path.join(__dirname, '/modules/db'));
 const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
-const MLAnalytics = require('./modules/ml_analytics');
+const MLAnalytics = require('./core/ml_analytics2');
 
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
