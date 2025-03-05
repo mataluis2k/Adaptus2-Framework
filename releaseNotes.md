@@ -1,6 +1,58 @@
 # Relase Notes
 ## Going to try to keep this upto date to make it simpler to track changes and enhancements 
 
+## As of March 5th 2025 
+
+BIG BIG !!! Clean up on the Machine Learning module, made it extremely efficient and modular that will provide greater flexibility and expandability... What is available now! 
+
+# ML Analytics Module
+
+The ML Analytics module provides a powerful, configurable machine learning framework for implementing a wide range of predictive models with minimal setup. This module integrates seamlessly with your existing data and configuration system, automatically handling data preprocessing, model training, evaluation, and deployment.
+
+## Features
+
+- **Simple Configuration**: Define models through JSON configuration files without writing complex code
+- **Auto-Feature Detection**: Automatically detects and processes relevant features for each model type
+- **Incremental Training**: Update models with new data without full retraining
+- **Multiple Model Types**: Support for diverse prediction and analysis tasks
+- **REST API Integration**: Expose trained models via REST endpoints
+- **Batch Processing**: Efficiently process large datasets using batching and streaming
+- **Monitoring & Logging**: Track model performance and training metrics
+
+## Current Supported Model Types
+### General ML Tasks
+- **Sentiment Analysis** (`sentiment`): Analyze text for emotional tone and opinion
+- **Anomaly Detection** (`anomaly`): Identify unusual patterns in data
+- **General Prediction** (`prediction`): Generic regression/prediction tasks
+- **Recommendation Model** (`recommendation`) : Analyze records and find similar records to provide recomendations
+
+# What's comming next week, need to clean up some but they are already done!. 
+
+### Customer Behavior and Marketing
+- **Customer Churn Prediction** (`churn`): Predict which customers are likely to stop using a product or service
+- **Customer Segmentation** (`segmentation`): Group customers based on behavior, preferences, and demographics
+- **Purchase Prediction** (`purchase`): Forecast which products customers are likely to buy
+- **Personalized Recommendations** (`personalization`): Provide tailored product or content recommendations
+
+### Financial Services
+- **Fraud Detection** (`fraud`): Identify suspicious transactions and activities
+- **Credit Risk Assessment** (`creditRisk`): Evaluate the creditworthiness of loan applicants
+- **Stock Market Prediction** (`stockPrediction`): Forecast stock prices based on historical data
+
+### Operations and Supply Chain
+- **Demand Forecasting** (`demandForecasting`): Predict future demand for products or services
+- **Predictive Maintenance** (`maintenance`): Forecast equipment failures proactively
+- **Supply Chain Optimization** (`supplyChain`): Optimize logistics and transportation
+
+### Healthcare
+- **Disease Prediction** (`diseaseRisk`): Predict the likelihood of patients developing certain diseases
+- **Patient Readmission Prediction** (`readmission`): Identify patients at high risk of readmission
+
+### Human Resources
+- **Employee Churn Prediction** (`employeeChurn`): Predict which employees are likely to leave
+- **Talent Acquisition** (`talentAcquisition`): Identify promising candidates for job openings
+- **Employee Performance Prediction** (`performance`): Predict employee performance
+
 ## As of March 2nd 2025
 
 The ML analytics middleware has been enhanced to support detailed record responses for all model types:
