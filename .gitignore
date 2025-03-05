@@ -1,0 +1,102 @@
+# Node.js
+node_modules/
+
+# npm log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment files
+.env
+.env.*.local
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+*.vscode/
+
+# Mac system files
+.DS_Store
+
+# Windows system files
+Thumbs.db
+Desktop.ini
+
+# Log files
+*.log
+
+# Package distribution
+dist/
+build/
+tmp/
+temp/
+
+# Coverage reports
+coverage/
+
+# Dependency directories
+bower_components/
+
+# Next.js and other frameworks
+.next/
+out/
+
+# TypeScript build output
+*.tsbuildinfo
+
+# VSCode settings
+.vscode/
+
+# JetBrains IDEs (IntelliJ, WebStorm, etc)
+.idea/
+
+# ESLint
+.eslintcache
+
+# TypeScript
+*.tsbuildinfo
+
+# Rollup.js
+.rollup.cache/
+
+# Parcel-bundler cache
+.cache/
+
+# Storybook build output
+storybook-static/
+
+# Yarn 2 (berry) global cache
+.yarn/
+
+# SvelteKit
+.svelte-kit/
+
+# Next.js
+.next/
+out/
+
+# Nuxt.js
+.nuxt/
+
+# Astro
+.astro/
+
+# Static site generators
+public/
+
+# Folders to ignore for general build output
+build/
+dist/
+
+# VS Code
+.vscode/
+
+# JetBrains IDEs (IntelliJ, WebStorm, etc)
+.idea/
+
+# Node-watcher
+*.swp
+
+package-lock.json
