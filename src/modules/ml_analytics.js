@@ -1304,6 +1304,22 @@ class MLAnalytics {
 
                             // Get all records with sentiment scores
                             const recordIds = modelData.data.map(item => item.id);
+                            // if keyId is not null, only return that record if it exists in recordIds
+                            if (keyId !== null) {
+                                if (!recordIds.includes(keyId)) {
+                                    return res.status(404).json({ error: `Record ${keyId} not found`
+                                    });
+                                }
+                                recordIds = [keyId];
+                            }
+
+                            // if recordIds is empty, return empty array
+                            if (recordIds.length === 0) {
+                                return res.json({
+                                    stats: modelData.stats,
+                                    records: []
+                                });
+                            }
                             const [records] = await connection.query(
                                 `SELECT * FROM ${table} WHERE id IN (?)`,
                                 [recordIds]
@@ -1341,6 +1357,21 @@ class MLAnalytics {
 
                             // Get all anomalous records
                             const anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
+                            // if anomalyIds is empty, return empty array
+                            if (anomalyIds.length === 0) {
+                                return res.json({
+                                    stats: modelData.stats,
+                                    anomalies: []
+                                });
+                            }
+                            // if keyId is not null, only return that record if it exists in anomalyIds
+                            if (keyId !== null) {
+                                if (!anomalyIds.includes(keyId)) {
+                                    return res.status(404).json({ error: `Anomaly ${keyId} not found`
+                                    });
+                                }
+                                anomalyIds = [keyId];
+                            }
                             const [records] = await connection.query(
                                 `SELECT * FROM ${table} WHERE id IN (?)`,
                                 [anomalyIds]
