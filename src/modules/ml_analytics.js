@@ -1303,7 +1303,7 @@ class MLAnalytics {
                             }
 
                             // Get all records with sentiment scores
-                            const recordIds = modelData.data.map(item => item.id);
+                            let recordIds = modelData.data.map(item => item.id);
                             // if keyId is not null, only return that record if it exists in recordIds
                             if (keyId !== null) {
                                 if (!recordIds.includes(keyId)) {
@@ -1356,7 +1356,7 @@ class MLAnalytics {
                             }
 
                             // Get all anomalous records
-                            const anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
+                            let anomalyIds = modelData.anomalies.map(anomaly => anomaly.originalData.id);
                             // if anomalyIds is empty, return empty array
                             if (anomalyIds.length === 0) {
                                 return res.json({
