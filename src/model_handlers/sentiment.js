@@ -34,7 +34,7 @@ async function sentimentHandler(rows, endpoint, existingModel, mlAnalytics) {
             combineFields
         };
 
-        console.log("Sentiment config", config);
+    
         // Process text for sentiment analysis
         const newSentimentData = processSentimentData(rows, endpoint, config);
         
@@ -148,13 +148,13 @@ function processSentimentData(rows, endpoint, config) {
     }
     
     // Initialize sentiment analyzer with the appropriate vocabulary type
-    console.log(`Language: ${properCaseLanguage}, Vocabulary Type: ${vocabType} ===========================================>`);
+   
     let analyzer;
     try {
         analyzer = new natural.SentimentAnalyzer(properCaseLanguage, null, vocabType);
     } catch (error) {
         console.error(`Error initializing SentimentAnalyzer: ${error.message}`);
-        console.log('Falling back to English with afinn vocabulary');
+       
         // Fall back to English with afinn vocabulary which is guaranteed to work
         analyzer = new natural.SentimentAnalyzer('English', null, 'afinn');
     }

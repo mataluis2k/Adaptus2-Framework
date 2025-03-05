@@ -27,7 +27,7 @@ class MLAnalytics {
         this.mlConfigPath = path.resolve(process.cwd(), mlConfigPath);
         this.mainConfig = [];
         this.mlConfig = {};
-        console.log('ML Analytics -> mainConfigPath:', this.mainConfigPath);
+        consolelog.log('ML Analytics -> mainConfigPath:', this.mainConfigPath);
         // Paths for model storage
         this.modelsPath = path.join(process.cwd(), 'models');
         this.tfModelsPath = path.join(process.cwd(), 'models', 'tensorflow');
@@ -61,7 +61,7 @@ class MLAnalytics {
         try {
             const modelPath = `file://${path.join(this.tfModelsPath, modelKey)}`;
             await model.save(modelPath);
-            console.log(`TensorFlow.js model ${modelKey} saved successfully`);
+            consolelog.log(`TensorFlow.js model ${modelKey} saved successfully`);
         } catch (error) {
             console.error(`Error saving TensorFlow.js model ${modelKey}:`, error);
             throw error;
@@ -79,7 +79,7 @@ class MLAnalytics {
             const modelPath = `file://${path.join(this.tfModelsPath, modelKey)}`;
             if (fs.existsSync(path.join(this.tfModelsPath, modelKey, 'model.json'))) {
                 const model = await tf.loadLayersModel(modelPath);
-                console.log(`TensorFlow.js model ${modelKey} loaded successfully`);
+                consolelog.log(`TensorFlow.js model ${modelKey} loaded successfully`);
                 return model;
             }
         } catch (error) {
@@ -111,7 +111,7 @@ class MLAnalytics {
                 shuffle: true,
                 callbacks: {
                     onEpochEnd: (epoch, logs) => {
-                        console.log(`Epoch ${epoch + 1}: loss = ${logs.loss.toFixed(4)}`);
+                        consolelog.log(`Epoch ${epoch + 1}: loss = ${logs.loss.toFixed(4)}`);
                     }
                 }
             });
@@ -153,7 +153,7 @@ class MLAnalytics {
         try {
             const modelPath = path.join(this.modelsPath, `${modelKey}.json`);
             fs.writeFileSync(modelPath, JSON.stringify(modelData), 'utf-8');
-            console.log(`Model ${modelKey} saved successfully to ${modelPath}`);
+            consolelog.log(`Model ${modelKey} saved successfully to ${modelPath}`);
         } catch (error) {
             console.error(`Error saving model ${modelKey}:`, error);
             throw error;
@@ -171,7 +171,7 @@ class MLAnalytics {
             const modelPath = path.join(this.modelsPath, `${modelKey}.json`);
             if (fs.existsSync(modelPath)) {
                 const modelData = JSON.parse(fs.readFileSync(modelPath, 'utf-8'));
-                console.log(`Model ${modelKey} loaded successfully`);
+                consolelog.log(`Model ${modelKey} loaded successfully`);
                 return modelData;
             }
         } catch (error) {
@@ -193,7 +193,7 @@ class MLAnalytics {
             const mlData = fs.readFileSync(this.mlConfigPath, 'utf-8');
             this.mlConfig = JSON.parse(mlData);
             
-            console.log('ML configuration loaded successfully:', this.mlConfig);
+            consolelog.log('ML configuration loaded successfully:', this.mlConfig);
         } catch (error) {
             console.error('Error loading configurations:', error.message);
             throw new Error('Failed to load configurations');
@@ -319,7 +319,7 @@ class MLAnalytics {
                         lastCreatedAt
                     });
                     
-                    console.log(`Processed batch of ${rows.length} records from ${dbTable}, ` +
+                    consolelog.log(`Processed batch of ${rows.length} records from ${dbTable}, ` +
                               `total: ${totalProcessed}, throughput: ${throughput.toFixed(2)} records/sec`);
                 }
             } while (rows && rows.length === batchSize);
@@ -359,7 +359,7 @@ class MLAnalytics {
 
             let connection;
             try {
-                console.log(`Training models for ${dbTable}...`);
+                
                 connection = await getDbConnection(endpoint);
                 if (!connection) {
                     consolelog.error(`Failed to connect to database for ${endpoint.dbConnection}`);
@@ -382,20 +382,20 @@ class MLAnalytics {
                 // Load existing models if available
                 if (incrementalTraining) {
                     for (const modelType of mlmodel) {
-                        console.log(`Training models for ${dbTable}...`);
+                        
                         app.locals.ml_routes.push({"path":`/ml/${dbTable}/${modelType}/:id?`});
                         const modelKey = `${dbTable}_${modelType}`;
                         const existingModel = this.loadModel(modelKey);
                         if (existingModel) {
                             this.models[modelKey] = existingModel;
-                            console.log(`Loaded existing model for ${modelKey}`);
+                            consolelog.log(`Loaded existing model for ${modelKey}`);
                         }
                     }
                 }
 
                 // Sampling logic
                 if (samplingRate > 0) {
-                    console.log(`Sampling ${samplingRate * 100}% of data for ${dbTable}`);
+                    consolelog.log(`Sampling ${samplingRate * 100}% of data for ${dbTable}`);
                     const [rows] = await connection.query(
                         `SELECT * FROM ${dbTable} WHERE RAND() < ?`, 
                         [samplingRate]
@@ -405,17 +405,17 @@ class MLAnalytics {
                 }
 
                 // Stream data in batches using cursor-based pagination
-                console.log(`Training models for ${dbTable} in batches of ${batchSize}...`);
+             
                 await this.streamDataInBatches(connection, dbTable, batchSize, 
                     async (rows) => {
-                        console.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
+                        consolelog.log(`Processing batch of ${rows.length} rows for ${dbTable}`);
                         await this.processRows(rows, mlmodel, endpoint, parallelProcessing, incrementalTraining);
                     }
                 );
 
                 // Save final model states
                 for (const modelType of mlmodel) {
-                    console.log(`Saving models for ${dbTable}...`);
+                    consolelog.log(`Saving models for ${dbTable}...`);
                     const modelKey = `${dbTable}_${modelType}`;
                     if (this.models[modelKey]) {
                         await this.saveModel(modelKey, this.models[modelKey]);
@@ -507,7 +507,7 @@ class MLAnalytics {
             }
 
             // Train the model using the handler
-            console.log(`Training ${modelType} model for ${dbTable}...`, endpoint);
+            consolelog.log(`Training ${modelType} model for ${dbTable}...`, endpoint);
 
             const modelData = await handler(rows, endpoint, existingModel, this);
             
