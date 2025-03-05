@@ -33,6 +33,7 @@ The ML Analytics module provides a powerful, configurable machine learning frame
 - **Customer Segmentation** (`segmentation`): Group customers based on behavior, preferences, and demographics
 - **Purchase Prediction** (`purchase`): Forecast which products customers are likely to buy
 - **Personalized Recommendations** (`personalization`): Provide tailored product or content recommendations
+  **Customer Life Time Value (`ltv`): Provide customers life time value based on recensy
 
 ### Financial Services
 - **Fraud Detection** (`fraud`): Identify suspicious transactions and activities
