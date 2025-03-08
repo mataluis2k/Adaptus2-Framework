@@ -10,6 +10,10 @@ const defaultUnauthorized = { httpCode: 403, message: 'Access Denied' };
 const aclMiddleware = (allowedRoles, customMessage = defaultUnauthorized) => {
     return (req, res, next) => {
         if (allowedRoles) {
+            // if allowedRoles is not provided, skip ACL check or empty array is provided skip ACL check
+            if (!Array.isArray(allowedRoles) || allowedRoles.length === 0) {
+                return next();
+            }
             consolelog.log('ACL Middleware:', req.user);
             const userRole = req.user?.acl; // Adjust based on your user object structure
             if (!userRole || !allowedRoles.includes(userRole)) {
