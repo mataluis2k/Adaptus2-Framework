@@ -78,23 +78,20 @@ class StreamingServer {
     }
 
     async generateBulkHLS() {
-            const dbType = process.env.STREAMING_DBTYPE || "mysql";
-            const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
-
-            const config = { 'dbType': dbType, 'dbConnection': dbConnection } ;            
-            // If not in cache, query the database
-            const video = query(config,`SELECT * FROM ${VIDEO_TABLE} WHERE ${VIDEO_HLS_COLUMN} is null`, []);
-            if (video.length > 0) {
-                video.forEach(element => {
-                    consolelog.log("Video: ",element);
-                    // call the function that will generate the hls
-                    // need to create a fake http request and response object
-                    const req = { params: { [VIDEO_PARAM_NAME]: element[VIDEO_ID_COLUMN] } };
-                    const res = { json: (data) => console.log(data) };
-                    this.generateHls(req, res, element[VIDEO_ID_COLUMN], element[VIDEO_PATH_COLUMN]);
-                });
-            }
-            return null;
+        const dbType = process.env.STREAMING_DBTYPE || "mysql";
+        const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
+        const config = { dbType, dbConnection };            
+        const videos = query(config, `SELECT * FROM ${VIDEO_TABLE} WHERE ${VIDEO_HLS_COLUMN} is null`, []);
+        if (videos.length > 0) {
+            videos.forEach(element => {
+                consolelog.log("Video: ", element);
+                // Fix: Pass the correct arguments (sourcePath first, then videoID)
+                const req = { params: { [VIDEO_PARAM_NAME]: element[VIDEO_ID_COLUMN] } };
+                const res = { json: (data) => console.log(data), status: (code) => ({ send: (msg) => console.log(code, msg) }) };
+                this.generateHLS(req, res, element[VIDEO_PATH_COLUMN], element[VIDEO_ID_COLUMN]);
+            });
+        }
+        return null;
     }
 
     async getVideoById(videoID) {
@@ -123,31 +120,39 @@ class StreamingServer {
         return null;
     }
 
-    streamFromFileSystem(req, res, filePath) {
-        fs.stat(filePath, (err, stats) => {
-            if (err) {
-                return res.status(404).send("File not found");
-            }
-
-            const range = req.headers.range;
-            if (!range) {
-                return res.status(416).send("Requires Range header");
-            }
-
-            const CHUNK_SIZE = 10 ** 6; // 1MB
-            const start = Number(range.replace(/\D/g, ""));
-            const end = Math.min(start + CHUNK_SIZE, stats.size - 1);
-
-            res.writeHead(206, {
-                "Content-Range": `bytes ${start}-${end}/${stats.size}`,
-                "Accept-Ranges": "bytes",
-                "Content-Length": end - start + 1,
-                "Content-Type": mime.lookup(filePath) || "video/mp4",
-            });
-
-            const stream = fs.createReadStream(filePath, { start, end });
-            stream.pipe(res);
-        });
+    sanitizeInput(input) {
+        return input.replace(/[^a-zA-Z0-9-_\.]/g, '');
+    }
+      
+      // Revised streamFromFileSystem with path resolution check
+      streamFromFileSystem(req, res, filePath) {
+          const safeFileName = this.sanitizeInput(path.basename(filePath));
+          const fullPath = path.join(LOCAL_VIDEO_PATH, safeFileName);
+          const resolvedPath = path.resolve(fullPath);
+          if (!resolvedPath.startsWith(path.resolve(LOCAL_VIDEO_PATH))) {
+              return res.status(400).send("Invalid file path");
+          }
+      
+          fs.stat(resolvedPath, (err, stats) => {
+              if (err) {
+                  return res.status(404).send("File not found");
+              }
+              const range = req.headers.range;
+              if (!range) {
+                  return res.status(416).send("Requires Range header");
+              }
+              const CHUNK_SIZE = 10 ** 6; // 1MB
+              const start = Number(range.replace(/\D/g, ""));
+              const end = Math.min(start + CHUNK_SIZE, stats.size - 1);
+              res.writeHead(206, {
+                  "Content-Range": `bytes ${start}-${end}/${stats.size}`,
+                  "Accept-Ranges": "bytes",
+                  "Content-Length": end - start + 1,
+                  "Content-Type": mime.lookup(resolvedPath) || "video/mp4",
+              });
+              const stream = fs.createReadStream(resolvedPath, { start, end });
+              stream.pipe(res);
+          });
     }
 
     async streamFromS3(req, res, bucket, key) {
@@ -190,28 +195,32 @@ class StreamingServer {
     }
 
     async generateHLS(req, res, sourcePath, videoID) {
-        const outputDir = path.join(__dirname, "hls_output", videoID);
-        const outputFile = path.join(outputDir, "playlist.m3u8");
-
-        if (!fs.existsSync(outputDir)) {
-            fs.mkdirSync(outputDir, { recursive: true });
+        // Sanitize sourcePath and videoID
+        const safeSourcePath = path.resolve(sanitizeInput(sourcePath));
+        const safeVideoID = this.sanitizeInput(videoID);
+        const outputDir = path.join(__dirname, "hls_output", safeVideoID);
+        const resolvedOutputDir = path.resolve(outputDir);
+        if (!resolvedOutputDir.startsWith(path.resolve(__dirname, "hls_output"))) {
+            return res.status(400).send("Invalid video identifier");
         }
-
-        const cacheKey = `hls:${videoID}`;
+        if (!fs.existsSync(resolvedOutputDir)) {
+            fs.mkdirSync(resolvedOutputDir, { recursive: true });
+        }
+        const outputFile = path.join(resolvedOutputDir, "playlist.m3u8");
+    
+        const cacheKey = `hls:${safeVideoID}`;
         const cachedPlaylist = await this.getAsync(cacheKey);
-        const link = `/hls/${videoID}/playlist.m3u8`;
-
+        const link = `/hls/${safeVideoID}/playlist.m3u8`;
         if (cachedPlaylist) {
             return res.json({
                 message: "HLS playlist served from cache",
                 playlist: link,
             });
         }
-
-        ffmpeg(sourcePath)
+        ffmpeg(safeSourcePath)
             .outputOptions(ffmpegOptions.concat([
-                `-hls_segment_filename ${outputDir}/segment_%03d.ts`               
-              ]))
+                `-hls_segment_filename ${resolvedOutputDir}/segment_%03d.ts`
+            ]))
             .output(outputFile)
             .on("end", async () => {
                 consolelog.log("HLS conversion complete");
