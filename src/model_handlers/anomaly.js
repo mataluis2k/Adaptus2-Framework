@@ -20,8 +20,8 @@ async function anomalyHandler(rows, endpoint, existingModel, mlAnalytics) {
         // Get configuration
         const mergedConfig = mlAnalytics.getMergedConfig(endpoint.dbTable);
         const { 
-            eps = 0.5, 
-            minPts = 2,
+            eps = rows.length < 10 ? 1.0 : 0.5,  
+            minPts = rows.length < 5 ? 1 : 2,
             scalingRange = [0, 1],
             missingValueStrategy = 'mean'
         } = mergedConfig?.anomalyConfig || {};

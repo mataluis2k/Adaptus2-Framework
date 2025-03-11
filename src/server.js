@@ -117,7 +117,7 @@ const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
 const defaultUnauthorized = { httpCode: 403, message: 'Access Denied', code: null };
 
-const SECRET_SALT = process.env.SECRET_SALT || 'abcdc72ac166f371bd7e70a71e9c3182'; 
+const SECRET_SALT = process.env.SECRET_SALT || ''; 
 
 
 ruleEngine = null; // Global variable to hold the rule engine
@@ -2598,6 +2598,7 @@ class Adaptus2Server {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        const redisClient = require('./modules/redisClient');
         // Initialize CMS if enabled
         if (process.env.ENABLE_CMS === 'true') {
             try {
@@ -2636,6 +2637,14 @@ class Adaptus2Server {
             console.error('Failed to setup Ollama module:', error.message);
         }
 
+        try {
+            const ReportingModule = require('./modules/reportingModule');
+            const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
+            this.reportingModule = new ReportingModule(globalContext, dbConnection, redisClient, app);
+            console.log('Reporting module initialized successfully');
+        } catch(error) {
+            console.error('Failed to initialize Reporting module:', error.message);
+        }
         // Initialize Chat Module
         if(process.env.CHAT_SERVER_PORT){
             const chat_port = process.env.CHAT_SERVER_PORT;
@@ -2670,7 +2679,7 @@ class Adaptus2Server {
                 secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
                 region: process.env.AWS_REGION,
             };
-            const redisClient = require('./modules/redisClient');
+          
             this.streamingServer = new StreamingServer(this.app, s3Config, redisClient);
             this.streamingServer.registerRoutes();
             consolelog.log('Streaming server module initialized.');
