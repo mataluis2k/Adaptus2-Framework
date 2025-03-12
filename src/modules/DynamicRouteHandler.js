@@ -117,7 +117,7 @@ class DynamicRouteHandler {
   
       app[method.toLowerCase()](route, aarMiddleware(auth, acl, ruleEngineInstance), async (req, res) => {
         try {
-          responseBus.Reset(); // Reset the response object at the beginning of the request
+         // responseBus.Reset(); // Reset the response object at the beginning of the request
 
           // Data from query parameters (GET) or request body (others)
           const data = method.toLowerCase() === 'get' ? { ...req.query, ...req.params } : req.body;

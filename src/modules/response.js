@@ -1,4 +1,5 @@
 /* define a globale response object to store the response from the rule engine
+*  { success: true, result: results, key: "response", status: 200 };
 */
 const response = {
     status: 200,

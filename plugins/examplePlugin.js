@@ -5,13 +5,14 @@ module.exports = {
     initialize(dependencies) {
         console.log('Initializing examplePlugin...');
         const { context, customRequire } = dependencies;
-        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
-        const { authenticateMiddleware, aclMiddleware } = customRequire('../src/middleware/authenticationMiddleware');
+        const response = customRequire('../src/modules/response');
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');        
         // Perform initialization tasks
 
         // Define a custom action
         async function customAction(ctx, params) {
             console.log('Executing custom action...');
+            return response.setResponse(401, 'Custom action executed', { data: 'Custom action data' });
             // Perform custom action
         }
         // Register the function to the global context
@@ -20,20 +21,20 @@ module.exports = {
         }
     },
 
-    // If you need to create custom routes, must of the plugin will only expose the methods via the global context
-    registerRoutes({ app }) {
-        const routes = [];
+    // // If you need to create custom routes, must of the plugin will only expose the methods via the global context
+    // registerRoutes({ app }) {
+    //     const routes = [];
         
-        // Register route and keep track of it
-        const routePath = '/example';
-        app.get(routePath,authenticateMiddleware("token"), aclMiddleware(["publicAccess"]), (req, res) => {
-            res.send('Example Plugin Route');
-        });
-        routes.push({ method: 'get', path: routePath });
+    //     // Register route and keep track of it
+    //     const routePath = '/example';
+    //     app.get(routePath,authenticateMiddleware("token"), aclMiddleware(["publicAccess"]), (req, res) => {
+    //         res.send('Example Plugin Route');
+    //     });
+    //     routes.push({ method: 'get', path: routePath });
     
-        // Return registered routes for cleanup later
-        return routes;
-    },
+    //     // Return registered routes for cleanup later
+    //     return routes;
+    // },
 
 
     async cleanup() {
