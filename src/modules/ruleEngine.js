@@ -362,17 +362,18 @@ class Rule {
                       consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
                   
                       // Dynamically evaluate the expression
-                      computedValue = new Function(
-                        'data',
-                        'globals',
-                        `
-                          with (data) {
-                            with (globals) {
-                              return ${interpolatedExpression};
-                            }
-                          }
-                        `
-                      )(data, global);
+                      // computedValue = new Function(
+                      //   'data',
+                      //   'globals',
+                      //   `
+                      //     with (data) {
+                      //       with (globals) {
+                      //         return ${interpolatedExpression};
+                      //       }
+                      //     }
+                      //   `
+                      // )(data, global);
+                    computedValue = this._safeEvaluate(interpolatedExpression, data);
         
             }
               // Check if parsedValue is JSON and has a template property
@@ -432,7 +433,35 @@ class Rule {
     }
 }
 
-
+// Add this new safe evaluation method to the Rule class:
+_safeEvaluate(expression, context) {
+  // Define a limited set of safe functions and operations
+  const safeGlobals = {
+    // Only expose specific global functions that are needed
+    sha256: global.sha256,
+    bcrypt: global.bcrypt,
+    // Add other necessary global functions here, but be selective!
+  };
+  
+  // Create a sandboxed environment with only the variables we want to expose
+  const sandbox = {
+    ...context,  // User data context
+    ...safeGlobals, // Limited set of global functions
+  };
+  
+  // Use vm module for safer evaluation
+  const vm = require('vm');
+  const script = new vm.Script(`result = ${expression}`);
+  const vmContext = vm.createContext({ result: null, ...sandbox });
+  
+  try {
+    script.runInContext(vmContext);
+    return vmContext.result;
+  } catch (error) {
+    console.error(`Safe evaluation error: ${error.message}`);
+    throw error;
+  }
+}
   /**
    * Utility to get nested values like "order.total" from data { order:{ total:123 }}
    */
@@ -448,24 +477,7 @@ class Rule {
     return current;
   }
 
-  /**
-   * Utility to set nested values like "order.total" = 500 in {order:{total:...}}
-   */
-  _setNestedValue(obj, path, val) {
-    const parts = path.split('.');
-    let current = obj;
-    for (let i = 0; i < parts.length; i++) {
-      const p = parts[i];
-      if (i === parts.length - 1) {
-        current[p] = val;
-      } else {
-        if (!Object.prototype.hasOwnProperty.call(current, p)) {
-          current[p] = {};
-        }
-        current = current[p];
-      }
-    }
-  }
+  _setNestedValue
 
   /**
    * (Optional) Interpolate placeholders like ${data.field} in a string.
