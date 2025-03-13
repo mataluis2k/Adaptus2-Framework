@@ -1,12 +1,14 @@
 const { v7: uuidv7 } = require('uuid');            // UUID generator
-const redisClient = require('./redisClient');        // Your Redis client module
+const Redis = require('ioredis');
+const dynaRouteRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');     // Your Redis client module
 const { getDbConnection } = require('./db');         // Your DB module
 const BusinessLogicProcessor = require('./BusinessLogicProcessor');
 const consolelog = require('./logger');
 const { aarMiddleware } = require('../middleware/aarMiddleware');
 const responseBus = require('./response');
 const { getContext } = require('./context');         // Import the shared globalContext and getContext
-
+        // Import the RateLimit class
+const unauthorizedResponse = responseBus.unauthorized(); // Import the unauthorized response from the response module
 /**
  * Inspects the SQL query and ensures it contains a WHERE clause.
  * If no WHERE clause is found, it inserts "WHERE 1=1" before any ORDER BY.
@@ -114,8 +116,43 @@ class DynamicRouteHandler {
         const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
         route = `${route}${getParamPath}`;
       }
+   
   
-      app[method.toLowerCase()](route, aarMiddleware(auth, acl, ruleEngineInstance), async (req, res) => {
+      // Create middleware array for the route
+      const middlewares = [aarMiddleware(auth, {acl,unauthorizedResponse }, ruleEngineInstance)];
+      
+      // Add rate limiting middleware if configured
+      // if (endpoint.rateLimit && endpoint.rateLimit.requestsPerMinute) {
+      //   const rateLimitMiddleware = async (req, res, next) => {
+      //     try {
+      //       const { requestsPerMinute } = endpoint.rateLimit;
+      //       const clientIP = req.ip;
+      //       const rateLimitKey = `rate-limit:${route}:${clientIP}`;
+            
+      //       const requestCount = await dynaRouteRedis.incr(rateLimitKey);
+
+            
+      //       if (requestCount === 1) {
+      //         // Set expiration to 1 minute
+      //         await dynaRouteRedis.expire(rateLimitKey, 60);
+      //       }
+            
+      //       if (requestCount > requestsPerMinute) {
+      //         console.log(`Rate limit exceeded for ${clientIP} on dynamic route ${route}`);
+      //         return res.status(429).json({ error: 'Too Many Requests' });
+      //       }
+            
+      //       next();
+      //     } catch (error) {
+      //       console.error('Rate limit middleware error:', error.message);
+      //       next(); // Continue to the next middleware in case of error
+      //     }
+      //   };
+        
+      //   middlewares.push(rateLimitMiddleware);
+      // }
+      
+      app[method.toLowerCase()](route, middlewares, async (req, res) => {
         try {
           responseBus.Reset(); // Reset the response object at the beginning of the request
 
@@ -162,7 +199,7 @@ class DynamicRouteHandler {
                   // If the key should be encoded as UUID, convert the provided UUID to the real value.
                   if (Array.isArray(uuidMapping) && uuidMapping.includes(searchKey)) {
                     // Use a key that includes the searchKey to avoid collisions across columns
-                    const realId = await redisClient.get(`uuidMapping:${searchKey}:${searchValue}`);
+                    const realId = await dynaRouteRedis.get(`uuidMapping:${searchKey}:${searchValue}`);
                     if (!realId) {
                       return res.status(404).json({ error: `Record not found (invalid UUID for ${searchKey})` });
                     }
@@ -186,15 +223,15 @@ class DynamicRouteHandler {
                   if (!originalId) continue; // Skip if key does not exist in the row
           
                   const reverseKey = `uuidMapping:original:${key}:${originalId}`;
-                  let existingUuid = await redisClient.get(reverseKey);
+                  let existingUuid = await dynaRouteRedis.get(reverseKey);
                   if (existingUuid) {
                     row[key] = existingUuid;
                   } else {
                     const newUuid = uuidv7();
                     row[key] = newUuid;
                     // Store forward mapping with the key in the Redis key
-                    await redisClient.set(`uuidMapping:${key}:${newUuid}`, originalId);
-                    await redisClient.set(reverseKey, newUuid);
+                    await dynaRouteRedis.set(`uuidMapping:${key}:${newUuid}`, originalId);
+                    await dynaRouteRedis.set(reverseKey, newUuid);
                   }
 
                 }

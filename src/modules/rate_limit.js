@@ -1,13 +1,24 @@
+// rate_limit.js - Updated implementation
 const Redis = require('ioredis');
 
 class RateLimit {
     /**
      * @param {Array} apiConfig - The API configuration array
-     * @param {String} redisUrl - The Redis connection string
+     * @param {Object} redis - The Redis client instance
      */
-    constructor(apiConfig, redis) {
+    constructor(apiConfig, redisUrl) {
         this.apiConfig = apiConfig;
-        this.redis = redis;
+        // Create a dedicated Redis client for rate limiting
+        this.redis = new Redis(redisUrl || process.env.REDIS_URL || 'redis://localhost:6379', {
+            retryStrategy: (times) => Math.min(times * 50, 2000),
+            maxRetriesPerRequest: 3,
+            enableReadyCheck: true,
+            connectTimeout: 10000
+        });
+        
+        this.redis.on('error', (err) => {
+            console.error('Rate Limit Redis Error:', err.message);
+        });
     }
 
     /**
@@ -44,9 +55,18 @@ class RateLimit {
                 next();
             } catch (error) {
                 console.error('Rate limit middleware error:', error.message);
-                res.status(500).json({ error: 'Internal Server Error' });
+                next(); // Continue to the next middleware even if rate limiting fails
             }
         };
+    }
+    
+    /**
+     * Close the Redis connection when shutting down
+     */
+    async close() {
+        if (this.redis) {
+            await this.redis.quit();
+        }
     }
 }    
 module.exports = RateLimit;

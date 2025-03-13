@@ -2452,92 +2452,97 @@ class Adaptus2Server {
     }
 
 
-    registerMiddleware() {
-        // API Analytics middleware
-        this.app.use(this.apiAnalytics.middleware());
+   // In server.js, update the registerMiddleware method to use the modified rate limiter
 
-        // Security middleware
-        this.app.use(helmet({
-            contentSecurityPolicy: {
-                directives: {
-                    defaultSrc: ["'self'"],
-                    scriptSrc: ["'self'", "'unsafe-inline'"],
-                    styleSrc: ["'self'", "'unsafe-inline'"],
-                    imgSrc: ["'self'", "data:", "https:"],
+registerMiddleware() {
+    // API Analytics middleware
+    this.app.use(this.apiAnalytics.middleware());
+
+    // Security middleware
+    this.app.use(helmet({
+        contentSecurityPolicy: {
+            directives: {
+                defaultSrc: ["'self'"],
+                scriptSrc: ["'self'", "'unsafe-inline'"],
+                styleSrc: ["'self'", "'unsafe-inline'"],
+                imgSrc: ["'self'", "data:", "https:"],
+            }
+        },
+        xssFilter: true,
+        noSniff: true,
+        referrerPolicy: { policy: 'same-origin' }
+    }));
+
+    // Request parsing with size limits
+    this.app.use(express.json({ limit: MAX_REQUEST_SIZE }));
+    this.app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_SIZE }));
+    
+    // Response compression
+    this.app.use(compression());
+
+    // Logging middleware with enhanced error handling
+    this.app.use(morgan('combined', {
+        skip: (req, res) => res.statusCode < 400, // Only log errors
+        stream: {
+            write: message => {
+                try {
+                    const consolelog = require('./modules/logger');
+                    consolelog.error(message.trim());
+                } catch (error) {
+                    console.error('Failed to log request:', error);
                 }
-            },
-            xssFilter: true,
-            noSniff: true,
-            referrerPolicy: { policy: 'same-origin' }
-        }));
-
-        // Request parsing with size limits
-        this.app.use(express.json({ limit: MAX_REQUEST_SIZE }));
-        this.app.use(express.urlencoded({ extended: true, limit: MAX_REQUEST_SIZE }));
-        
-        // Response compression
-        this.app.use(compression());
-
-        // Logging middleware with enhanced error handling
-        this.app.use(morgan('combined', {
-            skip: (req, res) => res.statusCode < 400, // Only log errors
-            stream: {
-                write: message => {
-                    try {
-                        const consolelog = require('./modules/logger');
-                        consolelog.error(message.trim());
-                    } catch (error) {
-                        console.error('Failed to log request:', error);
-                    }
-                }
             }
-        }));
+        }
+    }));
 
-        // Error handling for malformed JSON
-        this.app.use((err, req, res, next) => {
-            if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-                return res.status(400).json({ 
-                    error: 'Invalid JSON payload',
-                    details: process.env.NODE_ENV === 'development' ? err.message : undefined
-                });
-            }
-            next(err);
-        });
-
-        // Rate limiting
-        const rateLimit = new RateLimit(this.apiConfig, this.redis);
-        this.app.use(rateLimit.middleware());
-
-        // Rule engine middleware
-        consolelog.log('Rule Engine for Middleware', ruleEngine);
-        const ruleEngineMiddleware = new RuleEngineMiddleware(globalContext.ruleEngine, this.dependencyManager);
-        this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;        
-        // Global error handler with enhanced logging
-        this.app.use((err, req, res, next) => {
-            try {
-                const consolelog = require('./modules/logger');
-                consolelog.error('Unhandled error:', {
-                    error: err.stack || err.message,
-                    url: req.url,
-                    method: req.method,
-                    timestamp: new Date().toISOString(),
-                    requestId: req.id,
-                    userId: req.user?.id,
-                    body: process.env.NODE_ENV === 'development' ? req.body : undefined
-                });
-            } catch (loggingError) {
-                console.error('Failed to log error:', loggingError);
-                console.error('Original error:', err);
-            }
-
-            res.status(err.status || 500).json({
-                error: 'Internal Server Error',
-                message: process.env.NODE_ENV === 'development' ? err.message : undefined,
-                requestId: req.id
+    // Error handling for malformed JSON
+    this.app.use((err, req, res, next) => {
+        if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+            return res.status(400).json({ 
+                error: 'Invalid JSON payload',
+                details: process.env.NODE_ENV === 'development' ? err.message : undefined
             });
+        }
+        next(err);
+    });
+
+    // Rate limiting - Create a dedicated instance with its own Redis connection
+    const rateLimit = new RateLimit(this.apiConfig, process.env.REDIS_URL || 'redis://localhost:6379');
+    this.app.use(rateLimit.middleware());
+    // Store the rate limiter instance for proper cleanup during shutdown
+    this.rateLimit = rateLimit;
+
+    // Rule engine middleware
+    consolelog.log('Rule Engine for Middleware', ruleEngine);
+    const ruleEngineMiddleware = new RuleEngineMiddleware(globalContext.ruleEngine, this.dependencyManager);
+    this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
+    
+    // Global error handler with enhanced logging
+    this.app.use((err, req, res, next) => {
+        try {
+            const consolelog = require('./modules/logger');
+            consolelog.error('Unhandled error:', {
+                error: err.stack || err.message,
+                url: req.url,
+                method: req.method,
+                timestamp: new Date().toISOString(),
+                requestId: req.id,
+                userId: req.user?.id,
+                body: process.env.NODE_ENV === 'development' ? req.body : undefined
+            });
+        } catch (loggingError) {
+            console.error('Failed to log error:', loggingError);
+            console.error('Original error:', err);
+        }
+
+        res.status(err.status || 500).json({
+            error: 'Internal Server Error',
+            message: process.env.NODE_ENV === 'development' ? err.message : undefined,
+            requestId: req.id
         });
-        this.app.use(requestLogger.middleware());
-    }
+    });
+    this.app.use(requestLogger.middleware());
+}
 
     
     // to minimized reload time we splice the config before sending it to the different functions.
@@ -3042,7 +3047,7 @@ class Adaptus2Server {
         const consolelog = require('./modules/logger');
         try {
             consolelog.log('Initiating graceful shutdown...');
-
+    
             // Cleanup CMS if initialized
             if (this.cmsManager) {
                 try {
@@ -3052,7 +3057,7 @@ class Adaptus2Server {
                     consolelog.error('Error cleaning up CMS module:', error);
                 }
             }
-
+    
             // Close WebSocket server
             if (this.wss) {
                 await new Promise((resolve) => {
@@ -3063,6 +3068,16 @@ class Adaptus2Server {
                 });
             }
             
+            // Close the rate limiter's Redis connection if it exists
+            if (this.rateLimit) {
+                try {
+                    await this.rateLimit.close();
+                    consolelog.log('Rate limiter Redis connection closed');
+                } catch (error) {
+                    consolelog.error('Error closing rate limiter Redis connection:', error);
+                }
+            }
+            
             // Close all connections
             const connections = await Promise.allSettled([
                 this.redis.quit(),
@@ -3071,38 +3086,38 @@ class Adaptus2Server {
                 redisPublisher.quit(),
                 redisSubscriber.quit()
             ]);
-
+    
             connections.forEach((result, index) => {
                 if (result.status === 'rejected') {
                     consolelog.error(`Failed to close connection ${index}:`, result.reason);
                 }
             });
-
+    
             // Close the server
             if (this.server) {
                 await new Promise((resolve) => {
                     this.server.close(resolve);
                 });
             }
-
+    
             // Close socket server if it exists
             if (this.socketServer) {
                 await new Promise((resolve) => {
                     this.socketServer.close(resolve);
                 });
             }
-
+    
             consolelog.log('All connections closed successfully');
             consolelog.log('Graceful shutdown completed');
-
+    
             // Ensure all logs are written before cleanup
             await new Promise(resolve => setTimeout(resolve, 500));
-
+    
             // Cleanup logger as the final step
             if (consolelog.cleanup) {
                 await consolelog.cleanup();
             }
-
+    
             // Small delay to ensure logger cleanup is complete
             await new Promise(resolve => setTimeout(resolve, 100));
             

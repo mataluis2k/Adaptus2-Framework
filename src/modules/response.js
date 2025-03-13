@@ -30,7 +30,10 @@ const response = {
         this.module = '';
         this.response = "";
         return this;
-    }
+    },
+    unauthorized: function(){        
+        return { httpCode: 403, message: 'Access Denied', code: null };
+    },
 }
 
 module.exports = response;
