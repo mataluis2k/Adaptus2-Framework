@@ -706,30 +706,109 @@ const registerFileUploadEndpoint = (app, config) => {
     });
 };
 
-  /**
- * Validates a user's password against a stored bcrypt hash.
- * Automatically detects bcrypt versions: $2a$, $2b$, $2y$
+/**
+ * Validates a user's password against a stored hash with support for multiple hash types.
+ * Includes automatic migration from weaker hash algorithms to stronger ones.
  * 
  * @param {string} plainPassword - The user's plaintext password
- * @param {string} hashedPassword - The bcrypt hashed password (from the database)
- * @returns {string} - "Pass" if valid, "Failed" if invalid
+ * @param {string} hashedPassword - The hashed password from the database
+ * @param {string} encryption - The encryption type ('bcrypt' or 'sha256')
+ * @param {Object} connection - Database connection for updating the user's password hash
+ * @param {string} dbTable - Database table containing user records
+ * @param {string} authField - The database field containing the password hash
+ * @param {string} idField - The field to identify the user record
+ * @param {string} userId - The value of the idField to identify the user record
+ * @returns {Promise<boolean>} - Promise resolving to true if valid, false if invalid
+ */
+async function validatePasswordWithMigration(plainPassword, hashedPassword, encryption, 
+    connection, dbTable, authField, idField, userId) {
+    
+    // Flag to track if we need to upgrade the password storage
+    let needsUpgrade = false;
+    let isValid = false;
+    
+    try {
+        // Case 1: Password is already stored using bcrypt
+        if (encryption === "bcrypt") {
+            isValid = bcrypt.compareSync(plainPassword, hashedPassword);
+            // No need to upgrade if already using bcrypt
+        }
+        // Case 2: Password is stored using SHA-256 (legacy)
+        else if (encryption === "sha256") {
+            // Generate SHA-256 hash for comparison
+            const hashedPasswordSha256 = crypto
+                .createHash("sha256")
+                .update(plainPassword)
+                .digest("hex");
+            
+            isValid = hashedPasswordSha256 === hashedPassword;
+            
+            // If valid, mark for upgrade to bcrypt
+            if (isValid) {
+                needsUpgrade = true;
+            }
+        }
+        // Case 3: Unknown encryption method
+        else {
+            console.warn(`Unsupported encryption type: ${encryption}. Defaulting to secure comparison.`);
+            // Use timing-safe comparison to avoid timing attacks
+            isValid = crypto.timingSafeEqual(
+                Buffer.from(hashedPassword),
+                Buffer.from(plainPassword)
+            );
+        }
+        
+        // If password is valid but needs to be upgraded to a stronger algorithm
+        if (isValid && needsUpgrade && connection) {
+            try {
+                // Generate a new bcrypt hash (cost factor 12 is a good balance of security and performance)
+                const newBcryptHash = bcrypt.hashSync(plainPassword, 12);
+                
+                // Update the user's password hash in the database
+                const updateQuery = `UPDATE ${dbTable} SET ${authField} = ? WHERE ${idField} = ?`;
+                await connection.execute(updateQuery, [newBcryptHash, userId]);
+                
+                console.log(`Password hash upgraded for user ${userId} from ${encryption} to bcrypt`);
+            } catch (upgradeError) {
+                // Log the error but don't fail the authentication - user can still log in
+                console.error(`Failed to upgrade password hash for user ${userId}:`, upgradeError);
+            }
+        }
+        
+        return isValid;
+    } catch (error) {
+        console.error("Password validation error:", error);
+        // On error, default to invalid password
+        return false;
+    }
+}
+
+/**
+ * Legacy function for simple password validation without migration
+ * @param {string} plainPassword - The user's plaintext password
+ * @param {string} hashedPassword - The bcrypt hashed password
+ * @returns {boolean} - True if valid, false if invalid
  */
 function validatePassword(plainPassword, hashedPassword) {
     if (!plainPassword || !hashedPassword) {
-        throw new Error("Both plainPassword and hashedPassword are required.");
+        return false;
     }
 
     // Check if the hash starts with a valid bcrypt version
     if (!hashedPassword.startsWith("$2a$") &&
         !hashedPassword.startsWith("$2b$") &&
         !hashedPassword.startsWith("$2y$")) {
-        throw new Error("Invalid bcrypt version or hash format.");
+        console.warn("Invalid bcrypt version or hash format.");
+        return false;
     }
 
     // Compare the password with the stored hash
-    const isMatch = bcrypt.compareSync(plainPassword, hashedPassword);
-
-    return isMatch;
+    try {
+        return bcrypt.compareSync(plainPassword, hashedPassword);
+    } catch (error) {
+        console.error("Error comparing passwords:", error);
+        return false;
+    }
 }
 
 // Pre-cache all GET endpoints (with cache enabled) using default (empty) filters.
@@ -951,7 +1030,10 @@ function registerRoutes(app, apiConfig) {
 
         if (auth && authentication) {
             consolelog.log(`Adding authentication for route: ${route}`);
-            app.post(route,cors(corsOptions), async (req, res) => {
+           // Update the authentication route in server.js
+            // Replace the existing authentication code with this
+
+            app.post(route, cors(corsOptions), async (req, res) => {
                 const username = req.body[auth];
                 const password = req.body[authentication];
 
@@ -975,18 +1057,19 @@ function registerRoutes(app, apiConfig) {
                     }
 
                     const user = results[0];
+                    const userId = user[endpoint.keys?.[0] || 'id']; // Use primary key or fallback to 'id'
 
-                    // Password validation
-                    let isValidPassword = false;
-
-                    if (encryption === "bcrypt") {
-                        isValidPassword = validatePassword(password, user[authentication]);
-                    } else if (encryption === "sha256") {
-                        const hashedPassword = crypto.createHash("sha256").update(password).digest("hex");
-                        isValidPassword = hashedPassword === user[authentication];
-                    } else {
-                        return res.status(500).json({ error: `Unsupported encryption type: ${encryption}` });
-                    }
+                    // Password validation with automatic migration support
+                    const isValidPassword = await validatePasswordWithMigration(
+                        password, 
+                        user[authentication], 
+                        encryption,
+                        connection,
+                        dbTable,
+                        authentication,
+                        endpoint.keys?.[0] || 'id',
+                        userId
+                    );
 
                     if (!isValidPassword) {
                         return res.status(401).json({ error: "Invalid username or password" });

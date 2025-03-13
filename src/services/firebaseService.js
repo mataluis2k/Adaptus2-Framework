@@ -24,7 +24,7 @@ class FirebaseService {
                         serviceAccountPath = path.join(process.env.CONFIG_DIR, 'firebaseService.json');
                                                                     
                     }
-                    console.log('Service account path:', serviceAccountPath); 
+                   
                       // load the service account file
                     serviceAccount = require(serviceAccountPath);
                     
@@ -57,7 +57,7 @@ class FirebaseService {
      * @returns {Promise<string>} A Firebase custom authentication token
      */
     async createCustomToken(uid, additionalClaims = {}) {
-        console.log('Creating custom token for UID:', uid);
+   
         try {
             if (!uid) {
                 throw new Error('User ID is required');
@@ -132,8 +132,7 @@ class FirebaseService {
         globalContext.actions.firebaseToken = async (ctx, params) => {
             console.log('Creating custom token with params:', params);
             const { uuid, additionalClaims } = params.data;
-            const token =  await this.createCustomToken(uuid, additionalClaims);
-            console.log('Custom token created:', JSON.stringify(token));
+            const token =  await this.createCustomToken(uuid, additionalClaims);           
             ctx.data['token'] = token;               
                 
             return { success: true, result, key: 'token' };
