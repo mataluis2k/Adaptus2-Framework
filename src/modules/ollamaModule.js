@@ -8,8 +8,8 @@ const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
 const ollamaClient = new Ollama({ host: OLLAMA_HOST });
 
 class OllamaModule {
-    constructor() {
-        this.model = 'deepseek-r1:7b';
+    constructor(model = 'deepseek-r1:7b') {
+        this.model = model;
         this.initialized = true;
         this.ollamaProcess = null;
         this.ollama = ollamaClient;
