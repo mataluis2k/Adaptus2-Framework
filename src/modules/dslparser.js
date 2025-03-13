@@ -174,7 +174,8 @@ class DSLParser {
         thenActions: [],
         elseIfs: [],
         elseActions: [],
-        dbConfig: currentDbConfig
+        dbConfig: currentDbConfig,
+        direction
       };
   
       // Find the THEN line
@@ -327,6 +328,15 @@ class DSLParser {
       // Normalize dynamic routes (e.g., videos/:id -> videos)
       resource = resource.replace(/\/[^/]+$/, ''); // Remove last segment if it's an ID
 
+      let direction = null;
+      
+      if (event === 'GETIN') {
+          event = 'GET';
+          direction = 'in';
+      } else if (event === 'GETOUT') {
+          event = 'GET';
+          direction = 'out';
+      }
   
       let conditions = [];
       if (rawConditions) {

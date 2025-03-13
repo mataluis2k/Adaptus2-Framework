@@ -38,6 +38,7 @@ class Rule {
     this.elseIfs = elseIfs || [];       // Array of { conditions, actions }
     this.elseActions = elseActions || [];
     this.dbConfig = dbConfig;
+    this.direction = direction;
     this.response = { status: 200, message: 'Success', error: null };
 
     // Fallback action handlers if not found in context
@@ -98,19 +99,25 @@ class Rule {
    * @param {object} data - The data triggering the rule
    * @returns {boolean} true if top-level conditions match
    */
-  match(eventType, entityName, data) {
+  match(eventType, entityName, data, direction = null) {
+    // Check if event type matches
     if (this.eventType !== eventType) return false;
+
+    // For GET requests, check if direction matches when specified
+    if (eventType === 'GET' && this.direction && this.direction !== direction) {
+      return false;
+    }
 
     // Normalize entity by removing numeric IDs or UUIDs (to match 'videos' for 'videos/:id')
     const normalizedEntity = entityName.replace(/\/[^/]+$/, ''); // Removes the last segment if it's an ID
  
-
     if (this.entity !== normalizedEntity) return false;
 
     if (!this.conditions.length) return true;
 
     return this._evaluateConditionArray(this.conditions, data);
-}
+  }
+
 
 
   /**
@@ -552,8 +559,9 @@ class RuleEngine {
    * We check each rule in turn.
    */
   async processEvent(eventType, entityName, data, context = {}) {
-    // Merge with global or user-provided actions
-   
+    // Extract direction from context if provided
+    const direction = context.direction || null;
+    
     const rsp = [];
     const combinedContext = {
       ...context,
@@ -562,20 +570,20 @@ class RuleEngine {
         ...(context.actions || {})
       }
     };
-
-    console.log(`Processing event: ${eventType} on entity: ${entityName} :` , JSON.stringify(data));
-
+  
+    console.log(`Processing event: ${eventType} on entity: ${entityName}${direction ? ` (direction: ${direction})` : ''}`);
+  
     // If data is an array, handle each record
     if (Array.isArray(data)) {
       // Sequentially handle each item in the array
       for (let i = 0; i < data.length; i++) {
         const record = data[i];
         consolelog.log(`Record #${i + 1}:`, record);
-        await this._runMatchingRules(eventType, entityName, record, combinedContext);
+        await this._runMatchingRules(eventType, entityName, record, combinedContext, direction);
       }
     } else {
       // Single record
-      await this._runMatchingRules(eventType, entityName, data, combinedContext);
+      await this._runMatchingRules(eventType, entityName, data, combinedContext, direction);
     }
     
     return this.response;
@@ -625,7 +633,7 @@ class RuleEngine {
     const parser = new DSLParser(globalContext); 
     const parsedRules = parser.parse(dslText);
     consolelog.log('Parsed rules:', parsedRules);
-
+  
     // Convert parser objects into Rule instances
     const rules = parsedRules.map(ruleData => {
       return new Rule(
@@ -635,19 +643,21 @@ class RuleEngine {
         ruleData.thenActions,      // parse returns thenActions
         ruleData.elseIfs,          // new
         ruleData.elseActions,
-        ruleData.dbConfig
+        ruleData.dbConfig,
+        ruleData.direction         // Pass the direction if available
       );
     });
-
+  
     consolelog.log(
       'Initialized rules:',
       rules.map((rule) => ({
         ruleType: rule.constructor.name,
         entity: rule.entity,
-        event: rule.eventType
+        event: rule.eventType,
+        direction: rule.direction
       }))
     );
-
+  
     return new RuleEngine(rules, globalContext);
   }
 }
