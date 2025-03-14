@@ -146,7 +146,7 @@ class DSLParser {
     _parseSingleRule(ruleLines, currentDbConfig) {
       // The first line is "IF ..."
       const firstLine = ruleLines[0];
-      const { event, resource, conditions } = this._parseIfLine(firstLine);
+      const { event, resource, conditions, direction = null } = this._parseIfLine(firstLine);
   
       // Validate resource vs. global context
       if (!this.globalContext.resources[resource]) {
@@ -343,7 +343,7 @@ class DSLParser {
           conditions = this._parseConditionString(rawConditions);
       }
   
-      return { event, resource, conditions };
+      return { event, resource, conditions, direction };
   }
   
   

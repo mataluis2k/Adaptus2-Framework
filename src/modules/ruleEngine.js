@@ -30,7 +30,7 @@ class Rule {
    * @param {Array} elseActions - Actions if main conditions & elseIfs all fail
    * @param {object} dbConfig - Optional DB config from "WITH ... DO" block
    */
-  constructor(eventType, entity, conditions, thenActions, elseIfs, elseActions, dbConfig = null) {
+  constructor(eventType, entity, conditions, thenActions, elseIfs, elseActions, dbConfig = null,direction = 'OUT') {
     this.eventType = eventType;         // e.g. "NEW"
     this.entity = entity;               // e.g. "order"
     this.conditions = conditions || []; // e.g. [..., 'AND', ...]
