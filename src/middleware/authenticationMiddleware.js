@@ -7,7 +7,7 @@ const redis = require('redis');
 
 let redisClient;
 async function getRedisClient() {
-  if (!process.env.REDIS_URL || !process.env.REDIS_PORT) return null;
+  if (!process.env.REDIS_URL ) return null;
   if (!redisClient) {
     redisClient = redis.createClient({ url: process.env.REDIS_URL, port: process.env.REDIS_PORT });
     await redisClient.connect().catch(console.error);

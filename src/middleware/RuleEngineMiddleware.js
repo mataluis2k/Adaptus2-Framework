@@ -142,13 +142,13 @@ class RuleEngineMiddleware {
                             const ruleData = Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data];
                             
                             // Process with direction='out' for GETOUT rules
-                            console.log("Before rule processing, data:", JSON.stringify(ruleData));
+                          //  console.log("Before rule processing, data:", JSON.stringify(ruleData));
                             
                             // Define a custom update action that modifies both ruleData and parsedData
                             const customUpdateAction = (ctx, action) => {
                                 if (action.field && action.expression) {
                                     try {
-                                        console.log(`Executing update action: ${action.field} = ${action.expression}`);
+                                  
                                         
                                         // Get the computed value from the expression
                                         let computedValue;
@@ -168,7 +168,7 @@ class RuleEngineMiddleware {
                                             computedValue = action.expression;
                                         }
                                         
-                                        console.log(`Computed value for ${action.field}:`, computedValue);
+                                        
                                         
                                         // Update the data in the context (affects ruleData)
                                         ctx.data[action.field] = computedValue;
@@ -187,7 +187,7 @@ class RuleEngineMiddleware {
                                             parsedData.data = { [action.field]: computedValue };
                                         }
                                         
-                                        console.log(`Updated ${action.field} to:`, computedValue);
+                                      
                                     } catch (err) {
                                         console.error(`Error in custom update action for field "${action.field}":`, err.message);
                                     }
@@ -203,8 +203,7 @@ class RuleEngineMiddleware {
                                 direction: 'out'  // Specify 'out' direction for GETOUT rules
                             });
                             
-                            console.log("After rule processing, data:", JSON.stringify(ruleData));
-                            console.log("After rule processing, parsedData:", JSON.stringify(parsedData));
+                           
                             
                             // Recursively clean user data from the response
                             const cleanUserData = (obj) => {
