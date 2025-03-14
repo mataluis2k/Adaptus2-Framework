@@ -116,11 +116,11 @@ class Rule {
     }
 
     // Normalize entity by removing numeric IDs or UUIDs (to match 'videos' for 'videos/:id')
-    const normalizedEntity = entityName.replace(/\/[^/]+$/, ''); // Removes the last segment if it's an ID
+    const normalizedEntity = entityName.replace(/\/[^/]+$/, '').toLowerCase(); // Removes the last segment if it's an ID and convert to lowercase
     console.log(`Normalized entity: ${normalizedEntity}`);
  
-    if (this.entity !== normalizedEntity) {
-      console.log(`Entity mismatch: ${this.entity} !== ${normalizedEntity}`);
+    if (this.entity.toLowerCase() !== normalizedEntity) {
+      console.log(`Entity mismatch: ${this.entity.toLowerCase()} !== ${normalizedEntity}`);
       return false;
     }
 
@@ -639,7 +639,12 @@ class RuleEngine {
    * Quick helper to see if we have any rules for a given entity
    */
   hasRulesForEntity(entityName) {
-    return this.rules.some((r) => r.entity === entityName);
+    console.log(`Checking if we have rules for entity: ${entityName}`);
+    console.log(`Available rules:`, this.rules.map(r => ({ entity: r.entity, eventType: r.eventType, direction: r.direction })));
+    
+    // Case-insensitive comparison
+    const normalizedEntityName = entityName.toLowerCase();
+    return this.rules.some((r) => r.entity.toLowerCase() === normalizedEntityName);
   }
 
   /**
