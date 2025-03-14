@@ -142,20 +142,69 @@ class RuleEngineMiddleware {
                             const ruleData = Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data];
                             
                             // Process with direction='out' for GETOUT rules
+                            console.log("Before rule processing, data:", JSON.stringify(ruleData));
+                            
+                            // Define a custom update action that modifies both ruleData and parsedData
+                            const customUpdateAction = (ctx, action) => {
+                                if (action.field && action.expression) {
+                                    try {
+                                        console.log(`Executing update action: ${action.field} = ${action.expression}`);
+                                        
+                                        // Get the computed value from the expression
+                                        let computedValue;
+                                        if (typeof action.expression === 'string') {
+                                            // Handle string expressions with placeholders
+                                            computedValue = action.expression.replace(/\${([^}]+)}/g, (match, inner) => {
+                                                try {
+                                                    const fn = new Function('data', `with(data) { return ${inner}; }`);
+                                                    const value = fn(ctx.data);
+                                                    return value !== undefined && value !== null ? value : match;
+                                                } catch (e) {
+                                                    console.warn(`Failed to resolve placeholder ${match}: ${e.message}`);
+                                                    return match;
+                                                }
+                                            });
+                                        } else {
+                                            computedValue = action.expression;
+                                        }
+                                        
+                                        console.log(`Computed value for ${action.field}:`, computedValue);
+                                        
+                                        // Update the data in the context (affects ruleData)
+                                        ctx.data[action.field] = computedValue;
+                                        
+                                        // Also update parsedData directly
+                                        if (Array.isArray(parsedData.data)) {
+                                            // If it's an array, update each item
+                                            parsedData.data.forEach(item => {
+                                                item[action.field] = computedValue;
+                                            });
+                                        } else if (typeof parsedData.data === 'object') {
+                                            // If it's a single object
+                                            parsedData.data[action.field] = computedValue;
+                                        } else {
+                                            // If it's something else, create an object
+                                            parsedData.data = { [action.field]: computedValue };
+                                        }
+                                        
+                                        console.log(`Updated ${action.field} to:`, computedValue);
+                                    } catch (err) {
+                                        console.error(`Error in custom update action for field "${action.field}":`, err.message);
+                                    }
+                                }
+                            };
+                            
                             await this.ruleEngine.processEvent(eventType, entityName, ruleData, {
                                 ...globalContext,
                                 actions: {
                                     ...globalContext.actions,
-                                    update: (ctx, entity, field, value) => {
-                                        if (typeof parsedData.data === 'object') {
-                                            parsedData.data[field] = value;
-                                        } else {
-                                            parsedData.data = { [field]: value };
-                                        }
-                                    },
+                                    update: customUpdateAction
                                 },
                                 direction: 'out'  // Specify 'out' direction for GETOUT rules
                             });
+                            
+                            console.log("After rule processing, data:", JSON.stringify(ruleData));
+                            console.log("After rule processing, parsedData:", JSON.stringify(parsedData));
                             
                             // Recursively clean user data from the response
                             const cleanUserData = (obj) => {

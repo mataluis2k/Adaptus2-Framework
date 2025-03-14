@@ -100,22 +100,38 @@ class Rule {
    * @returns {boolean} true if top-level conditions match
    */
   match(eventType, entityName, data, direction = null) {
+    console.log(`Matching rule: eventType=${this.eventType}, entity=${this.entity}, direction=${this.direction}`);
+    console.log(`Against: eventType=${eventType}, entityName=${entityName}, direction=${direction}`);
+    
     // Check if event type matches
-    if (this.eventType !== eventType) return false;
+    if (this.eventType !== eventType) {
+      console.log(`Event type mismatch: ${this.eventType} !== ${eventType}`);
+      return false;
+    }
 
     // For GET requests, check if direction matches when specified
     if (eventType === 'GET' && this.direction && this.direction !== direction) {
+      console.log(`Direction mismatch: ${this.direction} !== ${direction}`);
       return false;
     }
 
     // Normalize entity by removing numeric IDs or UUIDs (to match 'videos' for 'videos/:id')
     const normalizedEntity = entityName.replace(/\/[^/]+$/, ''); // Removes the last segment if it's an ID
+    console.log(`Normalized entity: ${normalizedEntity}`);
  
-    if (this.entity !== normalizedEntity) return false;
+    if (this.entity !== normalizedEntity) {
+      console.log(`Entity mismatch: ${this.entity} !== ${normalizedEntity}`);
+      return false;
+    }
 
-    if (!this.conditions.length) return true;
+    if (!this.conditions.length) {
+      console.log(`No conditions, rule matches!`);
+      return true;
+    }
 
-    return this._evaluateConditionArray(this.conditions, data);
+    const conditionsMatch = this._evaluateConditionArray(this.conditions, data);
+    console.log(`Conditions match: ${conditionsMatch}`);
+    return conditionsMatch;
   }
 
 
@@ -324,9 +340,19 @@ class Rule {
         if (action.expression && action.field) {
           try {
             consolelog.log("ExecuteActions ========================>:", action);
-             // Check if the expression contains a command marker
-             const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
-             let computedValue;
+            consolelog.log("Data before update:", data);
+            
+            // Check if there's a custom update handler in the context
+            if (typeof actionContext.actions.update === 'function' && 
+                actionContext.actions.update.toString().includes('customUpdateAction')) {
+                // Use the custom update handler directly
+                actionContext.actions.update(actionContext, action);
+                return; // Skip the rest of the processing
+            }
+            
+            // Check if the expression contains a command marker
+            const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
+            let computedValue;
  
              if (isCommand) {
                     const command = isCommand[1].trim();
@@ -391,6 +417,7 @@ class Rule {
               data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
               console.log(`Updated2: ${action.field} = `,data[action.field]);
             }
+            consolelog.log("Data after update:", data);
           } catch (err) {
             console.error(`Error updating field "${action.field}":`, err.message);
           }
@@ -589,12 +616,12 @@ class RuleEngine {
     return this.response;
   }
 
-  async _runMatchingRules(eventType, entityName, record, combinedContext) {
+  async _runMatchingRules(eventType, entityName, record, combinedContext, direction) {
     var buffer = "";
     var message = "";
     consolelog.log(`Checking rules for entity: ${entityName} with data:`, record); 
     for (const rule of this.rules) {
-      if (rule.match(eventType, entityName, record)) {
+      if (rule.match(eventType, entityName, record, direction)) {
         consolelog.log(`Rule MATCHED, executing THEN actions:`, rule);        
         await rule.execute(combinedContext, { rule, data : record });        
         if (rule.response.status == 400){           
