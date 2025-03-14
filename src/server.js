@@ -2768,7 +2768,7 @@ registerMiddleware() {
                 region: process.env.AWS_REGION,
             };
           
-            this.streamingServer = new StreamingServer(this.app, s3Config, redisClient);
+            this.streamingServer = new StreamingServer(this.app, s3Config, redis);
             this.streamingServer.registerRoutes();
             consolelog.log('Streaming server module initialized.');
         } catch (error) {

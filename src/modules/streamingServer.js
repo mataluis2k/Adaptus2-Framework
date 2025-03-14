@@ -18,6 +18,7 @@ const VIDEO_HLS_COLUMN = process.env.VIDEO_HLS_COLUMN || "hls";
 const VIDEO_SOURCE_COLUMN = process.env.VIDEO_SOURCE_COLUMN || "source";
 const VIDEO_FILENAME_COLUMN = process.env.VIDEO_FILENAME_COLUMN || "filename";
 const VIDEO_PARAM_NAME = process.env.VIDEO_PARAM_NAME || "videoID";
+const LOCAL_VIDEO_PATH = process.env.STREAMING_FILESYSTEM_PATH || "./videos";
 
 // Redis client configuration
 consolelog.log("hls_output: ",path.join(__dirname, "hls_output"));
@@ -240,7 +241,7 @@ class StreamingServer {
 
     registerRoutes() {
         // Stream video by ID
-        const LOCAL_VIDEO_PATH = process.env.STREAMING_FILESYSTEM_PATH || "./videos";
+    
         this.app.get(`/stream/:${VIDEO_PARAM_NAME}`, async (req, res) => {
             const videoID = req.params[VIDEO_PARAM_NAME];
             const video = await this.getVideoById(videoID);
