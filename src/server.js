@@ -1899,13 +1899,14 @@ function removeRuleEngine(key, value) {
   }
 
 class Adaptus2Server {
-    constructor({ port = 3000, configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
+    constructor({ port = 3000, host = '0.0.0.0', configPath = './config/apiConfig.json', pluginDir = './plugins' }) {
         // Initialize API Analytics and DevTools
         this.apiAnalytics = new APIAnalytics();
         this.devTools = new DevTools();
         // Create HTTP server instance
         this.httpServer = http.createServer();
         this.port = port;
+        this.host = host;
         this.configPath = configPath;
         this.pluginDir = pluginDir;
         this.app = express();
@@ -1921,6 +1922,18 @@ class Adaptus2Server {
         
         // Attach Express app to HTTP server
         this.httpServer.on('request', this.app);
+        
+        // Add error event handler for HTTP server
+        this.httpServer.on('error', (error) => {
+            console.error('HTTP Server Error:', error);
+            if (error.code === 'EADDRINUSE') {
+                console.error(`Port ${this.port} is already in use. Please choose a different port.`);
+            } else if (error.code === 'EACCES') {
+                console.error(`Permission denied to bind to port ${this.port}. Try using a port number > 1024 or running with elevated privileges.`);
+            } else if (error.code === 'EADDRNOTAVAIL') {
+                console.error(`Address ${this.host} is not available. Please check your network configuration.`);
+            }
+        });
         
         // Initialize WebSocket server
         this.wss = new WebSocket.Server({ server: this.httpServer });
@@ -1987,7 +2000,7 @@ class Adaptus2Server {
   }
       
 
-    setupSocketServer() {
+    setupSocketServer(host) {
         this.socketServer = net.createServer((socket) => {
             console.log("CLI client connected.");
 
@@ -2346,7 +2359,7 @@ class Adaptus2Server {
         });
 
         const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
-        this.socketServer.listen(SOCKET_CLI_PORT, "localhost", () => {
+        this.socketServer.listen(SOCKET_CLI_PORT, host, () => {
             console.log("Socket CLI server running on localhost"+SOCKET_CLI_PORT);
         });
     }
@@ -2742,7 +2755,7 @@ registerMiddleware() {
                 this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
                 this.chatModule.start();
                 httpServer.listen(chat_port, () => {
-                    console.log('Chat running on http://localhost:' + chat_port);
+                    console.log('Chat running on:' + chat_port);
                 });
                 consolelog.log('Chat module initialized.');
             } catch (error) {
@@ -3002,18 +3015,7 @@ registerMiddleware() {
         try {
             // Extract command-line arguments
             const args = process.argv.slice(2);
-    
-            // Check for valid parameters
-            if (args.length > 0 && !args.includes('--build') && !args.includes('--init') && !args.includes('--generate-swagger')) {
-                consolelog.log(
-                    'Error: Invalid parameters provided. Please use one of the following:\n' +
-                    '  --build   Build API configuration from the database.\n' +
-                    '  --init    Initialize database tables.\n' +
-                    '  --generate-swagger   Generate Swagger documentation.\n' +
-                    'Or start the server without parameters to run normally.'
-                );
-                process.exit(1); // Exit with an error code
-            }
+           
             if (process.argv.includes('--build')) {
                 await handleBuildCommand();
                 exit();
@@ -3101,7 +3103,7 @@ registerMiddleware() {
            
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
-                this.setupSocketServer(); // Start the socket server
+                this.setupSocketServer(this.host); // Start the socket server
             }
   
             // Synchronize plugins and subscribe to updates
@@ -3113,8 +3115,8 @@ registerMiddleware() {
               });
             
             // Start the HTTP server (which includes WebSocket)
-            this.httpServer.listen(this.port, () => {
-                consolelog.log(`API server running on port ${this.port} (HTTP/WebSocket)`);
+            this.httpServer.listen(this.port, this.host, () => {
+                consolelog.log(`API server running on ${this.host}:${this.port} (HTTP/WebSocket)`);
                 if (callback) callback();
             });
     
@@ -3235,6 +3237,7 @@ if (require.main === module) {
     const { Adaptus2Server } = require('./server');
     const server = new Adaptus2Server({
         port: process.env.PORT || 3000,
+        host: process.env.HOST || '0.0.0.0',
         configPath: './config/apiConfig.json',
     });
 

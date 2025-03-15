@@ -2,6 +2,49 @@
 
 const net = require("net");
 const readline = require("readline");
+
+const parseArgs = () => {
+    const args = {};
+    const argv = process.argv.slice(2);
+    
+    for (let i = 0; i < argv.length; i++) {
+      const arg = argv[i];
+      
+      if (arg.startsWith('--')) {
+        // Handle --key=value format
+        if (arg.includes('=')) {
+          const [key, value] = arg.substring(2).split('=');
+          args[key] = value;
+        } 
+        // Handle --key value format
+        else {
+          const key = arg.substring(2);
+          const nextArg = argv[i + 1];
+          
+          // Make sure the next argument exists and is not another flag
+          if (nextArg && !nextArg.startsWith('--')) {
+            args[key] = nextArg;
+            i++; // Skip the next argument since we've used it as a value
+          } else {
+            // Flag without value, set to true
+            args[key] = true;
+          }
+        }
+      }
+    }
+    
+    return args;
+  };
+  
+  const args = parseArgs();
+  console.log('Command line arguments:', args);
+  
+  // Get port from command line args, environment variable, or default to 3000
+  const port = args.port || process.env.PORT || 5000;
+  
+  // Get host/IP from command line args, environment variable, or default to 0.0.0.0 (all interfaces)
+  const host = args.ip || args.host || process.env.HOST || process.env.IP || 'localhost';
+  
 // ANSI color codes for terminal output
 const colors = {
     reset: "\x1b[0m",
@@ -84,7 +127,7 @@ function beautifyOutput(data) {
 }
 
 let exit = false;
-const socket = net.createConnection({ host: "localhost", port: 5000 }, () => {
+const socket = net.createConnection({ host: host, port: port }, () => {
     console.log(colors.bright + "Connected to CLI server. Type 'help' for available commands." + colors.reset);
     prompt();
 });

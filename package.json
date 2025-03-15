@@ -90,7 +90,8 @@
     "swagger-jsdoc": "^6.2.8",
     "uuid": "^11.0.3",
     "weaviate-client": "^3.2.5",
-    "web-push": "^3.6.7"
+    "web-push": "^3.6.7",
+    "yargs": "^17.7.2"
   },
   "devDependencies": {
     "jest": "^29.7.0",
