@@ -2,7 +2,7 @@ const { v7: uuidv7 } = require('uuid');
 const consolelog = require('./logger');
 const { aarMiddleware } = require('../middleware/aarMiddleware');
 const responseBus = require('./response');
-const { getContext } = require('./context');
+
 
 class ReportingModule {
     constructor(globalContext, dbConnection, redisClient, app) {
@@ -12,8 +12,7 @@ class ReportingModule {
         this.app = app;
         this.registerActions();
         this.registerRoutes();
-        this.ensureReportsTable();
-        //this.seedReportsTable();
+        this.ensureReportsTable();     
     }
 
     registerActions() {
@@ -160,38 +159,7 @@ class ReportingModule {
          //   connection.release();
         }
     }
-    async seedReportsTable() {
-        try {
-            // Get the actual connection by awaiting the connection function
-            const connection = await this.connection();
-            
-            const reports = [
-                { reportName: "workouts_report", sqlQuery: "SELECT * FROM workouts", acl: ["publicAccess"], filters: ["uuid"] },
-                { reportName: "users_report", sqlQuery: "SELECT id, username, acl FROM users", acl: ["publicAccess"], filters: ["id"] },
-                { reportName: "events_report", sqlQuery: "SELECT * FROM events", acl: ["publicAccess"], filters: ["id"] },
-                { reportName: "video_catalog_report", sqlQuery: "SELECT * FROM video_catalog", acl: ["publicAccess"], filters: ["videoID"] },
-                { reportName: "uploads_report", sqlQuery: "SELECT * FROM uploads", acl: ["publicAccess"], filters: ["id"] },
-                { reportName: "articles_report", sqlQuery: "SELECT * FROM articles", acl: ["publicAccess"], filters: ["id", "title"] },
-                { reportName: "products_report", sqlQuery: "SELECT * FROM products", acl: ["publicAccess"], filters: ["id", "category_id"] },
-                { reportName: "messages_report", sqlQuery: "SELECT * FROM messages", acl: ["publicAccess"], filters: ["id"] },
-                { reportName: "authors_report", sqlQuery: "SELECT * FROM authors", acl: ["publicAccess"], filters: ["id"] }
-            ];
-
-            for (const report of reports) {
-                await connection.execute(
-                    "INSERT INTO adaptus2_reports (id, reportName, sqlQuery, acl, filters, created_at, updated_at) VALUES (?, ?, ?, ?, ?, NOW(), NOW()) ON DUPLICATE KEY UPDATE sqlQuery=VALUES(sqlQuery), acl=VALUES(acl), filters=VALUES(filters)",
-                    [uuidv7(), report.reportName, report.sqlQuery, JSON.stringify(report.acl), JSON.stringify(report.filters)]
-                );
-            }
-
-            console.log("Reports table seeded successfully.");
-        } catch (error) {
-            console.error("Error seeding reports table:", error.message);
-        } finally {
-            // connection.release();
-        }
-    }
-
+  
 }
 
 module.exports = ReportingModule;

@@ -2741,7 +2741,7 @@ registerMiddleware() {
         try {
             const ReportingModule = require('./modules/reportingModule');
             const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
-            this.reportingModule = new ReportingModule(globalContext, dbConnection, redisClient, app);
+            this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
             console.log('Reporting module initialized successfully');
         } catch(error) {
             console.error('Failed to initialize Reporting module:', error.message);
