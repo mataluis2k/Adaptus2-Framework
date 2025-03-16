@@ -14,6 +14,15 @@ const cmsTheme = process.env.CMS_THEME || "default";
  * Maps database column types to UI field types
  */
 function mapFieldType(columnType) {
+  console.log(columnType);
+  // New config definition includes an object instead of a string
+  if (typeof columnType === "object") {
+    // prevent breaking if the type is not defined
+    if (!columnType.type) {
+      return "text";
+    }
+    columnType = columnType.type;
+  }
   const type = columnType.toLowerCase();
   if (type.includes("int")) return "number";
   if (type.includes("varchar") || type.includes("char")) return "text";
@@ -71,7 +80,7 @@ function generateCmsConfig() {
     const { dbTable, route, allowRead = [], allowWrite = [], columnDefinitions = {} } = tableConfig;
     const fields = {};
 
-    Object.entries(columnDefinitions).forEach(([field, type]) => {
+    Object.entries(columnDefinitions).forEach(([field, type]) => {      
       const readonly = allowWrite.includes(field) ? false : true;
       fields[field] = {
         label: field.replace(/_/g, " ").toUpperCase(),
@@ -80,7 +89,9 @@ function generateCmsConfig() {
         hidden: allowRead.includes(field) ? false : true,
         validation: {
           required: !readonly, // If readonly is false, then required is true
-          maxLength: type.match(/\((\d+)\)/) ? parseInt(type.match(/\((\d+)\)/)[1]) : undefined,
+          maxLength: typeof type === "object" && type.type ? 
+            (type.type.match(/\((\d+)\)/) ? parseInt(type.type.match(/\((\d+)\)/)[1]) : undefined) :
+            (type.match(/\((\d+)\)/) ? parseInt(type.match(/\((\d+)\)/)[1]) : undefined),
         },
         ui: {
           template: mapFieldType(type) === "textarea" ? "rich-text-editor" : "input",
