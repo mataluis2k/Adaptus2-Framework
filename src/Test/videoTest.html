@@ -21,6 +21,13 @@
         h1, h2 {
             text-align: center;
         }
+        .status {
+            text-align: center;
+            margin: 10px;
+            padding: 10px;
+            background-color: #eee;
+            border-radius: 5px;
+        }
     </style>
 </head>
 <body>
@@ -28,36 +35,106 @@
 
     <h2>Local Video Test</h2>
     <video id="local-video" controls>
-        <source src="http://localhost:3000/stream/local/sample.mp4" type="video/mp4">
+        <source src="http://localhost:3000/stream/vid_001" type="video/mp4">
         Your browser does not support the video tag.
     </video>
+    <div id="local-status" class="status">Waiting for local video...</div>
 
     <h2>HLS Streaming Test</h2>
     <video id="hls-video" controls></video>
+    <div id="hls-status" class="status">Preparing HLS stream...</div>
 
     <script>
+        // Local video status
+        const localVideo = document.getElementById('local-video');
+        const localStatus = document.getElementById('local-status');
+        
+        localVideo.addEventListener('error', function() {
+            localStatus.innerHTML = 'Error loading local video: ' + localVideo.error.message;
+            localStatus.style.backgroundColor = '#ffdddd';
+        });
+        
+        localVideo.addEventListener('loadeddata', function() {
+            localStatus.innerHTML = 'Local video loaded successfully!';
+            localStatus.style.backgroundColor = '#ddffdd';
+        });
+        
+        // HLS video
         const hlsVideoElement = document.getElementById('hls-video');
-        const hlsSourceUrl = 'http://localhost:3000/stream/sample.m3u8'; // Replace with your HLS URL
-
-        if (Hls.isSupported()) {
-            const hls = new Hls();
-            hls.loadSource(hlsSourceUrl);
-            hls.attachMedia(hlsVideoElement);
-            hls.on(Hls.Events.MANIFEST_PARSED, function () {
-                console.log('HLS manifest loaded successfully');
+        const hlsStatus = document.getElementById('hls-status');
+        
+        // Step 1: First request the HLS generation/retrieval
+        fetch('http://localhost:3000/hls/generate/vid_001')
+            .then(response => {
+                if (!response.ok) {
+                    throw new Error('Failed to generate HLS: ' + response.status);
+                }
+                return response.json();
+            })
+            .then(data => {
+                hlsStatus.innerHTML = 'HLS playlist generated: ' + data.message;
+                
+                // Step 2: Use the returned playlist URL for HLS.js
+                const playlistUrl = 'http://localhost:3000' + data.playlist;
+                
+                if (Hls.isSupported()) {
+                    const hls = new Hls({
+                        debug: true,
+                        xhrSetup: function(xhr) {
+                            // Enable CORS if needed
+                            xhr.withCredentials = false;
+                        }
+                    });
+                    
+                    hls.loadSource(playlistUrl);
+                    hls.attachMedia(hlsVideoElement);
+                    
+                    hls.on(Hls.Events.MANIFEST_PARSED, function() {
+                        hlsStatus.innerHTML = 'HLS manifest loaded successfully';
+                        hlsStatus.style.backgroundColor = '#ddffdd';
+                        hlsVideoElement.play().catch(e => console.warn('Auto-play prevented: ', e));
+                    });
+                    
+                    hls.on(Hls.Events.ERROR, function(event, data) {
+                        hlsStatus.innerHTML = 'HLS error: ' + (data.details || 'unknown');
+                        hlsStatus.style.backgroundColor = '#ffdddd';
+                        console.error('HLS error:', data);
+                        
+                        if (data.fatal) {
+                            switch(data.type) {
+                                case Hls.ErrorTypes.NETWORK_ERROR:
+                                    hls.startLoad(); // Try to recover
+                                    break;
+                                case Hls.ErrorTypes.MEDIA_ERROR:
+                                    hls.recoverMediaError(); // Try to recover
+                                    break;
+                                default:
+                                    // Cannot recover
+                                    hls.destroy();
+                                    break;
+                            }
+                        }
+                    });
+                } else if (hlsVideoElement.canPlayType('application/vnd.apple.mpegurl')) {
+                    hlsVideoElement.src = playlistUrl;
+                    hlsVideoElement.addEventListener('loadedmetadata', function() {
+                        hlsStatus.innerHTML = 'HLS metadata loaded (native support)';
+                        hlsStatus.style.backgroundColor = '#ddffdd';
+                    });
+                    hlsVideoElement.addEventListener('error', function() {
+                        hlsStatus.innerHTML = 'HLS error (native): ' + hlsVideoElement.error.message;
+                        hlsStatus.style.backgroundColor = '#ffdddd';
+                    });
+                } else {
+                    hlsStatus.innerHTML = 'Your browser does not support HLS streaming.';
+                    hlsStatus.style.backgroundColor = '#ffdddd';
+                }
+            })
+            .catch(error => {
+                hlsStatus.innerHTML = 'Error: ' + error.message;
+                hlsStatus.style.backgroundColor = '#ffdddd';
+                console.error('Fetch error:', error);
             });
-            hls.on(Hls.Events.ERROR, function (event, data) {
-                console.error('HLS error:', data);
-            });
-        } else if (hlsVideoElement.canPlayType('application/vnd.apple.mpegurl')) {
-            hlsVideoElement.src = hlsSourceUrl;
-            hlsVideoElement.addEventListener('loadedmetadata', function () {
-                console.log('HLS metadata loaded');
-            });
-        } else {
-            console.error('HLS not supported on this browser');
-            hlsVideoElement.innerHTML = 'Your browser does not support HLS streaming.';
-        }
     </script>
 </body>
 </html>

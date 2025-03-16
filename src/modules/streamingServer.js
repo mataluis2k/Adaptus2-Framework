@@ -102,6 +102,7 @@ class StreamingServer {
         if (originalId) {
             videoID = originalId;
         }
+        console.log("videoID: ",videoID);
         var video = await this.getAsync(videoID);
         if (video) {
             return JSON.parse(video);
@@ -122,7 +123,8 @@ class StreamingServer {
     }
 
     sanitizeInput(input) {
-        return input.replace(/[^a-zA-Z0-9-_\.]/g, '');
+        return input;
+        // return input.replace(/[^a-zA-Z0-9-_\.]/g, '');
     }
       
       // Revised streamFromFileSystem with path resolution check
@@ -197,7 +199,7 @@ class StreamingServer {
 
     async generateHLS(req, res, sourcePath, videoID) {
         // Sanitize sourcePath and videoID
-        const safeSourcePath = path.resolve(sanitizeInput(sourcePath));
+        const safeSourcePath = path.resolve(this.sanitizeInput(sourcePath));
         const safeVideoID = this.sanitizeInput(videoID);
         const outputDir = path.join(__dirname, "hls_output", safeVideoID);
         const resolvedOutputDir = path.resolve(outputDir);
@@ -245,10 +247,12 @@ class StreamingServer {
         this.app.get(`/stream/:${VIDEO_PARAM_NAME}`, async (req, res) => {
             const videoID = req.params[VIDEO_PARAM_NAME];
             const video = await this.getVideoById(videoID);
+            consolelog.log("video: ",video);
             if (!video) return res.status(404).send("Video not found");
 
             if (video[VIDEO_SOURCE_COLUMN] === "local") {
                 const filePath = path.join(LOCAL_VIDEO_PATH, video[VIDEO_FILENAME_COLUMN]);
+                consolelog.log("filePath: ",filePath);
                 this.streamFromFileSystem(req, res, filePath);
             } else if (video[VIDEO_SOURCE_COLUMN] === "S3") {
                 this.streamFromS3(req, res, S3_BUCKET_NAME, video[VIDEO_FILENAME_COLUMN]);
