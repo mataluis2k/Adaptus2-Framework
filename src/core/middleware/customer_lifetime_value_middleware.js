@@ -12,7 +12,7 @@
  */
 
 const tf = require('@tensorflow/tfjs-node');
-const consolelog = require('../logger');
+const consolelog = require('../../modules/logger');
 const { executeQuery, executeCountQuery, formatError } = require('../middleware_utils');
 
 /**

@@ -11,8 +11,8 @@
  */
 
 const tf = require('@tensorflow/tfjs-node');
-const consolelog = require('../logger');
-const { scale, oneHotEncode, handleMissingValues } = require('../ml_utils');
+const consolelog = require('../modules/logger');
+const { scale, oneHotEncode, handleMissingValues } = require('../modules/ml_utils');
 
 /**
  * Main handler for training and updating Customer Lifetime Value prediction models
