@@ -1,61 +1,105 @@
 #!/usr/bin/env node
-const { Adaptus2Server } = require('./src/server');
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
 
-const args = yargs(hideBin(process.argv))
-  .option('build', {
-    type: 'boolean',
-    describe: 'Build API configuration from the database.'
-  })
-  .option('init', {
-    type: 'boolean',
-    describe: 'Initialize database tables.'
-  })
-  .option('generate-swagger', {
-    type: 'boolean',
-    describe: 'Generate Swagger documentation.'
-  })
-  .option('host', {
-    type: 'string',
-    describe: 'Set the hostname.'
-  })
-  .option('port', {
-    type: 'number',
-    describe: 'Set the port.'
-  })
-  // Enable strict mode to only allow the above flags.
+yargs(hideBin(process.argv))
+  // Build command
+  .command(
+    'build',
+    'Build API configuration from the database',
+    (yargs) =>
+      yargs
+        .option('acl', {
+          type: 'string',
+          default: 'publicAccess',
+          describe: 'Specify a custom Access Control List (ACL)',
+        })
+        .option('overwrite', {
+          type: 'boolean',
+          describe: 'Overwrite existing configuration',
+        })
+        .option('refresh', {
+          type: 'boolean',
+          describe: 'Refresh configuration (load existing config before building)',
+        })
+        .option('tables', {
+          type: 'string',
+          describe:
+            'Comma-separated list of tables to build configuration for (optional)',
+        }),
+    async (argv) => {
+      const buildApiConfigFromDatabase = require('./src/modules/buildConfig');
+      await buildApiConfigFromDatabase(argv);
+      process.exit(0);
+    }
+  )
+  // Init command
+  .command(
+    'init',
+    'Initialize database tables',
+    (yargs) => yargs,
+    async () => {
+      const { initDatabase } = require('./src/db'); // Adjust the path if needed.
+      await initDatabase();
+      console.log('Database tables initialized successfully.');
+      process.exit(0);
+    }
+  )
+  // Generate Swagger command
+  .command(
+    'generate-swagger',
+    'Generate Swagger documentation',
+    (yargs) => yargs,
+    async () => {
+      const generateSwaggerDoc = require('./src/modules/generateSwaggerDoc');
+      await generateSwaggerDoc();
+      console.log('Swagger documentation generated successfully.');
+      process.exit(0);
+    }
+  )
+  // Default command: start the server
+  .command(
+    '$0',
+    'Start the server (default command)',
+    (yargs) =>
+      yargs
+        .option('host', {
+          type: 'string',
+          default: process.env.HOST || '0.0.0.0',
+          describe: 'Set the hostname',
+        })
+        .option('port', {
+          type: 'number',
+          default: process.env.PORT || 3000,
+          describe: 'Set the port',
+        }),
+    (argv) => {
+      const { Adaptus2Server } = require('./src/server');
+      const app = new Adaptus2Server({
+        port: argv.port,
+        host: argv.host,
+        configPath: './config/apiConfig.json',
+      });
+      app.start(() => {
+        console.log(`Adaptus2-Framework Server is running on ${argv.host}:${argv.port}`);
+      });
+    }
+  )
   .strict()
-  // Custom fail handler to print a clear error message.
+  .help()
   .fail((msg, err, yargs) => {
-    console.error('Error: Invalid parameters provided.');
-    console.error('Please use one of the following flags:');
-    console.error('  --build             Build API configuration from the database.');
-    console.error('  --init              Initialize database tables.');
-    console.error('  --generate-swagger  Generate Swagger documentation.');
-    console.error('  --host <hostname>   Set the hostname.');
-    console.error('  --port <port>       Set the port.');
-    console.error('Or start the server without parameters to run normally.');
+    
+    console.log(yargs);
+    console.error('Error: Invalid command or parameters provided.');
+    console.error('Available commands:');
+    console.error('  build             Build API configuration from the database.');
+    console.error('  init              Initialize database tables.');
+    console.error('  generate-swagger  Generate Swagger documentation.');
+    console.error('  defaults to       Start the server (supports --host and --port options).');
+    console.error('Use --help to view all available options.');
+    if (err) {
+      console.error(err);
+    }
     process.exit(1);
   })
   .argv;
-
-
-console.log('Command line arguments:', args);
-
-// Get port from command line args, environment variable, or default to 3000
-const port = args.port || process.env.PORT || 3000;
-
-// Get host/IP from command line args, environment variable, or default to 0.0.0.0 (all interfaces)
-const host = args.ip || args.host || process.env.HOST || process.env.IP || '0.0.0.0';
-
-console.log('Command line arguments:', args, host, port);
-const app = new Adaptus2Server({
-  port: port,
-  host: host,
-  configPath: './config/apiConfig.json',
-});
-
-app.start(() => {
-  console.log(`Adaptus2-Framework Server is running on ${host}:${port}`);
-});

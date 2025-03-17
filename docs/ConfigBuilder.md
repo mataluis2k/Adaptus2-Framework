@@ -35,7 +35,7 @@ npm install
 To generate the `apiConfig.json` based on your database schema with default ACL (`publicAccess`):
 
 ```bash
-node server.js -build
+node server.js --build
 ```
 
 ### Specify a Custom ACL
@@ -43,17 +43,17 @@ node server.js -build
 You can specify a custom **Access Control List (ACL)** by using the `--acl` flag. For example, to set the ACL to `privateAccess`:
 
 ```bash
-node server.js -build --acl=privateAccess
+node server.js --build --acl=privateAccess
 ```
 
 If no ACL is provided, it defaults to **`publicAccess`**.
 
 ### Overwrite Existing Configuration
 
-If `apiConfig.json` already exists and you wish to regenerate it, use the `-overwrite` or `-refresh` flag:
+If `apiConfig.json` already exists and you wish to regenerate it, use the `--overwrite` or `--refresh` flag:
 
 ```bash
-node server.js -build -overwrite
+node server.js --build --overwrite
 ```
 
 Without the overwrite flag, the script will prevent overwriting existing configurations and display an error.

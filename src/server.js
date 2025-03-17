@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const multer = require('multer');
 const net = require("net");
 const helmet = require('helmet'); // Security middleware
-const rateLimit = require('express-rate-limit'); // Rate limiting
+
 const compression = require('compression'); // Response compression
 require('dotenv').config({ path: __dirname + '/.env' });
 const jwt = require('jsonwebtoken');
@@ -78,7 +78,6 @@ axios.interceptors.response.use(
 // Import other modules with error handling
 const { loadConfig, apiConfig, categorizedConfig, categorizeApiConfig } = require('./modules/apiConfig');
 const { getDbConnection, extendContext } = require(path.join(__dirname, '/modules/db'));
-const buildApiConfigFromDatabase = require('./modules/buildConfig');
 const BusinessRules = require('./modules/business_rules');
 const MLAnalytics = require('./core/ml_analytics2');
 
@@ -86,7 +85,7 @@ const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
 const ChatModule = require('./modules/chatModule'); // Chat Module
-const generateSwaggerDoc = require('./modules/generateSwaggerDoc');
+
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
 const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
@@ -1879,18 +1878,6 @@ class DependencyManager {
     }
 }
 
-async function handleBuildCommand() {
-    try {
-        console.log('Executing build command...');
-        await buildApiConfigFromDatabase();
-        console.log('Build command completed successfully.');
-        process.exit(0);
-    } catch (error) {
-        console.error('Build command failed:', error);
-        process.exit(1);
-    }
-}
-
 function removeRuleEngine(key, value) {
     if (key === 'ruleEngine') {
       return undefined;
@@ -2741,7 +2728,7 @@ registerMiddleware() {
         try {
             const ReportingModule = require('./modules/reportingModule');
             const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
-            this.reportingModule = new ReportingModule(globalContext, dbConnection, redisClient, app);
+            this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
             console.log('Reporting module initialized successfully');
         } catch(error) {
             console.error('Failed to initialize Reporting module:', error.message);
@@ -2762,16 +2749,7 @@ registerMiddleware() {
                 console.error('Failed to initialize Chat Module:', error.message);
             }
         }
-        // // Initialize Payment Module
-        // try {
-        //     const dbConfig = {
-        //         getConnection: async () => await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }),
-        //     };
-        //     this.paymentModule = new PaymentModule(this.app, dbConfig);
-        //     consolelog.log('Payment module initialized.');
-        // } catch (error) {
-        //     console.error('Failed to initialize Payment Module:', error.message);
-        // }
+
 
             // Initialize Streaming Server Module
         try {
@@ -3016,40 +2994,11 @@ registerMiddleware() {
             // Extract command-line arguments
             const args = process.argv.slice(2);
            
-            if (process.argv.includes('--build')) {
-                await handleBuildCommand();
-                exit();
-            }
             if (process.argv.includes('--version')) {                            
                 console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
                 exit();
             }
-
-    
-            // Handle the --generate-swagger flag
-            if (args.includes('--generate-swagger')) {
-                consolelog.log('Generating Swagger documentation...');
-                const inputConfigPath = path.resolve(process.cwd(), './config/apiConfig.json');
-                const outputSwaggerPath = path.resolve(process.cwd(), './swagger.json');
-    
-                try {
-                    const apiConfig = JSON.parse(fs.readFileSync(inputConfigPath, 'utf-8'));
-                    generateSwaggerDoc(apiConfig, outputSwaggerPath);
-                    consolelog.log('Swagger documentation generated successfully. Exiting...');
-                    process.exit(0);
-                } catch (error) {
-                    console.error(`Error generating Swagger: ${error.message}`);
-                    process.exit(1);
-                }
-            }
-    
-            // Handle the --init flag
-            if (args.includes('--init')) {
-                consolelog.log('Initializing database tables...');
-                await this.initializeTables();
-                consolelog.log('Table initialization complete. Exiting...');
-                process.exit(0);
-            }
+               
             if(process.env.CLEAR_REDIS_CACHE === 'true') {
                 clearRedisCache();
             }
