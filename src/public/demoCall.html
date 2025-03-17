@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Video Call Widget</title>
+    <script defer src="videoCallWidget.js"></script>
+</head>
+<body>
+    <h1>WebRTC Video Call</h1>
+
+    <label for="roomId">Enter Room ID:</label>
+    <input type="text" id="roomId" placeholder="room123">
+    <button onclick="startCall()">Start Call</button>
+
+    <script>
+        function startCall() {
+            const roomId = document.getElementById('roomId').value.trim();
+            if (!roomId) {
+                alert("Please enter a Room ID!");
+                return;
+            }
+
+            // Simulating JWT Authentication (Replace with real JWT from your server)
+            const authToken = "your_generated_jwt_token_here";
+
+            // Initialize the Video Call Widget
+            new VideoCallWidget({
+                websocketUrl: 'wss://yourserver.com', // Replace with your WebSocket server URL
+                roomId: roomId,
+                authToken: authToken
+            });
+        }
+    </script>
+</body>
+</html>

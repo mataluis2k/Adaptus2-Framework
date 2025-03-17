@@ -91,6 +91,7 @@
     "uuid": "^11.0.3",
     "weaviate-client": "^3.2.5",
     "web-push": "^3.6.7",
+    "ws": "^8.18.1",
     "yargs": "^17.7.2"
   },
   "devDependencies": {
