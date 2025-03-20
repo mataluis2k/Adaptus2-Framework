@@ -17,6 +17,27 @@ const { broadcastConfigUpdate } = require('./configSync');
 // This way, the apiConfig can be accessed from outside this module
 // but not modified.
 var internalApiConfig = [];
+
+function getMyConfig(fileName) {
+    try {
+        const configPath = path.join(configDir, fileName);
+        console.log('Loading custom config from:', configPath);
+        if (!fs.existsSync(configPath)) {
+            console.warn(`File not found: ${configPath}. Returning default.`);
+            return {};
+        }
+        const fileContent = fs.readFileSync(configPath, 'utf-8');
+        if (!fileContent.trim()) {
+            console.warn(`File is empty: ${configPath}. Returning default.`);
+            return {};
+        }
+        return JSON.parse(fileContent);
+    } catch (error) {
+        console.error('Failed to load custom config:', error.message);
+        return {};
+    }
+}
+
 function getApiConfig() {
     // test if null or undefined or empty array and call loadConfig before returning
     if (!apiConfig || apiConfig.length === 0) {
@@ -221,4 +242,4 @@ function registerResources(apiConfig, globalContext) {
     });
 }
 
-module.exports = { loadConfig, getApiConfig, categorizedConfig , categorizeApiConfig, getConfigNode};
+module.exports = { loadConfig, getApiConfig, categorizedConfig , categorizeApiConfig, getConfigNode, getMyConfig};

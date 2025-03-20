@@ -1,17 +1,17 @@
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
-const { getApiConfig } = require('../apiConfig'); // Access Adaptus2 API config
-const redis = require('../redisClient'); // Optional for scaling WebSockets
+const { getMyConfig } = require('./apiConfig'); // Access Adaptus2 API config
+const redis = require('./redisClient'); // Optional for scaling WebSockets
 
 const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
-const SIGNALING_PORT = process.env.SIGNALING_PORT || 4000;
+const SIGNALING_PORT = process.env.WS_SIGNALING_PORT || 4000;
 
 class SignalingServer {
     constructor(server) {
         this.wss = new WebSocket.Server({ server });
         this.rooms = {}; // Room storage: { roomId: [sockets] }
         this.clients = {}; // Track connected users
-
+        this.config = getMyConfig('signalingServer.json');
         this.setupWebSocket();
     }
 
@@ -25,11 +25,17 @@ class SignalingServer {
                 ws.close(4001, 'Unauthorized');
                 return;
             }
-
+            /*  "credentialsObject": {
+                    "userId": "id",
+                    "nickName": "userName",
+                    "avatar": "avatar"
+                } */
+            const credentialsMap = this.config.credentialsObject;
             let userId;
             try {
-                const decoded = jwt.verify(token, JWT_SECRET);
-                userId = decoded.userId;
+                const decoded = jwt.verify(token, JWT_SECRET);                
+                userId = decoded[credentialsMap.userId];
+                // Store the WebSocket connection                
                 this.clients[userId] = ws;
             } catch (err) {
                 ws.close(4001, 'Invalid token');
@@ -46,6 +52,7 @@ class SignalingServer {
     }
 
     handleMessage(userId, message) {
+        console.log(`Received message from user ${userId}: ${message}`);
         const data = JSON.parse(message);
     
         switch (data.type) {
@@ -59,6 +66,17 @@ class SignalingServer {
                 break;
             case 'leave':
                 this.handleLeave(userId, data.roomId);
+                break;
+            case 'screen_share':
+                    this.broadcastToRoom(data.roomId, { type: 'screen_share', userId, screenSharing: data.screenSharing });
+                    break;
+            case 'chat_message':
+                console.log(`In Room: ${data.roomId}, User ${userId} sent a message: ${data.message}`);
+                this.broadcastToRoom(data.roomId, {
+                    type: 'chat_message',
+                    senderId: userId,
+                    message: data.message,
+                });
                 break;
             case 'file_meta':
                 this.broadcastToRoom(data.roomId, {

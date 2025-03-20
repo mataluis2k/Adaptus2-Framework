@@ -2686,6 +2686,7 @@ registerMiddleware() {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        const httpServer = require('http').createServer(app); // Reuse server
         const redisClient = require('./modules/redisClient');
         // Initialize CMS if enabled
         if (process.env.ENABLE_CMS === 'true') {
@@ -2738,7 +2739,7 @@ registerMiddleware() {
             const chat_port = process.env.CHAT_SERVER_PORT;
             try {
                 const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
-                const httpServer = require('http').createServer(app); // Reuse server
+                
                 this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
                 this.chatModule.start();
                 httpServer.listen(chat_port, () => {
@@ -2750,7 +2751,18 @@ registerMiddleware() {
             }
         }
 
-
+        if (process.env.WS_SIGNALING_PORT) {
+            const signalingHttpServer = require('http').createServer();
+            const SignalingServer = require('./modules/signalingServer');
+            this.signalServer = new SignalingServer(signalingHttpServer);
+            
+            signalingHttpServer.listen(process.env.WS_SIGNALING_PORT,this.host, () => {
+                console.log(`WebRTC Signaling Server running on port ${process.env.WS_SIGNALING_PORT}`);
+            });
+            const videoCallPage = require('./modules/videoCallAPI');
+            this.app.use('/api', videoCallPage);
+        }
+        
             // Initialize Streaming Server Module
         try {
             const s3Config = {
@@ -3099,6 +3111,11 @@ registerMiddleware() {
                         consolelog.log('WebSocket server closed');
                         resolve();
                     });
+                });
+            }
+            if (this.signalServer) {
+                this.signalServer.wss.close(() => {
+                    console.log('WebRTC Signaling Server closed');
                 });
             }
             
