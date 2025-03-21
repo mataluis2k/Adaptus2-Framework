@@ -1,0 +1,383 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Modern Video Call Widget</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 40px auto;
+            padding: 20px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        
+        h1 {
+            color: #4a69bd;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .room-setup {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+            background-color: #f9f9f9;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        }
+        
+        label {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 5px;
+            display: block;
+        }
+        
+        input {
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 16px;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus {
+            border-color: #4a69bd;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(74, 105, 189, 0.2);
+        }
+        
+        button {
+            background-color: #4a69bd;
+            color: white;
+            border: none;
+            padding: 12px 20px;
+            border-radius: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 10px;
+        }
+        
+        button:hover {
+            background-color: #345295;
+        }
+        
+        .instructions {
+            margin-top: 20px;
+            color: #666;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .features {
+            margin-top: 30px;
+        }
+        
+        .features h2 {
+            color: #4a69bd;
+            font-size: 20px;
+            margin-bottom: 15px;
+        }
+        
+        .feature-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+            gap: 15px;
+        }
+        
+        .feature {
+            background-color: #f9f9f9;
+            padding: 15px;
+            border-radius: 8px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
+        }
+        
+        .feature-icon {
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+        
+        .feature-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+        }
+        
+        .feature-desc {
+            font-size: 14px;
+            color: #666;
+        }
+        /* Add these styles to your CSS or style element */
+
+/* Gallery View Styles */
+.gallery-container {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-auto-rows: minmax(150px, auto);
+    gap: 10px;
+    padding: 10px;
+    background-color: #f1f2f6;
+    overflow: auto;
+}
+
+.gallery-item {
+    position: relative;
+    background-color: #1e272e;
+    border-radius: 8px;
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.gallery-item:hover {
+    transform: scale(1.02);
+    box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+}
+
+.gallery-item.focused {
+    border: 3px solid #4a69bd;
+}
+
+.gallery-item video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.gallery-item .participant-name {
+    position: absolute;
+    bottom: 10px;
+    left: 10px;
+    background-color: rgba(0,0,0,0.5);
+    color: white;
+    padding: 5px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.gallery-item .focus-button {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    background-color: rgba(0,0,0,0.5);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.gallery-item:hover .focus-button {
+    opacity: 1;
+}
+
+/* Fullscreen transition */
+.video-call-widget {
+    transition: all 0.3s ease;
+}
+
+.video-call-widget.fullscreen {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: 100%;
+    max-width: 100%;
+    z-index: 10000;
+    border-radius: 0;
+}
+
+/* View control buttons */
+.view-control-button {
+    background-color: rgba(0,0,0,0.5);
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    cursor: pointer;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 18px;
+    transition: all 0.2s ease;
+}
+
+.view-control-button:hover {
+    background-color: rgba(0,0,0,0.7);
+    transform: scale(1.1);
+}
+
+/* Fix for chat input container */
+.chat-input-container {
+    position: relative;
+    padding: 10px;
+    padding-bottom: 15px;
+    background-color: white;
+    border-top: 1px solid #eee;
+    z-index: 5;
+}
+
+/* Chat container layout */
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 220px; /* Increased from 200px */
+}
+
+.chat-messages {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    background-color: #f9f9f9;
+    margin-bottom: 5px;
+}
+
+/* Add transition effects for smoother UI */
+.control-button,
+.chat-send-button,
+.chat-input {
+    transition: all 0.2s ease;
+}
+
+.control-button:hover,
+.chat-send-button:hover {
+    transform: scale(1.05);
+}
+
+/* Improve focus states for accessibility */
+.chat-input:focus {
+    border-color: #4a69bd;
+    box-shadow: 0 0 0 2px rgba(74,105,189,0.2);
+    outline: none;
+}
+
+/* Responsive adjustments for fullscreen */
+@media (max-height: 600px) {
+    .video-call-widget.fullscreen .gallery-container {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        grid-auto-rows: minmax(120px, auto);
+    }
+}
+
+@media (max-width: 500px) {
+    .gallery-container {
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    }
+}
+    </style>
+    <script src="videoCallWidget2.js"></script>
+</head>
+<body>
+    <div class="container">
+        <h1>Video Call Widget</h1>
+        
+        <div class="room-setup">
+            <label for="roomId">Enter Room ID:</label>
+            <input type="text" id="roomId" placeholder="Example: room123">
+            <button onclick="startCall()">
+                <span>Start Video Call</span>
+                <span>📹</span>
+            </button>
+        </div>
+        
+        <div class="instructions">
+            <p>Enter a room ID above to start a video call. Share this room ID with others so they can join the same call.</p>
+            <p>When you start the call, you'll need to allow camera and microphone access in your browser.</p>
+        </div>
+        
+        <div class="features">
+            <h2>Features</h2>
+            <div class="feature-grid">
+                <div class="feature">
+                    <div class="feature-icon">📹</div>
+                    <div class="feature-title">Video Toggle</div>
+                    <div class="feature-desc">Turn your camera on/off</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🎤</div>
+                    <div class="feature-title">Audio Toggle</div>
+                    <div class="feature-desc">Mute/unmute your microphone</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">🖥️</div>
+                    <div class="feature-title">Screen Sharing</div>
+                    <div class="feature-desc">Share your screen with others</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">💬</div>
+                    <div class="feature-title">Text Chat</div>
+                    <div class="feature-desc">Send messages during the call</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">📎</div>
+                    <div class="feature-title">File Sharing</div>
+                    <div class="feature-desc">Send files to participants</div>
+                </div>
+                <div class="feature">
+                    <div class="feature-icon">👥</div>
+                    <div class="feature-title">Multiple Users</div>
+                    <div class="feature-desc">Group video calls</div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        function startCall() {
+            const roomId = document.getElementById('roomId').value.trim();
+            if (!roomId) {
+                alert("Please enter a Room ID!");
+                return;
+            }
+
+            // Simulating JWT Authentication (In production, get a real JWT from your server)
+            const authToken = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6MTIzNCwidXNlcm5hbWUiOiJ0ZXN0VXNlciIsImFjbCI6InB1YmxpY0FjY2VzcyIsImlhdCI6MTc0MjM4MjU2OCwiZXhwIjoxNzczOTE4NTY4fQ.COzVaL0hBQJYVtroQqnuuVo7rIi0P0nnue2ZG3ES8x4";
+
+            // Initialize the Video Call Widget
+            new VideoCallWidget({
+                websocketUrl: 'ws://localhost:4000', // Replace with your WebSocket server URL
+                roomId: roomId,
+                authToken: authToken
+            });
+            
+            // Add notification that call has started
+            const container = document.querySelector('.container');
+            const notification = document.createElement('div');
+            notification.style.backgroundColor = '#4a69bd';
+            notification.style.color = 'white';
+            notification.style.padding = '10px';
+            notification.style.borderRadius = '6px';
+            notification.style.marginTop = '20px';
+            notification.style.textAlign = 'center';
+            notification.innerHTML = `<strong>Call started in room: ${roomId}</strong><br>The video call widget has been opened in the bottom right corner.`;
+            container.appendChild(notification);
+        }
+    </script>
+</body>
+</html>
