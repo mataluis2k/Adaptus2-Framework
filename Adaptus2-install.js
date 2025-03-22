@@ -3,6 +3,42 @@ const fs = require('fs');
 const path = require('path');
 const readline = require('readline');
 const dotenv = require('dotenv');
+const util = require('util');
+
+// ANSI color codes for a more appealing CLI
+const colors = {
+  reset: "\x1b[0m",
+  bright: "\x1b[1m",
+  dim: "\x1b[2m",
+  underscore: "\x1b[4m",
+  blink: "\x1b[5m",
+  reverse: "\x1b[7m",
+  hidden: "\x1b[8m",
+  
+  fg: {
+    black: "\x1b[30m",
+    red: "\x1b[31m",
+    green: "\x1b[32m",
+    yellow: "\x1b[33m",
+    blue: "\x1b[34m",
+    magenta: "\x1b[35m",
+    cyan: "\x1b[36m",
+    white: "\x1b[37m",
+    crimson: "\x1b[38m"
+  },
+  
+  bg: {
+    black: "\x1b[40m",
+    red: "\x1b[41m",
+    green: "\x1b[42m",
+    yellow: "\x1b[43m",
+    blue: "\x1b[44m",
+    magenta: "\x1b[45m",
+    cyan: "\x1b[46m",
+    white: "\x1b[47m",
+    crimson: "\x1b[48m"
+  }
+};
 
 // Define paths
 const pluginDir = path.join(__dirname, './plugins'); // Adjust relative to the script
@@ -13,7 +49,7 @@ const userConfig = path.join(process.cwd(), 'config');
 // Function to copy directory
 function copyDir(src, dest) {
   if (!fs.existsSync(src)) {
-    console.error(`Source directory does not exist: ${src}`);
+    console.error(`${colors.fg.red}Source directory does not exist: ${src}${colors.reset}`);
     process.exit(1);
   }
 
@@ -31,18 +67,7 @@ function copyDir(src, dest) {
   });
 }
 
-// Perform the copy
-try {
-  console.log(`Copying plugin directory from ${pluginDir} to ${userDir}`);
-  copyDir(pluginDir, userDir);
-  console.log('Plugin directory copied successfully!');
-  console.log(`Copying config directory from ${configDir} to ${userConfig}`);
-  copyDir(configDir, userConfig);
-  console.log('Config directory copied successfully!');
-} catch (err) {
-  console.error('Error copying plugin/config directory:', err.message);
-}
-
+// Groups of configuration options
 const groups = {
   "GENERAL SETTINGS": [
     "ENABLE_LOGGING",
@@ -51,10 +76,45 @@ const groups = {
     "CORS_ORIGIN",
     "CORS_METHODS",
     "DEFAULT_DBTYPE",
-    "DEFAULT_DBCONNECTION",
-    "PAYMENT_MODULE"
+    "DEFAULT_DBCONNECTION"
   ],
-  "LLM Configuration": [
+  "SERVER CONFIGURATION": [
+    "PORT",
+    "SOCKET_CLI",
+    "SOCKET_CLI_PORT",
+    "CHAT_SERVER_PORT"
+  ],
+  "AUTHENTICATION": [
+    "JWT_SECRET",
+    "JWT_EXPIRY"
+  ],
+  "CLUSTER SETUP": [
+    "PLUGIN_MANAGER",
+    "CLUSTER_NAME",
+    "SERVER_ID",
+    "SERVER_ROLE"
+  ],
+  "DATABASE: MySQL": [
+    "MYSQL_1_HOST", 
+    "MYSQL_1_USER", 
+    "MYSQL_1_PASSWORD", 
+    "MYSQL_1_DB"
+  ],
+  "DATABASE: PostgreSQL": [
+    "POSTGRES_1_HOST", 
+    "POSTGRES_1_USER", 
+    "POSTGRES_1_PASSWORD", 
+    "POSTGRES_1_DB"
+  ],
+  "DATABASE: MongoDB": [
+    "MONGODB_1_URI", 
+    "MONGODB_1_DB"
+  ],
+  "GRAPHQL": [
+    "GRAPHQL_DBTYPE",
+    "GRAPHQL_DBCONNECTION"
+  ],
+  "LLM INTEGRATION": [
     "LLM_TYPE",
     "OPENAI_API_KEY",
     "OPENAI_MODEL",
@@ -62,7 +122,10 @@ const groups = {
     "CLAUDE_MODEL",
     "OPENROUTER_API_KEY"
   ],
-  "OAuth Configuration": [
+  "RAG CONFIGURATION": [
+    "QDRANT_URL"
+  ],
+  "OAUTH": [
     "OAUTH_CLIENT_ID",
     "OAUTH_CLIENT_SECRET",
     "OAUTH_AUTH_URL",
@@ -70,170 +133,155 @@ const groups = {
     "OAUTH_CALLBACK_URL",
     "TOKEN_DURATION"
   ],
-  "GraphQL Configuration": [
-    "GRAPHQL_DBTYPE",
-    "GRAPHQL_DBCONNECTION"
+  "VECTOR DATABASE": [
+    "VECTOR_DB",
+    "MILVUS_HOST",
+    "MILVUS_PORT",
+    "ELASTICSEARCH_HOST",
+    "ELASTICSEARCH_INDEX"
   ],
-  "Firebase Configuration": [
-    "GOOGLE_APPLICATION_CREDENTIALS"
+  "CLOUD STORAGE": [
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_REGION",
+    "STREAMING_FILESYSTEM_PATH"
   ],
-  "MySQL": ["MYSQL_1_HOST", "MYSQL_1_USER", "MYSQL_1_PASSWORD", "MYSQL_1_DB"],
-  "Command Line Interface": ["SOCKET_CLI", "SOCKET_CLI_PORT"],
-  "PostgreSQL": ["POSTGRES_1_HOST", "POSTGRES_1_USER", "POSTGRES_1_PASSWORD", "POSTGRES_1_DB"],
-  "MongoDB": ["MONGODB_1_URI", "MONGODB_1_DB"],
-  "JWT and Authorization": ["JWT_SECRET", "JWT_EXPIRY"],
-  "CHAT Server Configuration": ["PORT", "CHAT_SERVER_PORT"],
-  "RAG CONFIG": ["OPENAI_API_KEY", "QDRANT_URL"],
-  "EMAIL MARKETING": [
+  "EMAIL SERVICES": [
     "SENDGRID_API_KEY",
     "MAILCHIMP_API_KEY",
     "MAILGUN_BASE_URL",
     "MAILGUN_API_KEY",
     "MAILGUN_DOMAIN"
   ],
-  "Payment Gateway Stripe": ["STRIPE_SECRET_KEY"],
-  "Payment Gateway Braintree": [
+  "PAYMENT PROCESSING": [
+    "PAYMENT_MODULE",
+    "STRIPE_SECRET_KEY",
     "BRAINTREE_ENV",
     "BRAINTREE_MERCHANT_ID",
     "BRAINTREE_PUBLIC_KEY",
     "BRAINTREE_PRIVATE_KEY"
   ],
-  "AWS S3 Configuration": [
-    "AWS_ACCESS_KEY_ID",
-    "AWS_SECRET_ACCESS_KEY",
-    "AWS_REGION"
-  ],
-  "Local Filesystem Configuration": ["STREAMING_FILESYSTEM_PATH"],
-  "Streaming Configuration": [
-    "STREAMING_DEFAULT_PROTOCOL",
-    "STREAMING_MAX_BANDWIDTH"
-  ],
-  "Vector Database Configuration": [
-    "VECTOR_DB",
-    "MILVUS_HOST",
-    "MILVUS_PORT"
-  ],
-  "Elasticsearch Configuration": [
-    "ELASTICSEARCH_HOST",
-    "ELASTICSEARCH_INDEX"
-  ],
-  "Salesforce Configuration": [
+  "INTEGRATIONS": [
+    "GOOGLE_APPLICATION_CREDENTIALS",
     "SALESFORCE_BASE_URL",
-    "SALESFORCE_API_TOKEN"
-  ],
-  "S2S Pixel Configuration": [
+    "SALESFORCE_API_TOKEN",
     "FACEBOOK_API_BASE_URL",
     "FACEBOOK_ACCESS_TOKEN",
     "FACEBOOK_PIXEL_ID",
     "GA4_API_BASE_URL",
     "GA4_MEASUREMENT_ID",
     "GA4_API_SECRET"
-  ],
-  "Clustering Setup": [
-    "PLUGIN_MANAGER",
-    "CLUSTER_NAME",
-    "SERVER_ID",
-    "SERVER_ROLE"
   ]
 };
 
-const defaultConfig = {
+// Essential configuration that will always be included
+const mandatoryConfig = {
+  // General settings (always required)
   ENABLE_LOGGING: "TRUE",
   CONFIG_DIR: "./config",
-  CORS_ENABLED: "false",
-  CORS_ORIGIN: "*",
-  CORS_METHODS: "GET,POST,PUT,DELETE",
   DEFAULT_DBTYPE: "mysql",
   DEFAULT_DBCONNECTION: "MYSQL_1",
-  PAYMENT_MODULE: "FALSE",
-  // LLM Configuration
+  
+  // Authentication (always required)
+  JWT_SECRET: generateRandomSecret(32),
+  JWT_EXPIRY: "30d",
+  
+  // Server settings (always required)
+  PORT: 3000,
+  
+  // Cluster setup (always required)
+  PLUGIN_MANAGER: "local",
+  SERVER_ROLE: "MASTER"
+};
+
+// Full configuration options (used only when a group is enabled)
+const fullConfig = {
+  // General settings
+  CORS_ENABLED: "FALSE",
+  CORS_ORIGIN: "*",
+  CORS_METHODS: "GET,POST,PUT,DELETE",
+  
+  // Server configuration
+  SOCKET_CLI: "FALSE",
+  SOCKET_CLI_PORT: 5000,
+  CHAT_SERVER_PORT: 3007,
+  
+  // Cluster setup
+  CLUSTER_NAME: "default",
+  SERVER_ID: "server1",
+  
+  // MySQL
+  MYSQL_1_HOST: "localhost",
+  MYSQL_1_USER: "root",
+  MYSQL_1_PASSWORD: "",
+  MYSQL_1_DB: "app",
+  
+  // PostgreSQL
+  POSTGRES_1_HOST: "localhost",
+  POSTGRES_1_USER: "postgres",
+  POSTGRES_1_PASSWORD: "",
+  POSTGRES_1_DB: "app",
+  
+  // MongoDB
+  MONGODB_1_URI: "mongodb://localhost:27017",
+  MONGODB_1_DB: "app",
+  
+  // GraphQL Configuration
+  GRAPHQL_DBTYPE: "mysql",
+  GRAPHQL_DBCONNECTION: "MYSQL_1",
+  
+  // LLM Integration
   LLM_TYPE: "ollama",
   OPENAI_MODEL: "gpt-3.5-turbo",
   CLAUDE_MODEL: "claude-2",
-  OPENAI_API_KEY: "your-openai-api-key",
-  CLAUDE_API_KEY: "your-claude-api-key",
-  OPENROUTER_API_KEY: "your-openrouter-api-key",
-  // OAuth Configuration
-  OAUTH_CLIENT_ID: "your-client-id",
-  OAUTH_CLIENT_SECRET: "your-client-secret",
-  OAUTH_AUTH_URL: "https://provider.com/oauth/authorize",
-  OAUTH_TOKEN_URL: "https://provider.com/oauth/token",
-  OAUTH_CALLBACK_URL: "http://localhost:3000/auth/callback",
-  TOKEN_DURATION: "1d",
-  // GraphQL Configuration
-  GRAPHQL_DBTYPE: "MYSQL_1",
-  GRAPHQL_DBCONNECTION: "MYSQL_1",
-  // Firebase Configuration
-  GOOGLE_APPLICATION_CREDENTIALS: "/path/to/your/firebase-credentials.json",
-  MYSQL_1_HOST: "localhost",
-  MYSQL_1_USER: "myUser99",
-  MYSQL_1_PASSWORD: "localtest22_!",
-  MYSQL_1_DB: "openGraphDemo",
-  SOCKET_CLI: "TRUE",
-  SOCKET_CLI_PORT: 5000,
-  POSTGRES_1_HOST: "localhost",
-  POSTGRES_1_USER: "postgres",
-  POSTGRES_1_PASSWORD: "password",
-  POSTGRES_1_DB: "mydatabase",
-  MONGODB_1_URI: "mongodb://localhost:27017",
-  MONGODB_1_DB: "mydatabase",
-  JWT_SECRET: "P0W3rS3cr3t",
-  JWT_EXPIRY: "365d",
-  PORT: 3000,
-  CHAT_SERVER_PORT: 3007,
-  OPENAI_API_KEY: "your-openai-api-key",
+  
+  // RAG Configuration
   QDRANT_URL: "http://localhost:6333",
-  SENDGRID_API_KEY: "your-sendgrid-api-key",
-  MAILCHIMP_API_KEY: "your-mailchimp-api-key",
-  MAILGUN_BASE_URL: "https://api.mailgun.net/v3",
-  MAILGUN_API_KEY: "your-mailgun-api-key",
-  MAILGUN_DOMAIN: "your-mailgun-domain",
-  STRIPE_SECRET_KEY: "your-stripe-secret-key",
-  BRAINTREE_ENV: "sandbox",
-  BRAINTREE_MERCHANT_ID: "your-braintree-merchant-id",
-  BRAINTREE_PUBLIC_KEY: "your-braintree-public-key",
-  BRAINTREE_PRIVATE_KEY: "your-braintree-private-key",
-  AWS_ACCESS_KEY_ID: "your-aws-access-key-id",
-  AWS_SECRET_ACCESS_KEY: "your-aws-secret-access-key",
-  AWS_REGION: "us-east-1",
-  STREAMING_FILESYSTEM_PATH: "./videos",
-  STREAMING_DEFAULT_PROTOCOL: "hls",
-  STREAMING_MAX_BANDWIDTH: 5000000,
+  
+  // Vector Database
   VECTOR_DB: "milvus",
   MILVUS_HOST: "localhost",
   MILVUS_PORT: 19530,
   ELASTICSEARCH_HOST: "http://localhost:9200",
-  ELASTICSEARCH_INDEX: "your-index",
-  SALESFORCE_BASE_URL: "https://your-salesforce-instance.salesforce.com",
-  SALESFORCE_API_TOKEN: "your-salesforce-token",
-  FACEBOOK_API_BASE_URL: "https://graph.facebook.com",
-  FACEBOOK_ACCESS_TOKEN: "your-facebook-token",
-  FACEBOOK_PIXEL_ID: "your-facebook-pixel",
-  GA4_API_BASE_URL: "https://www.google-analytics.com",
-  GA4_MEASUREMENT_ID: "your-ga4-id",
-  GA4_API_SECRET: "your-ga4-secret",
-  PLUGIN_MANAGER: "network",
-  CLUSTER_NAME: "devops7",
-  SERVER_ID: "Server1",
-  SERVER_ROLE: "MASTER"
+  ELASTICSEARCH_INDEX: "default",
+  
+  // Storage
+  STREAMING_FILESYSTEM_PATH: "./videos",
+  
+  // OAuth
+  TOKEN_DURATION: "1d",
+  
+  // Payments
+  PAYMENT_MODULE: "FALSE",
+  BRAINTREE_ENV: "sandbox",
 };
 
+// Generate a secure random string for secrets
+function generateRandomSecret(length = 32) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()-_=+';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return result;
+}
 
+// Verify and create config directory and initial files
 function verifyAndCreateConfigDir(configDir) {
   if (!fs.existsSync(configDir)) {
-    console.log("Config directory does not exist. Creating: ${configDir}");
+    console.log(`${colors.fg.yellow}Config directory does not exist. Creating: ${configDir}${colors.reset}`);
     fs.mkdirSync(configDir, { recursive: true });
   }
 
   const businessRulesPath = path.join(configDir, 'businessRules.dsl');
   if (!fs.existsSync(businessRulesPath)) {
-    console.log("Creating empty file: ${businessRulesPath}");
+    console.log(`${colors.fg.yellow}Creating empty file: ${businessRulesPath}${colors.reset}`);
     fs.writeFileSync(businessRulesPath, '');
   }
 
   const mlConfigPath = path.join(configDir, 'mlConfig.json');
   if (!fs.existsSync(mlConfigPath)) {
-    console.log("Creating default ML config file: ${mlConfigPath}");
+    console.log(`${colors.fg.yellow}Creating default ML config file: ${mlConfigPath}${colors.reset}`);
     const mlConfig = {
       default: {
         batchSize: 1000,
@@ -246,93 +294,222 @@ function verifyAndCreateConfigDir(configDir) {
   }
 }
 
+// Improved prompt function with styling
 function prompt(question, defaultValue = "") {
   const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
   });
   return new Promise((resolve) =>
-    rl.question(`${question} [default: ${defaultValue}]: `, (answer) => {
+    rl.question(`${colors.fg.cyan}${question}${colors.reset} ${colors.dim}[default: ${defaultValue}]${colors.reset}: `, (answer) => {
       rl.close();
       resolve(answer || defaultValue);
     })
   );
 }
 
+// Display a visually appealing menu
 function printMenu(groups, currentConfig) {
-  console.log("\nAvailable Options:");
-  const entries = Object.keys(groups);
-  for (let i = 0; i < entries.length; i++) {
-    const groupConfigured = groups[entries[i]].some((key) => key in currentConfig);
-    console.log(`${i + 1}. ${entries[i]}${groupConfigured ? " \u2713" : ""}`);
+  console.log("\n" + colors.bright + colors.fg.magenta + "┌─────────────────────────────────────┐");
+  console.log("│         CONFIGURATION MENU         │");
+  console.log("└─────────────────────────────────────┘" + colors.reset);
+  
+  const groupsArray = Object.keys(groups);
+  const columnWidth = 40;
+  const columns = 2;
+  
+  // Print in multiple columns if there are enough items
+  for (let i = 0; i < Math.ceil(groupsArray.length / columns); i++) {
+    let line = "";
+    
+    for (let j = 0; j < columns; j++) {
+      const index = i + j * Math.ceil(groupsArray.length / columns);
+      if (index < groupsArray.length) {
+        const groupName = groupsArray[index];
+        const displayNumber = (index + 1).toString().padStart(2, ' ');
+        const groupConfigured = groups[groupName].some((key) => currentConfig[key] !== undefined);
+        
+        // Add checkmark or empty space for enabled/disabled
+        const statusSymbol = groupConfigured ? 
+          colors.fg.green + " ✓" + colors.reset : 
+          colors.fg.red + " ✗" + colors.reset;
+        
+        line += `${colors.fg.yellow}${displayNumber}${colors.reset}. ${groupName.padEnd(columnWidth - 7)}${statusSymbol}`;
+      }
+    }
+    console.log(line);
   }
-  console.log(`${entries.length + 1}. Save and Exit`);
+  
+  console.log("\n" + colors.fg.green + "S" + colors.reset + ". Save and Exit");
+  console.log(colors.fg.red + "Q" + colors.reset + ". Quit without Saving");
 }
 
+// Configure a group of settings
 async function configureGroup(groupName, keys, config) {
-  console.log(`\nConfiguring ${groupName}...`);
+  console.log(`\n${colors.bright}${colors.fg.magenta}┌─ Configuring ${groupName} ───${"─".repeat(40-groupName.length)}┐${colors.reset}`);
+  
   for (const key of keys) {
-    const currentValue = config[key] || "";
-    config[key] = await prompt(`Set value for ${key}`, currentValue);
-    if (key === "CONFIG_DIR") {
+    // Get current or default value
+    const currentValue = config[key] !== undefined ? config[key] : 
+                         fullConfig[key] !== undefined ? fullConfig[key] : "";
+    
+    config[key] = await prompt(`${key}`, currentValue);
+    
+    // Special handling for CONFIG_DIR
+    if (key === "CONFIG_DIR" && config[key]) {
       verifyAndCreateConfigDir(config[key]);
     }
   }
+  
+  console.log(`${colors.fg.green}Configuration for ${groupName} completed.${colors.reset}`);
 }
 
+// Disable a group of settings
 async function disableGroup(groupName, keys, config) {
-  console.log(`\nDisabling ${groupName}...`);
-  keys.forEach((key) => delete config[key]);
+  console.log(`\n${colors.fg.yellow}Disabling ${groupName}...${colors.reset}`);
+  
+  // Check if any of these keys are part of the mandatory config
+  const mandatoryKeys = keys.filter(key => mandatoryConfig[key] !== undefined);
+  if (mandatoryKeys.length > 0) {
+    console.log(`${colors.fg.red}Warning: The following keys are mandatory and cannot be removed:${colors.reset}`);
+    mandatoryKeys.forEach(key => console.log(`  - ${key}`));
+    
+    // Only remove non-mandatory keys
+    keys.forEach((key) => {
+      if (!mandatoryConfig[key]) {
+        delete config[key];
+      }
+    });
+  } else {
+    // Remove all keys in this group
+    keys.forEach((key) => delete config[key]);
+  }
+  
+  console.log(`${colors.fg.green}${groupName} settings have been disabled.${colors.reset}`);
 }
 
+// Display a spinner during operations
+function showSpinner(message) {
+  const spinnerChars = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+  let i = 0;
+  process.stdout.write(`${colors.fg.cyan}${message}${colors.reset} `);
+  
+  return setInterval(() => {
+    process.stdout.write(`\r${colors.fg.cyan}${message}${colors.reset} ${spinnerChars[i]} `);
+    i = (i + 1) % spinnerChars.length;
+  }, 80);
+}
+
+// Main configuration function
 async function configure() {
   const envPath = path.join(process.cwd(), ".env");
-  let currentConfig = fs.existsSync(envPath)
-    ? dotenv.parse(fs.readFileSync(envPath))
-    : { ...defaultConfig };
-
-  if (!fs.existsSync(envPath)) {
-    console.log("No existing configuration found. Configuring General Settings first...");
-    await configureGroup("GENERAL SETTINGS", groups["GENERAL SETTINGS"], currentConfig);
+  let currentConfig = {};
+  
+  // Check for existing configuration
+  if (fs.existsSync(envPath)) {
+    currentConfig = dotenv.parse(fs.readFileSync(envPath));
+    console.log(`${colors.fg.green}Existing configuration found.${colors.reset}`);
+  } else {
+    // Include mandatory config items by default
+    currentConfig = { ...mandatoryConfig };
+    console.log(`${colors.fg.yellow}No existing configuration found. Using defaults for essential settings.${colors.reset}`);
+    
+    // Set up initial database configuration
+    console.log(`${colors.bright}${colors.fg.magenta}Initial Setup Required${colors.reset}`);
+    await configureGroup("DATABASE: MySQL", groups["DATABASE: MySQL"], currentConfig);
   }
 
+  // Copy plugin and config directories
+  try {
+    const spinner = showSpinner("Setting up directories...");
+    
+    console.log(`\n${colors.fg.blue}Copying plugin directory from ${pluginDir} to ${userDir}${colors.reset}`);
+    copyDir(pluginDir, userDir);
+    
+    console.log(`${colors.fg.blue}Copying config directory from ${configDir} to ${userConfig}${colors.reset}`);
+    copyDir(configDir, userConfig);
+    
+    clearInterval(spinner);
+    process.stdout.write(`\r${colors.fg.green}Directories setup complete!${colors.reset}` + " ".repeat(20) + "\n");
+  } catch (err) {
+    console.error(`${colors.fg.red}Error copying directories:${colors.reset}`, err.message);
+  }
+  
+  // Main configuration loop
   while (true) {
     printMenu(groups, currentConfig);
-    const choice = await prompt("Select an option by number:", "1");
-    const optionIndex = parseInt(choice, 10) - 1;
-
-    if (optionIndex === Object.keys(groups).length) {
-      console.log("Saving configuration and exiting...");
+    const choice = await prompt("Select an option (number, S to save, Q to quit)", "");
+    
+    if (choice.toLowerCase() === 's') {
+      console.log(`${colors.fg.green}Saving configuration and exiting...${colors.reset}`);
       break;
+    } else if (choice.toLowerCase() === 'q') {
+      console.log(`${colors.fg.yellow}Exiting without saving...${colors.reset}`);
+      return;
     }
-
+    
+    const optionIndex = parseInt(choice, 10) - 1;
     const selectedGroup = Object.keys(groups)[optionIndex];
+    
     if (selectedGroup) {
-      const action = await prompt(
-        `Do you want to (1) Configure or (2) Disable ${selectedGroup}?`,
-        "1"
-      );
-
-      if (action === "1") {
+      const actionPrompt = `Do you want to ${colors.fg.green}(E)nable/Configure${colors.reset} or ${colors.fg.red}(D)isable${colors.reset} ${selectedGroup}?`;
+      const action = await prompt(actionPrompt, "E");
+      
+      if (action.toLowerCase() === 'e') {
         await configureGroup(selectedGroup, groups[selectedGroup], currentConfig);
-      } else if (action === "2") {
+      } else if (action.toLowerCase() === 'd') {
         await disableGroup(selectedGroup, groups[selectedGroup], currentConfig);
       } else {
-        console.log("Invalid action. Please try again.");
+        console.log(`${colors.fg.yellow}Invalid action. Please try again.${colors.reset}`);
       }
     } else {
-      console.log("Invalid selection. Please try again.");
+      console.log(`${colors.fg.red}Invalid selection. Please try again.${colors.reset}`);
     }
   }
 
+  // Ensure all mandatory config is included
+  for (const [key, value] of Object.entries(mandatoryConfig)) {
+    if (currentConfig[key] === undefined) {
+      currentConfig[key] = value;
+    }
+  }
+
+  // Generate the .env file content
   const envContent = Object.entries(currentConfig)
     .map(([key, value]) => `${key}=${value}`)
     .join("\n");
 
   fs.writeFileSync(envPath, envContent);
-  console.log(`Configuration saved to ${envPath}`);
+  console.log(`${colors.fg.green}${colors.bright}Configuration saved to ${envPath}${colors.reset}`);
+  
+  // Show a summary of enabled features
+  console.log(`\n${colors.fg.magenta}${colors.bright}Configuration Summary:${colors.reset}`);
+  const enabledGroups = Object.keys(groups).filter(group => 
+    groups[group].some(key => currentConfig[key] !== undefined)
+  );
+  
+  enabledGroups.forEach(group => {
+    console.log(`${colors.fg.green}✓ ${group}${colors.reset}`);
+  });
 }
 
+// Display welcome banner
+function showWelcomeBanner() {
+  console.clear();
+  console.log(`
+${colors.bright}${colors.fg.cyan}┌───────────────────────────────────────────────┐
+│                                               │
+│         APPLICATION SETUP WIZARD              │
+│                                               │
+└───────────────────────────────────────────────┘${colors.reset}
+
+This wizard will help you configure your application.
+Only enabled features will be saved to your .env file.
+`);
+}
+
+// Start the configuration process
+showWelcomeBanner();
 configure().catch((err) => {
-  console.error("Error during configuration:", err);
+  console.error(`${colors.fg.red}Error during configuration:${colors.reset}`, err);
 });
