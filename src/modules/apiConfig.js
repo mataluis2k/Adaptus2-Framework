@@ -225,6 +225,14 @@ function registerResources(apiConfig, globalContext) {
         // If there's no 'route' or it's not a string, skip
         return;
       }
+
+        // Register the full route explicitly as a resource
+        const resourceKey = route.toLowerCase().trim();
+
+        if (!globalContext.resources[resourceKey]) {
+            consolelog.log(`Registering resource: '${resourceKey}' in globalContext.resources`);
+            globalContext.resources[resourceKey] = {};
+        }
   
       // Grab the last part after splitting by '/'
       const parts = route.split('/');

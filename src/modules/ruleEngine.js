@@ -10,9 +10,9 @@ const { getContext, globalContext  } = require('./context'); // Shared global co
 const bcrypt = require('bcrypt');
 
 global.sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
-global.bcrypt = async (value) => {
+global.bcrypt = (value) => {
   const saltRounds = 10; 
-  return await bcrypt.hash(value, saltRounds);
+  return bcrypt.hash(value, saltRounds);
 };
 /**
  * A single rule, representing:
@@ -103,36 +103,43 @@ class Rule {
     console.log(`Matching rule: eventType=${this.eventType}, entity=${this.entity}, direction=${this.direction}`);
     console.log(`Against: eventType=${eventType}, entityName=${entityName}, direction=${direction}`);
     
-    // Check if event type matches
     if (this.eventType !== eventType) {
-      console.log(`Event type mismatch: ${this.eventType} !== ${eventType}`);
-      return false;
+        console.log(`Event type mismatch: ${this.eventType} !== ${eventType}`);
+        return false;
     }
 
-    // For GET requests, check if direction matches when specified
     if (eventType === 'GET' && this.direction && this.direction !== direction) {
-      console.log(`Direction mismatch: ${this.direction} !== ${direction}`);
-      return false;
+        console.log(`Direction mismatch: ${this.direction} !== ${direction}`);
+        return false;
     }
 
-    // Normalize entity by removing numeric IDs or UUIDs (to match 'videos' for 'videos/:id')
-    const normalizedEntity = entityName.replace(/\/[^/]+$/, '').toLowerCase(); // Removes the last segment if it's an ID and convert to lowercase
-    console.log(`Normalized entity: ${normalizedEntity}`);
- 
-    if (this.entity.toLowerCase() !== normalizedEntity) {
-      console.log(`Entity mismatch: ${this.entity.toLowerCase()} !== ${normalizedEntity}`);
-      return false;
+    // Exact path match if explicitly defined in the rule (POST requests or detailed rules)
+    if (this.entity.startsWith('/')) {
+        const isExactMatch = this.entity.toLowerCase() === entityName.toLowerCase();
+        console.log(`Explicit path matching: ${this.entity.toLowerCase()} === ${entityName.toLowerCase()} -> ${isExactMatch}`);
+        return isExactMatch && (!this.conditions.length || this._evaluateConditionArray(this.conditions, data));
     }
 
-    if (!this.conditions.length) {
-      console.log(`No conditions, rule matches!`);
-      return true;
+    // Flexible match for GET or other short-defined routes
+    const ruleSegments = this.entity.toLowerCase().split('/');
+    const entitySegments = entityName.toLowerCase().split('/');
+
+    if (entitySegments.length < ruleSegments.length) {
+        console.log(`Route too short for matching: ${entitySegments.length} < ${ruleSegments.length}`);
+        return false;
     }
 
-    const conditionsMatch = this._evaluateConditionArray(this.conditions, data);
-    console.log(`Conditions match: ${conditionsMatch}`);
-    return conditionsMatch;
-  }
+    for (let i = 0; i < ruleSegments.length; i++) {
+        if (ruleSegments[i] !== entitySegments[i]) {
+            console.log(`Mismatch at segment ${i}: ${ruleSegments[i]} !== ${entitySegments[i]}`);
+            return false;
+        }
+    }
+
+    console.log('Matched with flexible segment logic.');
+    return !this.conditions.length || this._evaluateConditionArray(this.conditions, data);
+}
+
 
 
 
@@ -406,7 +413,7 @@ class Rule {
                       //     }
                       //   `
                       // )(data, global);
-                    computedValue = this._safeEvaluate(interpolatedExpression, data);
+                    computedValue = await this._safeEvaluate(interpolatedExpression, data);
         
             }
               // Check if parsedValue is JSON and has a template property
@@ -414,7 +421,15 @@ class Rule {
                 data[action.field] = parsedValue[action.field]; // Assign value from JSON template property
                 console.log(`Updated1: ${action.field} = `,data[action.field]);
             } else {
-              data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
+              //data[action.field] = computedValue; // Assign computedValue directly if not JSON or no template property
+              if (action.field.startsWith('req.body.')) {
+                  const realField = action.field.replace('req.body.', '');
+                  if (req && req.body) req.body[realField] = computedValue;
+                  console.log(`✅ Updated req.body.${realField} =`, computedValue);
+              } else {
+                  data[action.field] = computedValue;
+                  console.log(`✅ Updated data.${action.field} =`, computedValue);
+              }
               console.log(`Updated2: ${action.field} = `,data[action.field]);
             }
             consolelog.log("Data after update:", data);
@@ -468,34 +483,37 @@ class Rule {
 }
 
 // Add this new safe evaluation method to the Rule class:
-_safeEvaluate(expression, context) {
-  // Define a limited set of safe functions and operations
+async _safeEvaluate(expression, context) {
   const safeGlobals = {
-    // Only expose specific global functions that are needed
     sha256: global.sha256,
     bcrypt: global.bcrypt,
-    // Add other necessary global functions here, but be selective!
   };
-  
-  // Create a sandboxed environment with only the variables we want to expose
-  const sandbox = {
-    ...context,  // User data context
-    ...safeGlobals, // Limited set of global functions
-  };
-  
-  // Use vm module for safer evaluation
+
   const vm = require('vm');
   const script = new vm.Script(`result = ${expression}`);
-  const vmContext = vm.createContext({ result: null, ...sandbox });
-  
+
+  const sandbox = {
+    result: null,
+    ...context,
+    ...safeGlobals,
+  };
+  const vmContext = vm.createContext(sandbox);
+
   try {
-    script.runInContext(vmContext);
+    await script.runInContext(vmContext);
+
+    // If result is a promise, await it
+    if (vmContext.result && typeof vmContext.result.then === 'function') {
+      vmContext.result = await vmContext.result;
+    }
+
     return vmContext.result;
   } catch (error) {
     console.error(`Safe evaluation error: ${error.message}`);
     throw error;
   }
 }
+
   /**
    * Utility to get nested values like "order.total" from data { order:{ total:123 }}
    */

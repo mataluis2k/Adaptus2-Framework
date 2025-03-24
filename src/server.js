@@ -1370,6 +1370,7 @@ function buildFilterClause(filterObj, dbTable) {
         // POST, PUT, DELETE endpoints (unchanged but dynamically registered based on allowMethods)
         if (allowedMethods.includes("POST")) {
             app.post(route,cors(corsOptions), aarMiddleware(auth, { acl, unauthorized }, app.locals.ruleEngineMiddleware), async (req, res) => {
+                console.log(`Incoming POST request to ${route}:`, req.body);
                 const writableFields = Object.keys(req.body).filter((key) => allowWrite.includes(key));
                 if (writableFields.length === 0) {
                     return res.status(400).json({ error: 'No writable fields provided' });

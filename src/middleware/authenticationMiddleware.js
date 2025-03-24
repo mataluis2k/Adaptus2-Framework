@@ -27,7 +27,7 @@ const aclMiddleware = (allowedRoles, customMessage = defaultUnauthorized) => {
       if (!userRole || !allowedRoles.includes(userRole)) aclError = true;
     }
     if (aclError) {
-      consolelog.log('User Denied access, mismatch in ACL Middleware:', allowedRoles);
+      consolelog.log('User Denied access, mismatch in ACL Middleware:', allowedRoles, userRole);
       const errorConfig = (customMessage && customMessage.httpCode) ? customMessage : defaultUnauthorized;
       return res.status(errorConfig.httpCode).json({ error: errorConfig.message, code: errorConfig.code });
     }

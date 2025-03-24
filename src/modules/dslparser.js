@@ -326,7 +326,7 @@ class DSLParser {
       let [, event, resource, rawConditions] = match;
   
       // Normalize dynamic routes (e.g., videos/:id -> videos)
-      resource = resource.replace(/\/[^/]+$/, ''); // Remove last segment if it's an ID
+      // resource = resource.replace(/\/[^/]+$/, ''); // Remove last segment if it's an ID
 
       let direction = null;
       
