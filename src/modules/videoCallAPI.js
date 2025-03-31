@@ -47,8 +47,8 @@ router.get('/comm/video-call', (req, res) => {
         <meta charset="UTF-8">
         <meta name="viewport" content="width=device-width, initial-scale=1.0">
         <title>Modern Video Call Widget</title>
-        <link rel="stylesheet" href="/css/video-call-styles.css">
-        <script src="/js/videoCallWidget2.js" defer></script>
+        <link rel="stylesheet" href="/css/videoCallWidget2.css">
+        <script src="/js/videoCallWidget.js" defer></script>
     </head>
     <body>
         <div class="container">

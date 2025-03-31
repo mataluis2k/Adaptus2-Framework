@@ -92,17 +92,7 @@ class ChatModule {
                     };
                     await this.saveMessage(messageData);
 
-                    // Send the message if the recipient is online
-                    if (recipientSocketId) {
-                        this.io.to(recipientSocketId).emit("privateMessage", {
-                            from: socket.user.username,
-                            to: recipientId,
-                            text: message,
-                            timestamp: new Date().toISOString(),
-                        });
-                    } else {
-                        socket.emit("info", `User ${recipientId} is offline. Message saved.`);
-                    }
+                   
 
                     // Process with Ollama only if AI is triggered
                     if (isAiQuery) {
@@ -123,6 +113,8 @@ class ChatModule {
                             text: aiResponse.message,
                             timestamp: new Date().toISOString(),
                         });
+                       
+                        
                     }
                     // Adding RAG handler
                     if (isRagQuery) {
@@ -158,7 +150,12 @@ class ChatModule {
                             });
                         }
                     }
-
+                    
+                    // if recipient is AI_Assistant, we don't send the response to them
+                    if (recipientId === "AI_Assistant") {
+                        return;
+                    }
+                    
                     // If recipient is online and AI was triggered, send them the AI response
                     if (recipientSocketId && isAiQuery) {
                         this.io.to(recipientSocketId).emit("privateMessage", {
@@ -167,6 +164,17 @@ class ChatModule {
                             text: aiResponse.message,
                             timestamp: new Date().toISOString(),
                         });
+                    }
+                     // Send the message if the recipient is online
+                     if (recipientSocketId && !isAiQuery && !isRagQuery) {
+                        this.io.to(recipientSocketId).emit("privateMessage", {
+                            from: socket.user.username,
+                            to: recipientId,
+                            text: message,
+                            timestamp: new Date().toISOString(),
+                        });
+                    } else {
+                        socket.emit("info", `User ${recipientId} is offline. Message saved.`);
                     }
                     
             } catch (error) {

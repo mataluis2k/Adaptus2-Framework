@@ -24,7 +24,7 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const requestLogger = require('./middleware/requestLoggingMiddleware');
 const { updateValidationRules , createGlobalValidationMiddleware }= require('./middleware/validationMiddleware');
-
+const { redisClient } = require('./modules/redisClient');
 
 // Constants for configuration
 const REDIS_RETRY_STRATEGY = (times) => Math.min(times * 50, 2000); // Exponential backoff
@@ -1937,6 +1937,7 @@ class Adaptus2Server {
         this.paymentModule = null;
         this.streamingServer = null;
         this.app.use(middleware);
+        this.redisClient = redisClient;
     }
 
   getRoutes(app) {
@@ -1998,6 +1999,51 @@ class Adaptus2Server {
 
                 try {
                     switch (command) {
+                        case "unlock":
+                            if (args.length === 1) {
+                                const fileName = args[0];
+                                const lockKey = `config-lock:${fileName}`;
+                                await this.redisClient.del(lockKey);
+                                socket.write(`Lock removed for ${fileName}\n`);
+                            } else {
+                                socket.write("Usage: unlock <fileName>\n");
+                            }
+                            break;
+
+                        case "permalock":
+                            if (args.length === 2) {
+                                const [fileName, userId] = args;
+                                const lockKey = `config-lock:${fileName}`;
+                                await this.redisClient.set(lockKey, userId);
+                                socket.write(`Permanent lock set on ${fileName} by user ${userId}\n`);
+                            } else {
+                                socket.write("Usage: permalock <fileName> <userId>\n");
+                            }
+                            break;
+                        case "listlocks":
+                                try {
+                                    const keys = await this.redisClient.keys("config-lock:*");
+                            
+                                    if (keys.length === 0) {
+                                        socket.write("No locked config files found.\n");
+                                        break;
+                                    }
+                            
+                                    const results = [];
+                                    for (const key of keys) {
+                                        const userId = await this.redisClient.get(key);
+                                        const ttl = await this.redisClient.ttl(key);
+                                        const fileName = key.replace("config-lock:", "");
+                                        const expiresIn = ttl === -1 ? 'permanent' : `${ttl}s`;
+                            
+                                        results.push(`${fileName} → userId: ${userId}, expires in: ${expiresIn}`);
+                                    }
+                            
+                                    socket.write(`Locked Config Files:\n${results.join("\n")}\n`);
+                                } catch (err) {
+                                    socket.write(`Error listing locks: ${err.message}\n`);
+                                }
+                                break;                            
                         case "version":
                             console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
                             socket.write(`Adaptus2-Framework Version: ${packageJson.version}\n`);
@@ -2106,6 +2152,7 @@ class Adaptus2Server {
                                     this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
                                     this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app, route));
                                     this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
+                                    
                             
                                     if (PLUGIN_MANAGER === 'network') {
                                         const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
@@ -2688,7 +2735,7 @@ registerMiddleware() {
     // Initialize optional modules safely
     initializeOptionalModules(app) {
         const httpServer = require('http').createServer(app); // Reuse server
-        const redisClient = require('./modules/redisClient');
+        const { redisClient } = require('./modules/redisClient');
         // Initialize CMS if enabled
         if (process.env.ENABLE_CMS === 'true') {
             try {
@@ -2804,6 +2851,14 @@ registerMiddleware() {
             console.error("RAG API Error:", error.message);
             res.status(500).json({ error: "Internal Server Error" });
         }
+        });
+
+        const ConfigManager = require('./modules/configManager');
+        new ConfigManager({
+            app: this.app,
+            redisClient: redisClient,
+            authMiddleware: authenticateMiddleware(true),
+            aclMiddleware: aclMiddleware(['publicAccess']), // Adjust roles as needed
         });
           
     }
