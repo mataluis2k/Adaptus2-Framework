@@ -193,13 +193,22 @@ class SignalingServer {
                 
             case 'heartbeat':
                 // Just acknowledge heartbeat
-                ws.isAlive = true;
+                if (this.clients[userId]) {
+                    this.clients[userId].isAlive = true;
+                }
                 break;
         }
     }
 
-    handleJoin(userId, roomId, ws) {
+    handleJoin(userId, roomId) {
         if (!this.rooms[roomId]) this.rooms[roomId] = [];
+        
+        // Get the websocket for this user
+        const ws = this.clients[userId];
+        if (!ws) {
+            console.error(`Cannot find websocket for user ${userId}`);
+            return;
+        }
     
         // NEW: Check if user is in waiting room first
         if (this.waitingRoomUsers[roomId] && this.waitingRoomUsers[roomId].includes(userId)) {
@@ -244,6 +253,7 @@ class SignalingServer {
         // Add the new user to the room
         this.rooms[roomId].push({ userId, ws });
         this.userRooms[userId] = roomId;
+        this.userSockets.set(userId, ws);
     
         console.log(`User ${userId} joined room ${roomId}`);
     }

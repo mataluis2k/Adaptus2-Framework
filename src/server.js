@@ -1087,7 +1087,7 @@ function registerRoutes(app, apiConfig) {
                     res.json({
                         message: "Authentication successful",
                         token,
-                        user: username,
+                        user: tokenPayload,
                     });
                 } catch (error) {
                     console.error(`Error in POST ${route}:`, error.message);
