@@ -1,31 +1,22 @@
 const { OpenAIEmbeddings } = require('@langchain/openai');
+const { OllamaEmbeddings } = require('@langchain/ollama');
 const { MemoryVectorStore } = require('langchain/vectorstores/memory');
-const { OpenAI } = require('@langchain/openai');
-const { RetrievalQAChain } = require('langchain/chains');
-
 const { Document } = require('langchain/document');
+const path = require('path');
+const fs = require('fs');
+const { getDbConnection } = require(path.join(__dirname, 'db'));
+const llmModule = require('./llmModule');
 
-
-// Remaining code remains the same
-
-// This module needs to be re-write to work better for server2.js 
-// Few issues, if the tables have a lot of data then it will take a lot of time to load the data and provide a response for the user.
-// Hence the loadConfig should happen when the server starts and not when the user makes a request.
-// The Rag Module should only be called when the user makes a request and not when the server starts.
-
-const fs = require("fs");
-const path = require("path");
-const { getDbConnection } = require(path.join(__dirname,'db'));
 // Global variables to store the vector store and conversation history
 let vectorStore;
-// Store the last 5 conversation exchanges
-let conversationHistory = [];
-// Maximum number of exchanges to store (each exchange is a query-response pair)
+// Store conversation histories for different users
+const ragConversationHistories = new Map();
+// Maximum number of exchanges to store per user
 const MAX_HISTORY_LENGTH = 100;
 
 /**
  * Utility to load the initial configuration and prepare documents.
- * This function is run when the server starts.
+ * This function should be run when the server starts.
  */
 async function initializeRAG(apiConfig) {
   const ragEnabledTables = apiConfig.filter((config) =>
@@ -43,14 +34,13 @@ async function initializeRAG(apiConfig) {
   for (const table of ragEnabledTables) {    
     console.log(`Processing table: ${table.dbType} - ${table.dbConnection}`);
     try {
-        const connection = await getDbConnection(table);
-        if (!connection) {
-          return res.status(500).json({ error: `Database connection failed for ${endpoint.dbConnection}` });
-        }
+      const connection = await getDbConnection(table);
+      if (!connection) {
+        console.error(`Database connection failed for ${table.dbConnection}`);
+        continue;
+      }
 
-      const query = `SELECT ${table.allowRead.join(", ")} FROM ${
-        table.dbTable
-      } `; // Adjust limit based on requirements
+      const query = `SELECT ${table.allowRead.join(", ")} FROM ${table.dbTable}`; 
       console.log(`Executing query: ${query}`);
       const [rows] = await connection.execute(query);
 
@@ -72,97 +62,330 @@ async function initializeRAG(apiConfig) {
         `Error processing table "${table.dbTable}": ${error.message}`
       );
     }
-    
   }
 
-  console.log("Creating vector store...");
-  vectorStore = await MemoryVectorStore.fromDocuments(
-    allDocuments,
-    new OpenAIEmbeddings()
-  );
+  if (allDocuments.length === 0) {
+    console.warn("No documents were loaded for RAG. Vector store initialization skipped.");
+    return;
+  }
 
-  console.log("RAG initialization completed.");
+  try {
+    console.log(`Creating vector store with ${allDocuments.length} documents...`);
+    
+    // Determine which embedding provider to use based on environment config
+    let embeddings;
+    const embeddingProvider = process.env.EMBEDDING_PROVIDER || llmModule.llmType.toLowerCase();
+    
+    if (embeddingProvider === 'ollama') {
+      // Use Ollama embeddings
+      const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+      // Use a commonly available Ollama model that can provide embeddings
+      // llama2 and mistral are commonly available in most Ollama installations
+      const ollamaModel = process.env.OLLAMA_EMBEDDING_MODEL || 'llama2';
+      
+      try {
+        console.log(`Using Ollama embeddings with model: ${ollamaModel}`);
+        embeddings = new OllamaEmbeddings({
+          baseUrl: ollamaBaseUrl,
+          model: ollamaModel,
+          // The OllamaEmbeddings constructor in langchain accepts dimensions
+          // for models that support configurable embedding size
+          dimensions: parseInt(process.env.OLLAMA_EMBEDDING_DIMENSIONS) || 384
+        });
+      } catch (error) {
+        console.error(`Failed to initialize Ollama embeddings with model ${ollamaModel}:`, error.message);
+        console.warn(`Attempting to use a fallback embedding model...`);
+        
+        // Try with a fallback model
+        try {
+          const fallbackModel = 'mistral';
+          console.log(`Trying fallback Ollama embedding model: ${fallbackModel}`);
+          embeddings = new OllamaEmbeddings({
+            baseUrl: ollamaBaseUrl,
+            model: fallbackModel
+          });
+        } catch (secondError) {
+          console.error(`Failed to initialize fallback Ollama embeddings:`, secondError.message);
+          throw new Error('Could not initialize any embedding model with Ollama');
+        }
+      }
+    } else {
+      // Default to OpenAI embeddings if available
+      if (!process.env.OPENAI_API_KEY) {
+        console.warn('No OpenAI API key found for embeddings. Trying to use Ollama instead.');
+        const ollamaBaseUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+        // Use a commonly available model 
+        const ollamaModel = process.env.OLLAMA_EMBEDDING_MODEL || 'llama2';
+        
+        try {
+          console.log(`Falling back to Ollama embeddings with model: ${ollamaModel}`);
+          embeddings = new OllamaEmbeddings({
+            baseUrl: ollamaBaseUrl,
+            model: ollamaModel
+          });
+        } catch (error) {
+          console.error(`Failed to initialize Ollama embeddings with fallback model ${ollamaModel}:`, error.message);
+          
+          // Try with another fallback model
+          try {
+            const secondFallbackModel = 'mistral';
+            console.log(`Trying second fallback Ollama embedding model: ${secondFallbackModel}`);
+            embeddings = new OllamaEmbeddings({
+              baseUrl: ollamaBaseUrl,
+              model: secondFallbackModel
+            });
+          } catch (secondError) {
+            console.error(`Could not initialize any embedding models. RAG functionality will be limited:`, secondError.message);
+            throw new Error('Failed to initialize embeddings with any available provider');
+          }
+        }
+      } else {
+        console.log('Using OpenAI embeddings');
+        try {
+          embeddings = new OpenAIEmbeddings();
+        } catch (error) {
+          console.error('Failed to initialize OpenAI embeddings:', error.message);
+          throw new Error('Failed to initialize OpenAI embeddings. Check your API key and connection.');
+        }
+      }
+    }
+    
+    // Create vector store with selected embedding provider
+    vectorStore = await MemoryVectorStore.fromDocuments(
+      allDocuments,
+      embeddings
+    );
+    console.log("RAG initialization completed successfully.");
+  } catch (error) {
+    console.error("Error creating vector store:", error);
+  }
+}  
+
+/**
+ * Get or initialize conversation history for a user
+ * @param {string} userId - The user's ID
+ * @returns {Array} - The user's conversation history
+ */
+function getUserHistory(userId) {
+  if (!ragConversationHistories.has(userId)) {
+    ragConversationHistories.set(userId, []);
+  }
+  return ragConversationHistories.get(userId);
 }
-
 
 /**
  * Handles RAG queries with conversation memory
  * @param {string} query - The user's query
+ * @param {string} userId - The user's ID for maintaining conversation state
  * @returns {Object} - The response from the LLM
  */
-async function handleRAG(query) {
-    const openAIApiKey = process.env.OPENAI_API_KEY;
-    const modelName = process.env.OPENAI_MODEL || "gpt-3.5-turbo-instruct";
-    const temperature = parseFloat(process.env.OPENAI_TEMPERATURE) || 0.7;
-
-    if (!openAIApiKey) {
-      throw new Error("OpenAI API Key not found. Please set OPENAI_API_KEY environment variable.");
-    }
-    if (!vectorStore) {
-      throw new Error("RAG is not initialized. Please ensure `initializeRAG` is called at server startup.");
-    }
-  
-    try {
-      // Initialize the OpenAI model
-      const model = new OpenAI({
-        openAIApiKey: openAIApiKey,
-        temperature: temperature,
-        modelName: modelName,
-      });
-    
-      const chain = RetrievalQAChain.fromLLM(
-        model,
-        vectorStore.asRetriever(),
-        {
-            returnSourceDocuments: false,
-        }
-      );
-      
-      // Format the conversation history for the LLM
-      const formattedHistory = conversationHistory.map(exchange => 
-        `Human: ${exchange.query}\nAI: ${exchange.response}`
-      ).join('\n');
-      
-      console.log(`Using conversation history with ${conversationHistory.length} previous exchanges`);
-      
-      // Pass the conversation history to the chain
-      const response = await chain.invoke({
-        query: query, 
-        chat_history: formattedHistory
-      });
-      
-      // Add the current exchange to the history
-      conversationHistory.push({
-        query: query,
-        response: response.text
-      });
-      
-      // Limit history to the last MAX_HISTORY_LENGTH exchanges
-      if (conversationHistory.length > MAX_HISTORY_LENGTH) {
-        conversationHistory = conversationHistory.slice(-MAX_HISTORY_LENGTH);
-      }
-      
-      console.log("Response:", response);
-      console.log(`Conversation history now has ${conversationHistory.length} exchanges`);
-  
-      return response;
-    } catch (error) {
-      console.error("RAG Module Error:", error.message);
-      throw error;
-    }
+async function handleRAG(query, userId = 'default') {
+  if (!vectorStore) {
+    console.warn("RAG is not initialized. Falling back to non-RAG query handling.");
+    return handleNoVectorStoreQuery(query, userId);
   }
-
+  
+  try {
+    // Retrieve relevant documents based on the query
+    const relevantDocs = await vectorStore.similaritySearch(query, 5);
+    
+    // Format the retrieved documents into text
+    const docText = relevantDocs.map(doc => doc.pageContent).join('\n\n');
+    
+    // Get user's conversation history
+    const userHistory = getUserHistory(userId);
+    
+    // Format the conversation history
+    const formattedHistory = userHistory.map(exchange => 
+      `Human: ${exchange.query}\nAI: ${exchange.response}`
+    ).join('\n');
+    
+    console.log(`Using conversation history with ${userHistory.length} previous exchanges for user ${userId}`);
+    
+    // Create the enhanced prompt with context and history
+    const enhancedPrompt = `
+    You are an AI assistant with access to a database. Use the following information to answer the user's question.
+    
+    CONTEXT INFORMATION:
+    ${docText}
+    
+    CONVERSATION HISTORY:
+    ${formattedHistory}
+    
+    USER QUERY: ${query}
+    
+    Provide a helpful, concise response based on the information provided. If the information doesn't contain an answer to the user's question, say so clearly.
+    `;
+    
+    // Prepare message data for llmModule
+    const messageData = {
+      senderId: userId,
+      recipientId: 'AI_Assistant',
+      message: enhancedPrompt,
+      groupName: null,
+      timestamp: new Date().toISOString(),
+      status: 'processing'
+    };
+    
+    // Call the LLM with the enhanced prompt using llmModule
+    const response = await llmModule.simpleLLMCall(messageData);
+    
+    if (!response || !response.message) {
+      throw new Error('No response received from LLM');
+    }
+    
+    // Extract the model's response
+    const llmResponse = response.message;
+    
+    // Add the current exchange to the history
+    userHistory.push({
+      query: query,
+      response: llmResponse
+    });
+    
+    // Limit history to the last MAX_HISTORY_LENGTH exchanges
+    if (userHistory.length > MAX_HISTORY_LENGTH) {
+      ragConversationHistories.set(userId, userHistory.slice(-MAX_HISTORY_LENGTH));
+    }
+    
+    console.log(`Conversation history for user ${userId} now has ${getUserHistory(userId).length} exchanges`);
+    
+    return {
+      text: llmResponse,
+      source_documents: relevantDocs
+    };
+  } catch (error) {
+    console.error("RAG Module Error:", error.message);
+    throw error;
+  }
+}
 
 /**
- * Clears the conversation history
+ * Clears the conversation history for a specific user
+ * @param {string} userId - The user's ID whose history to clear
  */
-function clearConversationHistory() {
-  conversationHistory = [];
-  console.log("Conversation history cleared");
+function clearConversationHistory(userId = 'default') {
+  if (userId === 'all') {
+    ragConversationHistories.clear();
+    console.log("All conversation histories cleared");
+  } else {
+    ragConversationHistories.set(userId, []);
+    console.log(`Conversation history cleared for user ${userId}`);
+  }
+}
+
+/**
+ * Get stats about the RAG system
+ * @returns {Object} - Statistics about the RAG system
+ */
+function getRagStats() {
+  const userCount = ragConversationHistories.size;
+  const totalExchanges = Array.from(ragConversationHistories.values())
+    .reduce((sum, history) => sum + history.length, 0);
+  
+  // Determine which embedding provider is being used
+  let embeddingProvider = "not initialized";
+  if (vectorStore) {
+    // Try to identify the embedding provider from the vectorStore
+    if (vectorStore.embeddings) {
+      if (vectorStore.embeddings instanceof OpenAIEmbeddings) {
+        embeddingProvider = "OpenAI";
+      } else if (vectorStore.embeddings instanceof OllamaEmbeddings) {
+        embeddingProvider = `Ollama (${vectorStore.embeddings.model || 'unknown model'})`;
+      } else {
+        embeddingProvider = "Unknown provider";
+      }
+    }
+  }
+  
+  return {
+    isInitialized: !!vectorStore,
+    embeddingProvider,
+    llmProvider: llmModule.llmType,
+    userCount,
+    totalExchanges,
+    maxHistoryPerUser: MAX_HISTORY_LENGTH
+  };
+}
+
+/**
+ * Fallback handler for when no vector store is available
+ * @param {string} query - The user's query
+ * @param {string} userId - The user's ID
+ * @returns {Object} - The response from the LLM
+ */
+async function handleNoVectorStoreQuery(query, userId = 'default') {
+  console.warn("Vector store not initialized. Running in fallback mode without RAG.");
+  
+  try {
+    // Get user's conversation history
+    const userHistory = getUserHistory(userId);
+    
+    // Format the conversation history
+    const formattedHistory = userHistory.map(exchange => 
+      `Human: ${exchange.query}\nAI: ${exchange.response}`
+    ).join('\n');
+    
+    // Create a prompt that notes the lack of RAG context
+    const prompt = `
+    You are an AI assistant. The database search function is currently not available, 
+    so you'll need to answer based on your general knowledge.
+    
+    CONVERSATION HISTORY:
+    ${formattedHistory}
+    
+    USER QUERY: ${query}
+    
+    Provide a helpful response based on your general knowledge. If you don't know the answer, 
+    say so clearly and suggest that the user try again when the database search function is available.
+    `;
+    
+    // Prepare message data for llmModule
+    const messageData = {
+      senderId: userId,
+      recipientId: 'AI_Assistant',
+      message: prompt,
+      groupName: null,
+      timestamp: new Date().toISOString(),
+      status: 'processing'
+    };
+    
+    // Call the LLM
+    const response = await llmModule.simpleLLMCall(messageData);
+    
+    if (!response || !response.message) {
+      throw new Error('No response received from LLM');
+    }
+    
+    // Extract the LLM's response
+    const llmResponse = response.message;
+    
+    // Add to history
+    userHistory.push({
+      query: query,
+      response: llmResponse
+    });
+    
+    // Limit history
+    if (userHistory.length > MAX_HISTORY_LENGTH) {
+      ragConversationHistories.set(userId, userHistory.slice(-MAX_HISTORY_LENGTH));
+    }
+    
+    return {
+      text: llmResponse,
+      source_documents: [],
+      fallback: true
+    };
+  } catch (error) {
+    console.error("Fallback query handler error:", error.message);
+    throw error;
+  }
 }
 
 module.exports = {
-    initializeRAG,
-    handleRAG,
-    clearConversationHistory
-  };
+  initializeRAG,
+  handleRAG,
+  clearConversationHistory,
+  getRagStats,
+  handleNoVectorStoreQuery
+};

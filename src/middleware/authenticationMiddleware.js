@@ -24,7 +24,13 @@ const aclMiddleware = (allowedRoles, customMessage = defaultUnauthorized) => {
     consolelog.log('ACL Middleware:', req.user);
     const userRole = req.user?.acl;
     if (allowedRoles && allowedRoles.length > 0) {
-      if (!userRole || !allowedRoles.includes(userRole)) aclError = true;
+      // iterate user roles and check if any of them are in the allowedRoles
+      aclError = !allowedRoles.some((role) => {
+        if (Array.isArray(userRole)) {
+          return userRole.includes(role);
+        }
+        return userRole === role;
+      });      
     }
     if (aclError) {
       consolelog.log('User Denied access, mismatch in ACL Middleware:', allowedRoles, userRole);

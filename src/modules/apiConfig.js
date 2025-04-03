@@ -41,9 +41,14 @@ function getMyConfig(fileName) {
 function getApiConfig() {
     // test if null or undefined or empty array and call loadConfig before returning
     if (!apiConfig || apiConfig.length === 0) {
-        loadConfig();
+        if (typeof loadConfig === 'function') {
+            loadConfig();
+        } else {
+            console.warn('loadConfig function not available, returning empty config');
+            return [];
+        }
     }
-    return internalApiConfig;
+    return internalApiConfig || [];
 }
 
 function getConfigNode(table,routeType){ 

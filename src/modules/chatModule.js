@@ -73,7 +73,107 @@ class ChatModule {
 
             // Track connected user
             this.connectedUsers.set(socket.user.username, socket.id);
+                    socket.on("chatbot-rag", async ({ recipientId, message }) => {
+                        console.log(`Chat-bot message from ${socket.user.username} to ${recipientId}: ${message}`);
+                        try {
+                            const recipientSocketId = this.connectedUsers.get(recipientId);
+                            const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
+                            const isRagQuery = message.trim().toLowerCase().startsWith(RAG_TRIGGER);
 
+                            // Save message in the database
+                            const messageData = {
+                                senderId: socket.user.username,
+                                recipientId,
+                                groupName: null,
+                                message,
+                                status: recipientSocketId ? "delivered" : "pending",
+                            };
+                            await this.saveMessage(messageData);
+                            try {
+                                
+                                const ragResponse = await handleRAG(message);
+                                console.log("RAG response:", ragResponse);
+                                
+                                // Send Back RAG response to the sender
+                                socket.emit("chatbot-rag", {
+                                    from: "RAG_Assistant",
+                                    to: socket.user.username,
+                                    text: ragResponse.text || ragResponse,
+                                    timestamp: new Date().toISOString(),
+                                });
+                                
+                                // If recipient is online, also send them the RAG response
+                                if (recipientSocketId) {
+                                    this.io.to(recipientSocketId).emit("chatbot-rag", {
+                                        from: "RAG_Assistant",
+                                        to: recipientId,
+                                        text: ragResponse.text || ragResponse,
+                                        timestamp: new Date().toISOString(),
+                                    });
+                                }
+                            } catch (error) {
+                                console.error("RAG Error:", error.message);
+                                socket.emit("privateMessage", {
+                                    from: "RAG_Assistant",
+                                    to: socket.user.username,
+                                    text: "Error processing RAG query: " + error.message,
+                                    timestamp: new Date().toISOString(),
+                                });
+                            }
+                        
+                    } catch (error) {
+                        console.error("Error handling privateMessage event:", error.message);
+                        socket.emit("error", "An error occurred while sending your message.");
+                    }
+                });
+                socket.on("chat-bot", async ({ recipientId, message }) => {
+                    console.log(`Chat-bot message from ${socket.user.username} to ${recipientId}: ${message}`);
+                    try {
+                        const recipientSocketId = this.connectedUsers.get(recipientId);
+                        const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
+                        const isRagQuery = message.trim().toLowerCase().startsWith(RAG_TRIGGER);
+
+                        // Save message in the database
+                        const messageData = {
+                            senderId: socket.user.username,
+                            recipientId,
+                            groupName: null,
+                            message,
+                            status: recipientSocketId ? "delivered" : "pending",
+                        };
+                        await this.saveMessage(messageData);
+
+                    
+
+                        // Process with Ollama only if AI is triggered
+                        if (isAiQuery) {
+                            const aiPrompt = message.slice(AI_TRIGGER.length).trim();
+                            const aiResponse = await llmModule.processMessage({
+                                ...messageData,
+                                message: aiPrompt
+                            });
+                            console.log("AI response:", aiResponse);
+
+                            // Remove all the text between <think> and </think> tags including the tags themselves
+                            aiResponse.message = aiResponse.message.replace(/<think(?:\s[^>]*)?>[^]*?<\/think>/g, '');
+
+                            // Send AI response back to the sender
+                            socket.emit("chat-bot", {
+                                from: "chat-bot",
+                                to: socket.user.username,
+                                text: aiResponse.message,
+                                timestamp: new Date().toISOString(),
+                            });
+                        
+                            
+                        }
+
+                    
+                } catch (error) {
+                    console.error("Error handling privateMessage event:", error.message);
+                    socket.emit("error", "An error occurred while sending your message.");
+                }
+            });
             // Event: One-to-one message
             socket.on("privateMessage", async ({ recipientId, message }) => {
                 console.log(`Private message from ${socket.user.username} to ${recipientId}: ${message}`);

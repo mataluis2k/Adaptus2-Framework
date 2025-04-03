@@ -1079,6 +1079,10 @@ function registerRoutes(app, apiConfig) {
                     allowRead.forEach((field) => {
                         if(field !== authentication) {
                             tokenPayload[field] = user[field];
+                                if(user['acl']) {
+                                    // convert string acl comma delimited to array
+                                    tokenPayload['acl'] = user['acl'].split(',').map((item) => item.trim());
+                                }                                                        
                         }
                     });
 
@@ -2796,6 +2800,31 @@ registerMiddleware() {
                 consolelog.log('Chat module initialized.');
             } catch (error) {
                 console.error('Failed to initialize Chat Module:', error.message);
+            }
+        }
+
+        if(process.env.ECOMMTRACKER){
+            const EcommerceTracker = require('./modules/EcommTrackerModule');
+            // Initialize the tracker with your global context and DB config
+            const tracker = new EcommerceTracker(globalContext, {
+                dbType: process.env.DEFAULT_DBTYPE,
+                dbConnection: process.env.DEFAULT_DBCONNECTION
+            });
+            tracker.setupRoutes(app);
+        }
+
+        if(process.env.SDUIADMIN){
+            try {
+                const SDUIModule = require('./modules/sduiModule');
+                // Pass database configuration
+                const dbConfig = {
+                    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+                    dbConnection: process.env.DEFAULT_DBCONNECTION || 'local'
+                };
+                const sduiAdmin = new SDUIModule(dbConfig, redisClient, app);
+                console.log('SDUI module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize SDUI Module:', error.message);
             }
         }
 

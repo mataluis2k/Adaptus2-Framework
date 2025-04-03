@@ -12,6 +12,10 @@ async function genToken(user, allowRead,authentication) {
     allowRead.forEach((field) => {
         if(field !== authentication) {
             tokenPayload[field] = user[field];
+            if(user['acl']) {
+                // convert string acl comma delimited to array
+                tokenPayload['acl'] = user['acl'].split(',').map((item) => item.trim());
+            }  
         }
     });
 
