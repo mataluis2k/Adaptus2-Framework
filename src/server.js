@@ -640,7 +640,7 @@ function registerStaticRoute(app, endpoint) {
 
     // Serve static files
     console.log(`Registering static route: ${route} -> ${folderPath}`);
-    app.use(route, cors(corsOptions),cors(corsOptions), aarMiddleware(auth, {acl,unauthorized}, app.locals.ruleEngineMiddleware), express.static(folderPath));
+    app.use(route, cors(corsOptions), aarMiddleware(auth, {acl,unauthorized}, app.locals.ruleEngineMiddleware), express.static(folderPath));
 }
 
 const registerFileUploadEndpoint = (app, config) => {
