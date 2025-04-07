@@ -1220,9 +1220,13 @@ function buildFilterClause(filterObj, dbTable) {
                 delete sanitizedQuery.uuid;
             }
   
-          const queryKeys = endpoint.keys
-            ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined)
-            : Object.keys(sanitizedQuery);
+                    // Exclude parameters used for pagination and meta-controls
+            const paginationParams = ['limit', 'offset', 'include', 'fields', 'filter', 'uuid'];
+
+            const queryKeys = endpoint.keys
+            ? endpoint.keys.filter((key) => sanitizedQuery[key] !== undefined && !paginationParams.includes(key))
+            : Object.keys(sanitizedQuery).filter((key) => !paginationParams.includes(key));
+
           const equalityClause = queryKeys.map((key) => `${dbTable}.${key} = ?`).join(" AND ");
           const equalityValues = [];
           for (const key of queryKeys) {
