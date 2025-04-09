@@ -2,25 +2,26 @@
 
 const net = require("net");
 const readline = require("readline");
+require("dotenv").config();
 
 const parseArgs = () => {
     const args = {};
     const argv = process.argv.slice(2);
-    
+
     for (let i = 0; i < argv.length; i++) {
       const arg = argv[i];
-      
+
       if (arg.startsWith('--')) {
         // Handle --key=value format
         if (arg.includes('=')) {
           const [key, value] = arg.substring(2).split('=');
           args[key] = value;
-        } 
+        }
         // Handle --key value format
         else {
           const key = arg.substring(2);
           const nextArg = argv[i + 1];
-          
+
           // Make sure the next argument exists and is not another flag
           if (nextArg && !nextArg.startsWith('--')) {
             args[key] = nextArg;
@@ -32,19 +33,19 @@ const parseArgs = () => {
         }
       }
     }
-    
+
     return args;
   };
-  
+
   const args = parseArgs();
   console.log('Command line arguments:', args);
-  
+
   // Get port from command line args, environment variable, or default to 3000
-  const port = args.port || process.env.PORT || 5000;
-  
+  const port = args.port || process.env.SOCKET_CLI_PORT || 5000;
+
   // Get host/IP from command line args, environment variable, or default to 0.0.0.0 (all interfaces)
-  const host = args.ip || args.host || process.env.HOST || process.env.IP || 'localhost';
-  
+  const host = args.ip || args.host || process.env.HOST || process.env.IP || '127.0.0.1';
+
 // ANSI color codes for terminal output
 const colors = {
     reset: "\x1b[0m",
@@ -68,17 +69,17 @@ function tryParseJSON(str) {
 function formatValue(value, indent = 0, isArrayItem = false) {
     const spaces = ' '.repeat(indent);
     const itemPrefix = isArrayItem ? '- ' : '';
-    
+
     if (Array.isArray(value)) {
         if (value.length === 0) return '[]';
-        const items = value.map(item => 
+        const items = value.map(item =>
             `${spaces}  ${itemPrefix}${formatValue(item, indent + 2, true)}`
         ).join('\n');
         return value.length === 1 ? items : `\n${items}`;
     }
-    
+
     if (value === null) return colors.dim + 'null' + colors.reset;
-    
+
     if (typeof value === 'object') {
         if (Object.keys(value).length === 0) return '{}';
         const entries = Object.entries(value).map(([key, val]) => {
@@ -89,7 +90,7 @@ function formatValue(value, indent = 0, isArrayItem = false) {
         }).join('\n');
         return isArrayItem ? entries : `\n${entries}`;
     }
-    
+
     if (typeof value === 'string') {
         // Check if it's a date string
         const datePattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/;
@@ -100,14 +101,14 @@ function formatValue(value, indent = 0, isArrayItem = false) {
     }
     if (typeof value === 'number') return colors.yellow + value + colors.reset;
     if (typeof value === 'boolean') return colors.blue + value + colors.reset;
-    
+
     return value;
 }
 
 function beautifyOutput(data) {
     const str = data.toString().trim();
     const json = tryParseJSON(str);
-    
+
     if (json) {
         // If it's JSON, format it nicely
         const formatted = formatValue(json);
@@ -133,7 +134,7 @@ const socket = net.createConnection({ host: host, port: port }, () => {
 });
 
 socket.on("data", (data) => {
-    console.log(beautifyOutput(data));    
+    console.log(beautifyOutput(data));
     if (data.toString() === "shutdown") {
         console.log("Exiting CLI.");
         socket.end();
@@ -162,7 +163,7 @@ function prompt() {
         if (line === "shutdown") {
             exit = true;
         }
-        // Avoid sending empty lines 
+        // Avoid sending empty lines
         if (line.trim() === "") {
             prompt();
             return;
