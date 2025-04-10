@@ -31,8 +31,8 @@ class RuleEngineMiddleware {
             const eventType = req.method.toUpperCase(); // HTTP method: "GET", "POST", etc.
             // Normalize the entity name by removing any numeric IDs or UUIDs
             let pathSegments = req.path.split('/').filter(Boolean);
-            // let entityName = pathSegments.includes('api') ? pathSegments[pathSegments.indexOf('api') + 1] : pathSegments[0]; // Ensure we get the correct entity
-            let entityName = req.path.toLowerCase();
+            let entityName = pathSegments.includes('api') ? pathSegments[pathSegments.indexOf('api') + 1] : pathSegments[0]; // Ensure we get the correct entity
+            //let entityName = req.path.toLowerCase();
 
             
             const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
