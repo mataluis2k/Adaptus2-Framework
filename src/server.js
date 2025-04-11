@@ -2831,6 +2831,20 @@ registerMiddleware() {
                 console.error('Failed to initialize SDUI Module:', error.message);
             }
         }
+        if (process.env.AGENT_WORKFLOW_ENABLED) {
+            try {
+                const AgentWorkflowModule = require('./modules/agentWorkflowModule.js');
+                // Pass database configuration
+                const dbConfig = {
+                    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+                    dbConnection: process.env.DEFAULT_DBCONNECTION || 'local'
+                };
+                const agentWorkflowManager = new AgentWorkflowModule(dbConfig, redisClient, app);
+                console.log('Agent Workflow Builder module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize Agent Workflow Builder Module:', error.message);
+            }
+        }
 
         if (process.env.WS_SIGNALING_PORT) {
             const signalingHttpServer = require('http').createServer();
