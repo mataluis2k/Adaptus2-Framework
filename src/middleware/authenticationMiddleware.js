@@ -56,8 +56,7 @@ const authenticateToken = async (req, res, next) => {
   if (
     process.env.TOKEN_BLACKLIST_ENABLED &&
     process.env.TOKEN_BLACKLIST_ENABLED.toLowerCase() === 'true' &&
-    process.env.REDIS_URL &&
-    process.env.REDIS_PORT
+    process.env.REDIS_URL
   ) {
     try {
       const client = await getRedisClient();
