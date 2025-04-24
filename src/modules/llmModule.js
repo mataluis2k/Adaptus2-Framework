@@ -4,6 +4,166 @@ const ollamaModule = require('./ollamaModule');
 const path = require('path');
 const fs = require('fs');
 
+class QualityControl {
+    constructor(llmInstance) {
+        this.llm = llmInstance;
+        this.maxRetries = process.env.QUALITY_CONTROL_MAX_RETRIES || 2;
+    }
+    
+    async evaluateResponse(userQuery, llmResponse, context = null) {
+        // Prepare evaluation prompt
+        const evaluationPrompt = `
+            You are a Quality Control Agent responsible for ensuring responses meet high standards.
+            
+            USER QUERY: "${userQuery}"
+            
+            CURRENT LLM RESPONSE: "${llmResponse}"
+            
+            ${context ? `RELEVANT CONTEXT: ${context}` : ''}
+            
+            Assess this response based on:
+            1. Relevance: Does it directly address the user's query?
+            2. Accuracy: Is the information correct (based on context if provided)?
+            3. Completeness: Does it fully answer all aspects of the query?
+            4. Clarity: Is the response clear and well-structured?
+            
+            Provide your assessment and specific suggestions for improvement.
+            Format your response as JSON with the following fields:
+            {
+                "qualityScore": [0-10], // Overall quality score
+                "needsRevision": true/false, // Whether response needs revision
+                "issues": ["specific issue 1", "specific issue 2"], // Problems with the response
+                "improvementSuggestions": "Detailed suggestions for improvement",
+                "revisedResponse": "Complete revised response if needed"
+            }
+            
+            If the response is satisfactory (8+ quality score), set needsRevision to false and leave revisedResponse empty.
+        `;
+        
+        // Use simpleLLMCall to avoid potential recursion
+        const messageData = {
+            senderId: 'quality_control_agent',
+            recipientId: 'system',
+            message: evaluationPrompt,
+            timestamp: new Date().toISOString(),
+            status: 'processing'
+        };
+        
+        const evaluationResponse = await this.llm.simpleLLMCall(messageData);
+        
+        try {
+            // Parse the JSON response
+            const jsonStart = evaluationResponse.message.indexOf('{');
+            const jsonEnd = evaluationResponse.message.lastIndexOf('}') + 1;
+            const jsonString = evaluationResponse.message.substring(jsonStart, jsonEnd);
+            return JSON.parse(jsonString);
+        } catch (error) {
+            console.error('Failed to parse quality evaluation response:', error);
+            // Return a default assessment
+            return {
+                qualityScore: 5,
+                needsRevision: false,
+                issues: ['Error in quality control process'],
+                improvementSuggestions: '',
+                revisedResponse: ''
+            };
+        }
+    }
+    
+    async improveResponse(userQuery, response, options = {}) {
+        const {
+            persona = null,
+            context = null,
+            sessionId = 'default'
+        } = options;
+        
+        let currentResponse = response;
+        let attempts = 0;
+        let evaluationResult;
+        let improvementHistory = [];
+        
+        // Try improving the response up to maxRetries times
+        while (attempts < this.maxRetries) {
+            // Evaluate the current response
+            evaluationResult = await this.evaluateResponse(
+                userQuery, 
+                currentResponse, 
+                context
+            );
+            
+            // Record this attempt
+            improvementHistory.push({
+                attempt: attempts + 1,
+                response: currentResponse,
+                evaluation: evaluationResult
+            });
+            
+            // If response doesn't need revision or we've hit max attempts, break
+            if (!evaluationResult.needsRevision) {
+                console.log(`Quality control: Response accepted after ${attempts + 1} attempts`);
+                break;
+            }
+            
+            // Prepare improvement prompt with persona if provided
+            let personaPrompt = "";
+            if (persona) {
+                personaPrompt = this.llm.buildPersonaPrompt(persona);
+            }
+            
+            const improvementPrompt = `
+                ${personaPrompt}
+                
+                You are providing a response to a user query and need to improve your answer.
+                
+                USER QUERY: "${userQuery}"
+                
+                YOUR CURRENT RESPONSE: "${currentResponse}"
+                
+                ${context ? `RELEVANT CONTEXT: ${context}` : ''}
+                
+                QUALITY ASSESSMENT:
+                - Score: ${evaluationResult.qualityScore}/10
+                - Issues identified: ${evaluationResult.issues.join(', ')}
+                - Improvement suggestions: ${evaluationResult.improvementSuggestions}
+                
+                Please provide an improved response that addresses these issues.
+                If the evaluation included a revised response, consider using it as a starting point.
+                Maintain the same persona and tone in your improved response.
+            `;
+            
+            // Call LLM for improved response
+            const messageData = {
+                senderId: sessionId,
+                recipientId: 'AI_Assistant',
+                message: improvementPrompt,
+                timestamp: new Date().toISOString(),
+                status: 'processing'
+            };
+            
+            // Use simpleLLMCall to avoid potential recursion
+            const improvedResponseObj = await this.llm.simpleLLMCall(messageData);
+            
+            if (!improvedResponseObj || !improvedResponseObj.message) {
+                console.error('Failed to get improved response');
+                break;
+            }
+            
+            // Update current response and increment attempt counter
+            currentResponse = improvedResponseObj.message;
+            attempts++;
+            
+            console.log(`Quality control: Completed improvement attempt ${attempts}`);
+        }
+        
+        return {
+            finalResponse: currentResponse,
+            improvementAttempts: attempts,
+            improvementHistory: improvementHistory,
+            finalEvaluation: evaluationResult
+        };
+    }
+}
+
 class LLMModule {
     constructor() {
         // Initialize conversation history storage
@@ -16,6 +176,13 @@ class LLMModule {
         this.openaiModel = process.env.OPENAI_MODEL || 'gpt-4o'; // Default to GPT-4o if not specified
         this.claudeModel = process.env.CLAUDE_MODEL || 'claude-2';
         this.personasConfig = this.loadPersonas();
+        this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
+    }
+
+    // Initialize quality control after the instance is fully constructed
+    initQualityControl() {
+        this.qualityControl = new QualityControl(this);
+        return this.qualityControl;
     }
 
     loadPersonas() {
@@ -277,6 +444,32 @@ removePersonaRequest(message, matchedRequest) {
         return null; // No match found
     }
 
+    async getLLMInstance() {
+        const { ChatOllama } = require('@langchain/ollama');
+        const { ChatOpenAI } = require('@langchain/openai');
+    
+        switch (this.llmType.toLowerCase()) {
+            case 'ollama':
+                return new ChatOllama({
+                    baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                    model: process.env.OLLAMA_INFERENCE || 'llama3',
+                    temperature: 0.3
+                });
+            case 'openai':
+                if (!this.openaiApiKey) {
+                    throw new Error("Missing OpenAI API Key");
+                }
+                return new ChatOpenAI({
+                    modelName: this.openaiModel,
+                    openAIApiKey: this.openaiApiKey,
+                    temperature: 0.3
+                });
+            default:
+                throw new Error(`Unsupported LLM type: ${this.llmType}`);
+        }
+    }
+    
+
     // Simple LLM call for internal use (persona selection) that doesn't affect the main conversation
     async simpleLLMCall(messageData) {
         try {
@@ -377,8 +570,39 @@ removePersonaRequest(message, matchedRequest) {
                 _processedMessage: messageToProcess
             };
             
-            // Step 6: Call the LLM with the enhanced message
-            return await this.callLLM(enhancedMessageData);
+             const initialResponse = await this.callLLM(enhancedMessageData);
+        
+            // New Step 7: Apply quality control
+            if (this.qualityControlEnabled) {
+                console.log('Applying quality control to response');
+                const improvedResponse = await this.qualityControl.improveResponse(
+                    messageToProcess, // Original user query
+                    initialResponse.message, // Initial LLM response
+                    {
+                        persona: personaName, // The persona used
+                        sessionId: messageData.senderId // Session ID for tracking
+                    }
+                );
+                
+                // Replace the response message with the improved version
+                initialResponse.message = improvedResponse.finalResponse;
+                
+                // Add metadata about quality control
+                initialResponse._qualityControlInfo = {
+                    applied: true,
+                    attempts: improvedResponse.improvementAttempts,
+                    finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
+                };
+                
+                console.log(`Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
+            } else {
+                // Add metadata indicating quality control was not applied
+                initialResponse._qualityControlInfo = {
+                    applied: false
+                };
+            }
+            
+            return initialResponse;
             
         } catch (error) {
             logger.error('Error processing message:', error);
@@ -603,6 +827,12 @@ removePersonaRequest(message, matchedRequest) {
             throw error;
         }
     }
+    
 }
 
-module.exports = new LLMModule();
+
+// Create instance and initialize quality control
+const llmModuleInstance = new LLMModule();
+llmModuleInstance.initQualityControl();
+
+module.exports = llmModuleInstance;

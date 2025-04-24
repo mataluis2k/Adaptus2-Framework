@@ -6,10 +6,10 @@ const { Ollama }= require('ollama');
 // Configure Ollama client with base URL
 const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
 const ollamaClient = new Ollama({ host: OLLAMA_HOST });
-
+const ollama_inference = process.env.OLLAMA_INFERENCE || 'llama3';
 class OllamaModule {
     constructor() {
-        this.model = 'deepseek-r1:7b';
+        this.model = ollama_inference;
         this.initialized = true;
         this.ollamaProcess = null;
         this.ollama = ollamaClient;

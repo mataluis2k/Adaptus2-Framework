@@ -126,13 +126,11 @@ class ChatModule {
                         socket.emit("error", "An error occurred while sending your message.");
                     }
                 });
-                socket.on("chat-bot", async ({ recipientId, message }) => {
+                socket.on("chatbot", async ({ recipientId, message }) => {
                     console.log(`Chat-bot message from ${socket.user.username} to ${recipientId}: ${message}`);
                     try {
                         const recipientSocketId = this.connectedUsers.get(recipientId);
-                        const isAiQuery = message.trim().toLowerCase().startsWith(AI_TRIGGER);
-                        const isRagQuery = message.trim().toLowerCase().startsWith(RAG_TRIGGER);
-
+                   
                         // Save message in the database
                         const messageData = {
                             senderId: socket.user.username,
@@ -145,8 +143,6 @@ class ChatModule {
 
                     
 
-                        // Process with Ollama only if AI is triggered
-                        if (isAiQuery) {
                             const aiPrompt = message.slice(AI_TRIGGER.length).trim();
                             const aiResponse = await llmModule.processMessage({
                                 ...messageData,
@@ -158,15 +154,15 @@ class ChatModule {
                             aiResponse.message = aiResponse.message.replace(/<think(?:\s[^>]*)?>[^]*?<\/think>/g, '');
 
                             // Send AI response back to the sender
-                            socket.emit("chat-bot", {
-                                from: "chat-bot",
+                            socket.emit("chatbot", {
+                                from: "chatbot",
                                 to: socket.user.username,
                                 text: aiResponse.message,
                                 timestamp: new Date().toISOString(),
                             });
                         
                             
-                        }
+                   
 
                     
                 } catch (error) {

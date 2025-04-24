@@ -2742,6 +2742,7 @@ registerMiddleware() {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        app.use(cors(corsOptions));
         const httpServer = require('http').createServer(app); // Reuse server
         const { redisClient } = require('./modules/redisClient');
         // Initialize CMS if enabled
@@ -2789,6 +2790,31 @@ registerMiddleware() {
             console.log('Reporting module initialized successfully');
         } catch(error) {
             console.error('Failed to initialize Reporting module:', error.message);
+        }
+        try {
+            const ReportBuilderModule = require('./modules/reportBuilderModule');           
+            // You must have `ruleEngineInstance` and `app` already available
+            this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            
+            console.log('ReportBuilder module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize ReportBuilder module:', error.message);
+        }
+
+        try {                      
+            const RenderPageModule = require('./modules/RenderPageModule');
+            const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            console.log('RenderPageModule module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize RenderPageModule module:', error.message);
+        }
+
+        try {                      
+            const PageCloneModule = require('./modules/pageCloneModule');
+            const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            console.log('PageClone module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize PageClone module:', error.message);
         }
         // Initialize Chat Module
         if(process.env.CHAT_SERVER_PORT){
@@ -2874,8 +2900,6 @@ registerMiddleware() {
         }
 
       
-
-        app.use(cors(corsOptions));
         mlAnalytics.loadConfig();
         mlAnalytics.trainModels(app);
         mlAnalytics.scheduleTraining();
