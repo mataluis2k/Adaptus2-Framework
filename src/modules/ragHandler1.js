@@ -14,6 +14,19 @@ const { createStuffDocumentsChain } = require('langchain/chains/combine_document
 const { ChatPromptTemplate } = require('@langchain/core/prompts');
 
 
+const MODEL_TOKEN_LIMITS = {
+  'gpt-3.5-turbo': 4096,
+  'gpt-4': 8192,
+  'gpt-4-32k': 32768,
+  'gpt-4o': 128000,
+  'llama3': 8192,
+  'llama3.3': 32768,
+  'mxbai-embed-large': 2048,
+  'maryasov/qwen2.5-coder-cline': 8192,
+  'llava': 4096,
+  'deepseek-r1:70b': 32768,
+  'qwen2.5-coder:32b': 32768
+};
 
 // Global variables to store the vector store and conversation history
 let vectorStore;
@@ -22,7 +35,11 @@ const ragConversationHistories = new Map();
 // Maximum number of exchanges to store per user
 const MAX_HISTORY_LENGTH = 100;
 // Collection name for ChromaDB
-const COLLECTION_NAME = process.env.CHROMA_COLLECTION_NAME || 'meal_plans';
+const COLLECTION_NAME = process.env.CHROMA_COLLECTION_NAME || 'meal_plans_1';
+
+function setVectorStore(store) {
+  vectorStore = store;
+}
 
 /**
  * Utility to load the initial configuration and prepare documents.
@@ -443,6 +460,12 @@ async function handleRAG2(query, userId = 'default') {
   }
 }
 
+function estimateTokenLength(text = '') {
+  if (!text) return 0;
+
+  const wordCount = text.trim().split(/\s+/).length;
+  return Math.ceil(wordCount * 1.33); // Conservative estimate
+}
 async function searchAcrossCollections(query, collectionNames, topK = 5) {
   const results = [];
   for (const name of collectionNames) {
@@ -458,77 +481,75 @@ async function searchAcrossCollections(query, collectionNames, topK = 5) {
   }
   return results.sort((a, b) => b.score - a.score).slice(0, topK);
 }
-
 async function handleRAG(query, userId = 'default', personaName = null) {
-  if (!vectorStore) {
-    return handleNoVectorStoreQuery(query, userId, personaName);
-  }
+  if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
 
   try {
-    // Step 1: Check if a persona was explicitly provided, otherwise detect it
     let enhancedPersona = personaName;
     if (!enhancedPersona) {
       const { requestedPersona, cleanedMessage } = llmModule.detectRequestedPersona(query);
-      enhancedPersona = requestedPersona;
-      
-      // If no explicit persona was detected, select one automatically
-      if (!enhancedPersona) {
-        const personaList = llmModule.getPersonasWithDescriptions();
-        enhancedPersona = await llmModule.selectPersona(query, personaList);
-      }
+      query = cleanedMessage || query;
+      enhancedPersona = requestedPersona || await llmModule.selectPersona(query, llmModule.getPersonasWithDescriptions());
     }
-    
-    // Step 2: Get relevant documents from vector store
-    const retriever = vectorStore.asRetriever({ searchKwargs: { k: 3 } });
+
     const llm = await llmModule.getLLMInstance();
+    const modelName = process.env.OLLAMA_INFERENCE || 'llama3.3';
+    const contextLimit = MODEL_TOKEN_LIMITS[modelName] || 8192;
+    const personaPrompt = enhancedPersona ? llmModule.buildPersonaPrompt(enhancedPersona) : '';
+
+    // Use a simpler approach to retrieve and format documents
+    const relevantDocs = await vectorStore.similaritySearch(query, 5);
     
-    // Step 3: Build persona prompt if a persona was selected
-    let personaPrompt = "";
-    if (enhancedPersona) {
-      personaPrompt = llmModule.buildPersonaPrompt(enhancedPersona);
+    if (!Array.isArray(relevantDocs)) {
+      console.error("Retrieved documents not in array format:", typeof relevantDocs);
+      // Fallback to non-RAG handling if document retrieval fails
+      return handleNoVectorStoreQuery(query, userId, personaName);
     }
+
+    // Format the retrieved documents into text
+    const docText = relevantDocs.map(doc => doc.pageContent || '').join('\n\n');
     
-    // Step 4: Create a prompt template with the persona instructions
-    const combineDocsChain = await createStuffDocumentsChain({
-      llm,
-      prompt: ChatPromptTemplate.fromMessages([
-        ["system", `${personaPrompt}\nUse the following information to answer the user's question.`],
-        ["user", "Answer this question using the provided context: {input}\n\nContext: {context}"]
-      ])
-    });
+    // Create a simple prompt template
+    const promptTemplate = ChatPromptTemplate.fromMessages([
+      ["system", `${personaPrompt}\nUse the following information to answer the user's question.`],
+      ["user", "Answer this question using the provided context: {input}\n\nContext: {context}"]
+    ]);
 
-    const chain = await createRetrievalChain({
-      retriever,
-      combineDocsChain
-    });
-
+    // Get user's conversation history
     const history = getUserHistory(userId);
-    const formattedHistory = history.map(h => [h.query, h.response]);
-
-    const result = await chain.invoke({
-      input: query,
-      chat_history: formattedHistory
-    });
-
-    // Store the persona used with this response
-    history.push({ 
-      query, 
-      response: result.answer,
-      personaUsed: enhancedPersona || 'default'
-    });
     
+    // Format the conversation history if needed
+    const formattedHistory = history.map(h => [h.query, h.response]);
+    
+    // Call the LLM directly with the constructed prompt
+    const result = await llm.call([
+      { role: "system", content: `${personaPrompt}\nUse the following information to answer the user's question.` },
+      { role: "user", content: `Answer this question using the provided context: ${query}\n\nContext: ${docText}` }
+    ]);
+    
+    // Extract the answer from result
+    const answer = typeof result === 'string' ? result : result.content || '';
+    
+    // Add to history
+    history.push({ query, response: answer, personaUsed: enhancedPersona || 'default' });
     if (history.length > MAX_HISTORY_LENGTH) {
       ragConversationHistories.set(userId, history.slice(-MAX_HISTORY_LENGTH));
     }
 
+    // Log success
+    console.log(`RAG response generated successfully for user ${userId} using persona ${enhancedPersona || 'default'}`);
+
     return {
-      text: result.answer,
-      source_documents: result.context || [],
+      text: answer,
+      source_documents: relevantDocs,
       personaUsed: enhancedPersona || 'default'
     };
+
   } catch (err) {
-    console.error("RAG execution error:", err.message);
-    throw err;
+    console.error("RAG execution error:", err);
+    console.error(err.stack);
+    // Fall back to non-RAG handling in case of errors
+    return handleNoVectorStoreQuery(query, userId, personaName);
   }
 }
 /**

@@ -296,8 +296,11 @@ detectRequestedPersona(message) {
             }
         }
     }
-    
-    return { requestedPersona: null, cleanedMessage: message };
+    // if requestedPersona is not found, call selectPersona 
+    // to select the best one based on the message
+    const requestedPersona = this.selectPersona(message, this.getPersonasWithDescriptions());
+
+    return { requestedPersona: requestedPersona, cleanedMessage: message };
 }
 
 // Calculate how well two strings match (simple score)
@@ -450,20 +453,50 @@ removePersonaRequest(message, matchedRequest) {
     
         switch (this.llmType.toLowerCase()) {
             case 'ollama':
-                return new ChatOllama({
-                    baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-                    model: process.env.OLLAMA_INFERENCE || 'llama3',
-                    temperature: 0.3
-                });
+                try {
+                    return new ChatOllama({
+                        baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                        model: process.env.OLLAMA_INFERENCE || 'llama3',
+                        temperature: 0.3
+                    });
+                } catch (error) {
+                    console.error('Error creating ChatOllama instance:', error);
+                    // Fallback to a more basic implementation if needed
+                    return {
+                        call: async (messages) => {
+                            // Direct call to ollamaModule
+                            const messageData = {
+                                senderId: 'rag_system',
+                                recipientId: 'AI_Assistant',
+                                message: messages[messages.length - 1].content,
+                                timestamp: new Date().toISOString(),
+                                status: 'processing'
+                            };
+                            const response = await ollamaModule.processMessage(messageData, []);
+                            return response.message || '';
+                        }
+                    };
+                }
             case 'openai':
                 if (!this.openaiApiKey) {
                     throw new Error("Missing OpenAI API Key");
                 }
-                return new ChatOpenAI({
-                    modelName: this.openaiModel,
-                    openAIApiKey: this.openaiApiKey,
-                    temperature: 0.3
-                });
+                try {
+                    return new ChatOpenAI({
+                        modelName: this.openaiModel,
+                        openAIApiKey: this.openaiApiKey,
+                        temperature: 0.3
+                    });
+                } catch (error) {
+                    console.error('Error creating ChatOpenAI instance:', error);
+                    // Fallback implementation
+                    return {
+                        call: async (messages) => {
+                            const response = await this.callOpenAI(messages);
+                            return response.message || '';
+                        }
+                    };
+                }
             default:
                 throw new Error(`Unsupported LLM type: ${this.llmType}`);
         }

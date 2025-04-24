@@ -42,7 +42,7 @@ class RuleEngineMiddleware {
             } else {
                 const globalContext = this.dependencyManager.context; // Access globalContext from DependencyManager
 
-                if (['POST', 'PUT', 'PATCH'].includes(eventType) && req.body) {
+                if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(eventType) && req.body) {
                     console.log(`Processing inbound ${eventType} on ${entityName} with data:`, req.body);
 
                     try {
@@ -233,9 +233,6 @@ class RuleEngineMiddleware {
                     if (inboundProcessed) {
                         return next();
                     }
-                } else if (eventType === 'DELETE') {
-                    // Handle DELETE requests (unchanged from original)
-                    // ...
                 } else {
                     console.log(`No rule processing required for ${eventType} on ${entityName}`);
                 }
