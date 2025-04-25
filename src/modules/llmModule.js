@@ -237,103 +237,104 @@ class LLMModule {
     }
       
     // Function to detect if user is explicitly requesting a specific persona
-detectRequestedPersona(message) {
-    if (!message) return { requestedPersona: null, cleanedMessage: message };
-    
-    // Get all persona names to check against user message
-    const personaNames = Object.keys(this.personasConfig);
-    if (personaNames.length === 0) {
-        return { requestedPersona: null, cleanedMessage: message };
-    }
-    
-    // Common request patterns
-    const requestPatterns = [
-        // Direct requests
-        /I\s+need\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-        /I\s+want\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-        /(?:get|give)\s+me\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-        /can\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+help/i,
-        /let\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:handle|answer)/i,
+    async detectRequestedPersona(message) {
+        if (!message) return { requestedPersona: null, cleanedMessage: message };
         
-        // Persona-first patterns
-        /^([a-zA-Z\s]+)\s*[:,.]\s*(.*)/i,
-        /^(?:as|like)\s+(?:a|an|the)\s+([a-zA-Z\s]+)[,.:]\s*(.*)/i
-    ];
-    
-    // Check each pattern
-    for (const pattern of requestPatterns) {
-        const match = message.match(pattern);
-        if (match && match[1]) {
-            const potentialPersona = match[1].trim().toLowerCase();
+        // Get all persona names to check against user message
+        const personaNames = Object.keys(this.personasConfig);
+        if (personaNames.length === 0) {
+            return { requestedPersona: null, cleanedMessage: message };
+        }
+        
+        // Common request patterns
+        const requestPatterns = [
+            // Direct requests
+            /I\s+need\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+            /I\s+want\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+            /(?:get|give)\s+me\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+            /can\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+help/i,
+            /let\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:handle|answer)/i,
             
-            // Find best matching persona
-            let bestMatch = null;
-            let bestMatchScore = 0;
-            
-            for (const personaName of personaNames) {
-                // Check for exact match or contained match
-                if (personaName.toLowerCase() === potentialPersona) {
-                    // Return immediately for exact match
-                    const cleanedMessage = this.removePersonaRequest(message, match[0]);
-                    return { requestedPersona: personaName, cleanedMessage };
-                }
+            // Persona-first patterns
+            /^([a-zA-Z\s]+)\s*[:,.]\s*(.*)/i,
+            /^(?:as|like)\s+(?:a|an|the)\s+([a-zA-Z\s]+)[,.:]\s*(.*)/i
+        ];
+        
+        // Check each pattern
+        for (const pattern of requestPatterns) {
+            const match = message.match(pattern);
+            if (match && match[1]) {
+                const potentialPersona = match[1].trim().toLowerCase();
                 
-                // Check for partial matches
-                if (personaName.toLowerCase().includes(potentialPersona) ||
-                    potentialPersona.includes(personaName.toLowerCase())) {
-                    const score = this.calculateMatchScore(personaName.toLowerCase(), potentialPersona);
-                    if (score > bestMatchScore) {
-                        bestMatchScore = score;
-                        bestMatch = personaName;
+                // Find best matching persona
+                let bestMatch = null;
+                let bestMatchScore = 0;
+                
+                for (const personaName of personaNames) {
+                    // Check for exact match or contained match
+                    if (personaName.toLowerCase() === potentialPersona) {
+                        // Return immediately for exact match
+                        const cleanedMessage = this.removePersonaRequest(message, match[0]);
+                        return { requestedPersona: personaName, cleanedMessage };
+                    }
+                    
+                    // Check for partial matches
+                    if (personaName.toLowerCase().includes(potentialPersona) ||
+                        potentialPersona.includes(personaName.toLowerCase())) {
+                        const score = this.calculateMatchScore(personaName.toLowerCase(), potentialPersona);
+                        if (score > bestMatchScore) {
+                            bestMatchScore = score;
+                            bestMatch = personaName;
+                        }
                     }
                 }
-            }
-            
-            // If we found a good match, return it
-            if (bestMatch && bestMatchScore > 0.5) {
-                const cleanedMessage = this.removePersonaRequest(message, match[0]);
-                return { requestedPersona: bestMatch, cleanedMessage };
+                
+                // If we found a good match, return it
+                if (bestMatch && bestMatchScore > 0.5) {
+                    const cleanedMessage = this.removePersonaRequest(message, match[0]);
+                    return { requestedPersona: bestMatch, cleanedMessage };
+                }
             }
         }
-    }
-    // if requestedPersona is not found, call selectPersona 
-    // to select the best one based on the message
-    const requestedPersona = this.selectPersona(message, this.getPersonasWithDescriptions());
+        // if requestedPersona is not found, call selectPersona 
+        // to select the best one based on the message
+        const requestedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
 
-    return { requestedPersona: requestedPersona, cleanedMessage: message };
-}
-
-// Calculate how well two strings match (simple score)
-calculateMatchScore(str1, str2) {
-    const longer = str1.length > str2.length ? str1 : str2;
-    const shorter = str1.length > str2.length ? str2 : str1;
-    
-    if (longer.includes(shorter)) {
-        return shorter.length / longer.length;
+        return { requestedPersona: requestedPersona, cleanedMessage: message };
     }
-    
-    // Count matching characters
-    let matchCount = 0;
-    for (let i = 0; i < shorter.length; i++) {
-        if (longer.includes(shorter[i])) {
-            matchCount++;
+
+    // Calculate how well two strings match (simple score)
+    calculateMatchScore(str1, str2) {
+        const longer = str1.length > str2.length ? str1 : str2;
+        const shorter = str1.length > str2.length ? str2 : str1;
+        
+        if (longer.includes(shorter)) {
+            return shorter.length / longer.length;
         }
+        
+        // Count matching characters
+        let matchCount = 0;
+        for (let i = 0; i < shorter.length; i++) {
+            if (longer.includes(shorter[i])) {
+                matchCount++;
+            }
+        }
+        
+        return matchCount / longer.length;
     }
-    
-    return matchCount / longer.length;
-}
 
-// Remove the persona request from the message
-removePersonaRequest(message, matchedRequest) {
-    if (!matchedRequest) return message;
-    
-    // Replace the matched request with empty string
-    const cleanedMessage = message.replace(matchedRequest, '').trim();
-    
-    // If there's content remaining, return it, otherwise return original
-    // (this avoids completely emptying the message)
-    return cleanedMessage.length > 0 ? cleanedMessage : message;
-}
+    // Remove the persona request from the message
+    removePersonaRequest(message, matchedRequest) {
+        if (!matchedRequest) return message;
+        
+        // Replace the matched request with empty string
+        const cleanedMessage = message.replace(matchedRequest, '').trim();
+        
+        // If there's content remaining, return it, otherwise return original
+        // (this avoids completely emptying the message)
+        return cleanedMessage.length > 0 ? cleanedMessage : message;
+    }
+
     async selectPersona(message, personaList) {
         if (!personaList || personaList.length === 0) {
             logger.warn('No personas available for selection');

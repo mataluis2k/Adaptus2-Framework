@@ -371,94 +371,6 @@ function getUserHistory(userId) {
   return ragConversationHistories.get(userId);
 }
 
-/**
- * Handles RAG queries with conversation memory
- * @param {string} query - The user's query
- * @param {string} userId - The user's ID for maintaining conversation state
- * @returns {Object} - The response from the LLM
- */
-async function handleRAG2(query, userId = 'default') {
-  if (!vectorStore) {
-    console.warn("RAG is not initialized. Falling back to non-RAG query handling.");
-    return handleNoVectorStoreQuery(query, userId);
-  }
-  
-  try {
-    // Retrieve relevant documents based on the query from ChromaDB
-    const relevantDocs = await vectorStore.similaritySearch(query, 5);
-
-    console.log(JSON.stringify(relevantDocs, null, 2));
-    
-    // Format the retrieved documents into text
-    const docText = relevantDocs.map(doc => doc.pageContent).join('\n\n');
-    
-    // Get user's conversation history
-    const userHistory = getUserHistory(userId);
-    
-    // Format the conversation history
-    const formattedHistory = userHistory.map(exchange => 
-      `Human: ${exchange.query}\nAI: ${exchange.response}`
-    ).join('\n');
-    
-    console.log(`Using conversation history with ${userHistory.length} previous exchanges for user ${userId}`);
-    
-    // Create the enhanced prompt with context and history
-    const enhancedPrompt = `
-    You are an AI assistant with access to a database. Use the following information to answer the user's question.
-    
-    CONTEXT INFORMATION:
-    ${docText}
-    
-    CONVERSATION HISTORY:
-    ${formattedHistory}
-    
-    USER QUERY: ${query}
-    
-    Provide a helpful, concise response based on the information provided. If the information doesn't contain an answer to the user's question, say so clearly.
-    `;
-    
-    // Prepare message data for llmModule
-    const messageData = {
-      senderId: userId,
-      recipientId: 'AI_Assistant',
-      message: enhancedPrompt,
-      groupName: null,
-      timestamp: new Date().toISOString(),
-      status: 'processing'
-    };
-    
-    // Call the LLM with the enhanced prompt using llmModule
-    const response = await llmModule.simpleLLMCall(messageData);
-    
-    if (!response || !response.message) {
-      throw new Error('No response received from LLM');
-    }
-    
-    // Extract the model's response
-    const llmResponse = response.message;
-    
-    // Add the current exchange to the history
-    userHistory.push({
-      query: query,
-      response: llmResponse
-    });
-    
-    // Limit history to the last MAX_HISTORY_LENGTH exchanges
-    if (userHistory.length > MAX_HISTORY_LENGTH) {
-      ragConversationHistories.set(userId, userHistory.slice(-MAX_HISTORY_LENGTH));
-    }
-    
-    console.log(`Conversation history for user ${userId} now has ${getUserHistory(userId).length} exchanges`);
-    
-    return {
-      text: llmResponse,
-      source_documents: relevantDocs
-    };
-  } catch (error) {
-    console.error("RAG Module Error:", error.message);
-    throw error;
-  }
-}
 
 function estimateTokenLength(text = '') {
   if (!text) return 0;
@@ -485,71 +397,130 @@ async function handleRAG(query, userId = 'default', personaName = null) {
   if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
 
   try {
+    // Initialize persona handling
     let enhancedPersona = personaName;
+    
     if (!enhancedPersona) {
-      const { requestedPersona, cleanedMessage } = llmModule.detectRequestedPersona(query);
-      query = cleanedMessage || query;
-      enhancedPersona = requestedPersona || await llmModule.selectPersona(query, llmModule.getPersonasWithDescriptions());
+      try {
+       
+          const personaList = await llmModule.getPersonasWithDescriptions();
+          // Ensure we await the persona selection
+          enhancedPersona = await llmModule.selectPersona(query, personaList);        
+        
+        // Add a check to ensure we have a valid persona string
+        if (enhancedPersona && typeof enhancedPersona === 'object' && enhancedPersona.then) {
+          enhancedPersona = await enhancedPersona; // Resolve if it's still a promise
+        }
+        
+        console.log(`Selected persona: ${enhancedPersona}`);
+      } catch (personaError) {
+        console.error('Error selecting persona:', personaError);
+        enhancedPersona = 'default'; // Fallback to default persona
+      }
     }
 
     const llm = await llmModule.getLLMInstance();
-    const modelName = process.env.OLLAMA_INFERENCE || 'llama3.3';
-    const contextLimit = MODEL_TOKEN_LIMITS[modelName] || 8192;
-    const personaPrompt = enhancedPersona ? llmModule.buildPersonaPrompt(enhancedPersona) : '';
+    const fallbackModel = 'llama3.3';
+    const rawModelName = process.env.OLLAMA_INFERENCE || fallbackModel;
+    const modelName = MODEL_TOKEN_LIMITS[rawModelName] ? rawModelName : fallbackModel;
+    const contextLimit = MODEL_TOKEN_LIMITS[modelName];
 
-    // Use a simpler approach to retrieve and format documents
-    const relevantDocs = await vectorStore.similaritySearch(query, 5);
-    
-    if (!Array.isArray(relevantDocs)) {
-      console.error("Retrieved documents not in array format:", typeof relevantDocs);
-      // Fallback to non-RAG handling if document retrieval fails
-      return handleNoVectorStoreQuery(query, userId, personaName);
+    // Ensure persona prompt is created with resolved persona value
+    const personaPrompt = enhancedPersona ? await llmModule.buildPersonaPrompt(enhancedPersona) : '';
+
+    const retriever = vectorStore.asRetriever({ searchKwargs: { k: 30 } });
+    const topChunks = await retriever.getRelevantDocuments(query);
+
+    if (!Array.isArray(topChunks)) {
+      throw new Error("Expected topChunks to be an array, but got: " + typeof topChunks);
     }
 
-    // Format the retrieved documents into text
-    const docText = relevantDocs.map(doc => doc.pageContent || '').join('\n\n');
-    
-    // Create a simple prompt template
-    const promptTemplate = ChatPromptTemplate.fromMessages([
-      ["system", `${personaPrompt}\nUse the following information to answer the user's question.`],
-      ["user", "Answer this question using the provided context: {input}\n\nContext: {context}"]
-    ]);
+    // Modified grouping logic to use source instead of document_id
+    const grouped = topChunks.reduce((acc, chunk) => {
+      // Use source from metadata, fallback to chunk source if available, otherwise unknown
+      const sourceId = chunk.metadata?.source || chunk.source || 'unknown';
+      if (!acc[sourceId]) {
+        acc[sourceId] = {
+          content: [],
+          metadata: chunk.metadata || {}
+        };
+      }
+      acc[sourceId].content.push(chunk.pageContent);
+      return acc;
+    }, {});
 
-    // Get user's conversation history
+    // Convert grouped data to array format
+    const topDocuments = Object.entries(grouped)
+      .slice(0, 5)
+      .map(([sourceId, data]) => ({
+        id: sourceId,
+        content: data.content.join('\n'),
+        metadata: data.metadata
+      }));
+
+    let fullContext = topDocuments
+      .map(doc => `Source: ${doc.id}\n${doc.content}`)
+      .join('\n\n');
+
+    const summarizeEnabled = process.env.USE_CONTEXT_SUMMARIZATION === 'true';
+
+    if (summarizeEnabled || estimateTokenLength(fullContext) > contextLimit * 0.8) {
+      console.log(`[RAG] Summarizing documents...`);
+      const summaries = await Promise.all(
+        topDocuments.map(async doc => {
+          const res = await llm.call({
+            messages: [
+              { role: "system", content: "Summarize the document below in a paragraph:" },
+              { role: "user", content: doc.content }
+            ]
+          });
+          return typeof res === 'string' ? res : res.message || '';
+        })
+      );
+      fullContext = summaries.join('\n\n');
+    }
+
+    const combineDocsChain = await createStuffDocumentsChain({
+      llm,
+      prompt: ChatPromptTemplate.fromMessages([
+        ["system", `${personaPrompt}\nUse the following information to answer the user's question.`],
+        ["user", "Answer this question using the provided context: {input}\n\nContext: {context}"]
+      ])
+    });
+
+    console.log(`Full context: ${fullContext}`);
+    
+    // Get user history before using it
     const history = getUserHistory(userId);
     
-    // Format the conversation history if needed
-    const formattedHistory = history.map(h => [h.query, h.response]);
+    // Create a Document object with the full context
+    const documents = [new Document({ pageContent: fullContext })];
     
-    // Call the LLM directly with the constructed prompt
-    const result = await llm.call([
-      { role: "system", content: `${personaPrompt}\nUse the following information to answer the user's question.` },
-      { role: "user", content: `Answer this question using the provided context: ${query}\n\nContext: ${docText}` }
-    ]);
-    
-    // Extract the answer from result
-    const answer = typeof result === 'string' ? result : result.content || '';
-    
-    // Add to history
-    history.push({ query, response: answer, personaUsed: enhancedPersona || 'default' });
+    // Invoke with proper Document objects
+    const result = await combineDocsChain.invoke({
+      input: query,
+      documents: documents, // Pass array of Document objects instead of raw context
+      chat_history: history.map(h => [h.query, h.response])
+    });
+
+    history.push({ query, response: result.answer, personaUsed: enhancedPersona || 'default' });
     if (history.length > MAX_HISTORY_LENGTH) {
       ragConversationHistories.set(userId, history.slice(-MAX_HISTORY_LENGTH));
     }
 
-    // Log success
-    console.log(`RAG response generated successfully for user ${userId} using persona ${enhancedPersona || 'default'}`);
-
+    console.log(JSON.stringify(result, null, 2));
     return {
-      text: answer,
-      source_documents: relevantDocs,
+      text: result,
+      source_documents: topDocuments.map(doc => ({
+        id: doc.id,
+        metadata: doc.metadata
+      })),
       personaUsed: enhancedPersona || 'default'
     };
 
   } catch (err) {
     console.error("RAG execution error:", err);
-    console.error(err.stack);
-    // Fall back to non-RAG handling in case of errors
-    return handleNoVectorStoreQuery(query, userId, personaName);
+    throw err;
   }
 }
 /**
