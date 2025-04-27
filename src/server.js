@@ -84,8 +84,7 @@ const MLAnalytics = require('./core/ml_analytics2');
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
-const ChatModule = require('./modules/chatModule'); // Chat Module
-
+const IntelligentChatModule = require('./modules/IntelligentChatModule'); // New Chat Module
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
 const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
@@ -2822,7 +2821,8 @@ registerMiddleware() {
             try {
                 const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
                 
-                this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
                 this.chatModule.start();
                 httpServer.listen(chat_port, () => {
                     console.log('Chat running on:' + chat_port);

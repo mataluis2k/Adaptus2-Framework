@@ -3,13 +3,207 @@ const logger = require('./logger');
 const ollamaModule = require('./ollamaModule');
 const path = require('path');
 const fs = require('fs');
+const buildPersonaPrompt = require('./buildPersonaPrompt');
+global.llmModule = null; // Initialize global reference to prevent circular dependency issues
+
+/**
+ * Extracts relevant keywords from a persona configuration
+ * Uses both rule-based approach and LLM assistance for comprehensive coverage
+ * @param {string} personaName - The name of the persona
+ * @param {Object} personaConfig - The configuration for this persona
+ * @returns {Promise<string[]>} - Array of extracted keywords
+ */
+async function extractKeywordsFromPersona(personaName, personaConfig) {
+    // Rule-based keyword extraction first
+    const keywordSet = new Set();
+    
+    // Helper function to add keywords from text
+    const addKeywordsFromText = (text) => {
+        if (!text) return;
+        
+        // Convert to lowercase for consistency
+        const lowerText = text.toLowerCase();
+        
+        // Extract significant terms using regex patterns
+        // 1. Extract noun phrases (typically 1-3 words)
+        const nounPhrases = lowerText.match(/\b[a-z]{3,}(?:\s+[a-z]{3,}){0,2}\b/g) || [];
+        
+        // 2. Filter to keep only domain-specific and significant terms
+        const significantTerms = nounPhrases.filter(phrase => {
+            // Skip common words and very short phrases
+            if (phrase.length < 5) return false;
+            
+            const commonWords = ['the', 'and', 'for', 'with', 'that', 'this', 'you', 'your', 
+                               'are', 'from', 'have', 'has', 'will', 'not', 'but', 'they', 
+                               'what', 'when', 'where', 'which', 'who', 'how', 'all', 'been',
+                               'can', 'use', 'using', 'used', 'more', 'most', 'some', 'such'];
+            
+            // Skip phrases that are just common words
+            if (commonWords.includes(phrase)) return false;
+            
+            // Keep phrases that seem domain-specific
+            return true;
+        });
+        
+        // Add filtered terms to our keyword set
+        for (const term of significantTerms) {
+            keywordSet.add(term);
+        }
+    };
+    
+    // Process various fields from persona config
+    if (personaConfig.description) {
+        addKeywordsFromText(personaConfig.description);
+    }
+    
+    if (personaConfig.behaviorInstructions) {
+        addKeywordsFromText(personaConfig.behaviorInstructions);
+    }
+    
+    if (personaConfig.functionalDirectives) {
+        addKeywordsFromText(personaConfig.functionalDirectives);
+    }
+    
+    // Process the persona name itself - often contains domain hints
+    const nameParts = personaName
+        .replace(/[_]/g, ' ')  // Replace underscores with spaces
+        .replace(/([a-z])([A-Z])/g, '$1 $2')  // Split camelCase
+        .toLowerCase()
+        .split(' ');
+    
+    // Add name parts that are substantive
+    for (const part of nameParts) {
+        if (part.length > 3 && !['the', 'and', 'for'].includes(part)) {
+            keywordSet.add(part);
+        }
+    }
+    
+    // If available, use LLM to enhance keyword extraction
+    try {
+        const llmKeywords = await extractKeywordsWithLLM(personaName, personaConfig);
+        
+        // Add LLM-generated keywords to our set
+        for (const keyword of llmKeywords) {
+            keywordSet.add(keyword.toLowerCase());
+        }
+    } catch (error) {
+        console.warn(`LLM keyword extraction failed for ${personaName}, continuing with rule-based extraction:`, error.message);
+        // Continue with rule-based extraction only
+    }
+    
+    return [...keywordSet];
+}
+
+/**
+ * Uses the LLM to extract relevant keywords from a persona
+ * @param {string} personaName - The name of the persona
+ * @param {Object} personaConfig - The configuration for this persona
+ * @returns {Promise<string[]>} - Array of extracted keywords
+ */
+async function extractKeywordsWithLLM(personaName, personaConfig) {
+    // Skip LLM processing if no LLM is available
+    if (!global.llmModule || !global.llmModule.simpleLLMCall) {
+        return [];
+    }
+    
+    // Format persona config for LLM
+    const configText = `
+Persona Name: ${personaName}
+Description: ${personaConfig.description || 'N/A'}
+Behavior Instructions: ${personaConfig.behaviorInstructions || 'N/A'}
+Functional Directives: ${personaConfig.functionalDirectives || 'N/A'}
+Knowledge Constraints: ${personaConfig.knowledgeConstraints || 'N/A'}
+Ethical Guidelines: ${personaConfig.ethicalGuidelines || 'N/A'}
+Tools: ${personaConfig.tools ? personaConfig.tools.join(', ') : 'N/A'}
+Collections: ${personaConfig.collection ? personaConfig.collection.join(', ') : 'N/A'}
+`;
+
+    // Create prompt for keyword extraction
+    const prompt = `
+You are assisting in extracting keywords from a persona configuration that will be used for message routing.
+Analyze the following persona configuration and extract 10-20 relevant keywords or short phrases that users might use when they want to interact with this persona.
+Focus on domain-specific terminology and common user requests related to this persona's expertise.
+
+${configText}
+
+Provide your answer as a JSON array of strings, like this:
+["keyword1", "keyword2", "keyword phrase", ...]
+
+Only include the JSON array in your response, no other text.
+`;
+
+    try {
+        // Call LLM with the prompt
+        const messageData = {
+            senderId: 'keyword_extractor',
+            recipientId: 'system',
+            message: prompt,
+            timestamp: new Date().toISOString(),
+            status: 'processing'
+        };
+        
+        const response = await global.llmModule.simpleLLMCall(messageData);
+        
+        if (!response || !response.message) {
+            return [];
+        }
+        
+        // Extract JSON array from response
+        const responseText = response.message.trim();
+        const jsonMatch = responseText.match(/\[[\s\S]*\]/);
+        
+        if (!jsonMatch) {
+            return [];
+        }
+        
+        // Parse the JSON array
+        const keywordsArray = JSON.parse(jsonMatch[0]);
+        
+        // Validate and return
+        if (Array.isArray(keywordsArray)) {
+            return keywordsArray;
+        }
+        
+        return [];
+    } catch (error) {
+        console.error('Error in LLM keyword extraction:', error);
+        return [];
+    }
+}
 
 class QualityControl {
     constructor(llmInstance) {
         this.llm = llmInstance;
         this.maxRetries = process.env.QUALITY_CONTROL_MAX_RETRIES || 2;
+      
     }
     
+    
+    /**
+     * Loads personas from configuration and initializes keyword mapping
+     * @returns {Object} - The loaded personas configuration
+     */
+    loadPersonas() {
+        try {
+            const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
+            const data = fs.readFileSync(personaFile, 'utf-8');
+            const personasConfig = JSON.parse(data);
+            
+            // Initialize keyword mapping after loading personas
+            // Using setTimeout to avoid blocking and make this asynchronous
+            setTimeout(() => {
+                this.initializeKeywordMap().catch(error => {
+                    console.error('Async keyword map initialization failed:', error);
+                });
+            }, 0);
+            
+            return personasConfig;
+        } catch (error) {
+            logger.error('Failed to load personas.json:', error);
+            return {};
+        }
+    }
+
     async evaluateResponse(userQuery, llmResponse, context = null) {
         // Prepare evaluation prompt
         const evaluationPrompt = `
@@ -107,7 +301,7 @@ class QualityControl {
             // Prepare improvement prompt with persona if provided
             let personaPrompt = "";
             if (persona) {
-                personaPrompt = this.llm.buildPersonaPrompt(persona);
+                personaPrompt = buildPersonaPrompt(this.personasConfig[persona]);
             }
             
             const improvementPrompt = `
@@ -177,6 +371,7 @@ class LLMModule {
         this.claudeModel = process.env.CLAUDE_MODEL || 'claude-2';
         this.personasConfig = this.loadPersonas();
         this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
+        this.keywordToPersonaMap = {};
     }
 
     // Initialize quality control after the instance is fully constructed
@@ -185,26 +380,90 @@ class LLMModule {
         return this.qualityControl;
     }
 
+      /**
+     * Initializes or refreshes the keyword-to-persona mapping
+     * Should be called during initialization and when personas are reloaded
+     * @returns {Promise<void>}
+     */
+      async initializeKeywordMap() {
+        try {
+            // Generate keyword mapping from current personas config
+            this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+            
+            // Log success
+            console.log(`Keyword mapping initialized with ${Object.keys(this.keywordToPersonaMap).length} keywords`);
+            
+            // Log some example mappings for verification
+            const examples = Object.entries(this.keywordToPersonaMap).slice(0, 5);
+            if (examples.length > 0) {
+                console.log('Example keyword mappings:');
+                for (const [keyword, persona] of examples) {
+                    console.log(`  "${keyword}" -> "${persona}"`);
+                }
+            }
+        } catch (error) {
+            console.error('Failed to initialize keyword mapping:', error);
+            // Keep existing mapping if any, or set to empty object
+            this.keywordToPersonaMap = this.keywordToPersonaMap || {};
+        }
+    }
+
+    /**
+     * Generates a keyword-to-persona mapping based on persona configurations
+     * This function analyzes persona descriptions and creates a mapping of relevant keywords
+     * @param {Object} personasConfig - The personas configuration object
+     * @returns {Promise<Object>} - A mapping of keywords to persona names
+     */
+    async generateKeywordToPersonaMap(personasConfig) {
+        if (!personasConfig || Object.keys(personasConfig).length === 0) {
+            console.warn('No personas configuration provided for keyword mapping');
+            return {};
+        }
+        
+        const keywordMap = {};
+        
+        // For each persona in the configuration
+        for (const [personaName, personaConfig] of Object.entries(personasConfig)) {
+            try {
+                // Extract keywords from persona configuration
+                const keywords = await extractKeywordsFromPersona(personaName, personaConfig);
+                
+                // Add each keyword to the map, pointing to this persona
+                for (const keyword of keywords) {
+                    keywordMap[keyword.toLowerCase()] = personaName;
+                }
+            } catch (error) {
+                console.error(`Error generating keywords for persona ${personaName}:`, error);
+                // Continue with other personas even if one fails
+            }
+        }
+        
+        return keywordMap;
+    }
+
+     /**
+     * Loads personas from configuration and initializes keyword mapping
+     * @returns {Object} - The loaded personas configuration
+     */
     loadPersonas() {
         try {
             const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
             const data = fs.readFileSync(personaFile, 'utf-8');
-            return JSON.parse(data);
+            const personasConfig = JSON.parse(data);
+            
+            // Initialize keyword mapping after loading personas
+            // Using setTimeout to avoid blocking and make this asynchronous
+            setTimeout(() => {
+                this.initializeKeywordMap().catch(error => {
+                    console.error('Async keyword map initialization failed:', error);
+                });
+            }, 0);
+            
+            return personasConfig;
         } catch (error) {
             logger.error('Failed to load personas.json:', error);
             return {};
         }
-    }
-
-    buildPersonaPrompt(personaName) {
-        const persona = this.personasConfig[personaName];
-        if (!persona) {
-            logger.warn(`Persona "${personaName}" not found in config`);
-            return '';
-        }
-        
-        console.log(`Using persona: ${personaName}`);
-        return `${persona.behaviorInstructions || ''}\n${persona.functionalDirectives || ''}\n${persona.knowledgeConstraints || ''}\n${persona.ethicalGuidelines || ''}\n`;
     }
 
     // Add message to conversation history
@@ -214,11 +473,42 @@ class LLMModule {
         }
         
         const history = this.conversationHistory.get(sessionId);
-        history.push({ role, content: message });
         
-        // Maintain context window
-        if (history.length > this.maxContextLength * 2) { // *2 because we store both user and assistant messages
-            history.splice(0, 2); // Remove oldest message pair
+        // If adding a system message, check if we already have one
+        if (role === 'system') {
+            // Look for existing system message
+            const existingSystemIndex = history.findIndex(msg => msg.role === 'system');
+            if (existingSystemIndex >= 0) {
+                // Replace existing system message
+                history[existingSystemIndex].content = message;
+                this.conversationHistory.set(sessionId, history);
+                return;
+            }
+            // If no existing system message, add it to the beginning
+            history.unshift({ role, content: message });
+        } else {
+            // For regular messages, add to the end
+            history.push({ role, content: message });
+            
+            // Maintain context window, but preserve system message if present
+            if (history.length > this.maxContextLength * 2) { // *2 because we store both user and assistant messages
+                // Check if first message is a system message
+                const hasSystemFirst = history.length > 0 && history[0].role === 'system';
+                
+                if (hasSystemFirst) {
+                    // Keep system message, remove the next oldest pair
+                    const systemMsg = history[0];
+                    history.splice(1, 2); // Remove oldest message pair (excluding system)
+                    
+                    // Ensure system message stays at position 0
+                    if (history[0].role !== 'system') {
+                        history.unshift(systemMsg);
+                    }
+                } else {
+                    // No system message, standard pruning
+                    history.splice(0, 2); // Remove oldest message pair
+                }
+            }
         }
         
         this.conversationHistory.set(sessionId, history);
@@ -237,7 +527,8 @@ class LLMModule {
     }
       
     // Function to detect if user is explicitly requesting a specific persona
-    async detectRequestedPersona(message) {
+     // Updated detectRequestedPersona method that uses dynamic keyword mapping
+     async detectRequestedPersona(message) {
         if (!message) return { requestedPersona: null, cleanedMessage: message };
         
         // Get all persona names to check against user message
@@ -246,7 +537,13 @@ class LLMModule {
             return { requestedPersona: null, cleanedMessage: message };
         }
         
-        // Common request patterns
+        // If keyword map is empty, try to initialize it
+        if (Object.keys(this.keywordToPersonaMap).length === 0) {
+            await this.initializeKeywordMap();
+        }
+        
+        // Step 1: Check for explicit personas mentioned in the message using regex patterns
+        // Direct requests
         const requestPatterns = [
             // Direct requests
             /I\s+need\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
@@ -260,79 +557,198 @@ class LLMModule {
             /^(?:as|like)\s+(?:a|an|the)\s+([a-zA-Z\s]+)[,.:]\s*(.*)/i
         ];
         
-        // Check each pattern
+        // Check each pattern for direct persona requests
         for (const pattern of requestPatterns) {
             const match = message.match(pattern);
             if (match && match[1]) {
                 const potentialPersona = match[1].trim().toLowerCase();
                 
-                // Find best matching persona
+                // Find best matching persona - look for exact matches first
+                for (const personaName of personaNames) {
+                    if (personaName.toLowerCase() === potentialPersona) {
+                        // Exact match - high confidence
+                        const cleanedMessage = this.removePersonaRequest(message, match[0]);
+                        return { 
+                            requestedPersona: personaName, 
+                            cleanedMessage,
+                            confidence: 'high',
+                            method: 'exact_name_match'
+                        };
+                    }
+                }
+                
+                // Find partial matches with a high threshold to avoid false positives
                 let bestMatch = null;
                 let bestMatchScore = 0;
                 
                 for (const personaName of personaNames) {
-                    // Check for exact match or contained match
-                    if (personaName.toLowerCase() === potentialPersona) {
-                        // Return immediately for exact match
-                        const cleanedMessage = this.removePersonaRequest(message, match[0]);
-                        return { requestedPersona: personaName, cleanedMessage };
-                    }
-                    
-                    // Check for partial matches
+                    // Check for substring relationship
                     if (personaName.toLowerCase().includes(potentialPersona) ||
                         potentialPersona.includes(personaName.toLowerCase())) {
+                        
                         const score = this.calculateMatchScore(personaName.toLowerCase(), potentialPersona);
-                        if (score > bestMatchScore) {
+                        
+                        // Higher threshold (0.7) to avoid false positives
+                        if (score > bestMatchScore && score > 0.7) {
                             bestMatchScore = score;
                             bestMatch = personaName;
                         }
                     }
                 }
                 
-                // If we found a good match, return it
-                if (bestMatch && bestMatchScore > 0.5) {
+                if (bestMatch) {
                     const cleanedMessage = this.removePersonaRequest(message, match[0]);
-                    return { requestedPersona: bestMatch, cleanedMessage };
+                    return { 
+                        requestedPersona: bestMatch, 
+                        cleanedMessage,
+                        confidence: 'medium',
+                        method: 'partial_name_match' 
+                    };
                 }
             }
         }
-        // if requestedPersona is not found, call selectPersona 
-        // to select the best one based on the message
-        const requestedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
-
-        return { requestedPersona: requestedPersona, cleanedMessage: message };
-    }
-
-    // Calculate how well two strings match (simple score)
-    calculateMatchScore(str1, str2) {
-        const longer = str1.length > str2.length ? str1 : str2;
-        const shorter = str1.length > str2.length ? str2 : str1;
         
-        if (longer.includes(shorter)) {
-            return shorter.length / longer.length;
+        // Step 2: Check for keyword associations using our dynamic keyword map
+        // Create a weighted scoring system for keywords
+        const personaScores = {};
+        const normalizedMessage = message.toLowerCase();
+        
+        // Initialize scores for personas
+        for (const persona of personaNames) {
+            personaScores[persona] = 0;
         }
         
-        // Count matching characters
-        let matchCount = 0;
-        for (let i = 0; i < shorter.length; i++) {
-            if (longer.includes(shorter[i])) {
-                matchCount++;
+        // Score based on keyword presence
+        for (const [keyword, persona] of Object.entries(this.keywordToPersonaMap)) {
+            if (normalizedMessage.includes(keyword) && personaNames.includes(persona)) {
+                // Add points to this persona if keyword found
+                personaScores[persona] = (personaScores[persona] || 0) + 1;
+                
+                // If the keyword appears at the beginning or is a significant part of the request,
+                // give it more weight
+                if (normalizedMessage.startsWith(keyword) || 
+                    normalizedMessage.includes(`about ${keyword}`) ||
+                    normalizedMessage.includes(`for ${keyword}`)) {
+                    personaScores[persona] += 1;
+                }
             }
         }
         
-        return matchCount / longer.length;
+        // Find persona with highest score
+        let highestScore = 0;
+        let mostLikelyPersona = null;
+        
+        for (const [persona, score] of Object.entries(personaScores)) {
+            if (score > highestScore) {
+                highestScore = score;
+                mostLikelyPersona = persona;
+            }
+        }
+        
+        // Only return a keyword-based match if the score is at least 2
+        // This helps avoid false positives from casual mentions
+        if (mostLikelyPersona && highestScore >= 2) {
+            return { 
+                requestedPersona: mostLikelyPersona, 
+                cleanedMessage: message,
+                confidence: 'medium',
+                method: 'keyword_match',
+                score: highestScore
+            };
+        }
+        
+        // Step 3: If no clear match from keywords, use content analysis
+        // This is a fallback that will use a more robust approach
+        
+        try {
+            // Use the existing selectPersona method as fallback
+            const selectedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
+            
+            return { 
+                requestedPersona: selectedPersona, 
+                cleanedMessage: message,
+                confidence: 'low',
+                method: 'content_analysis'
+            };
+        } catch (error) {
+            console.error('Error in advanced persona detection:', error);
+            return { requestedPersona: null, cleanedMessage: message };
+        }
+    }
+    calculateMatchScore(str1, str2) {
+        if (!str1 || !str2) return 0;
+        
+        // Convert to lowercase for case-insensitive matching
+        const lowerStr1 = str1.toLowerCase();
+        const lowerStr2 = str2.toLowerCase();
+        
+        // Check for exact match
+        if (lowerStr1 === lowerStr2) return 1.0;
+        
+        // Check if one is a substring of the other
+        if (lowerStr1.includes(lowerStr2)) {
+            // Calculate how much of str1 is covered by str2
+            return lowerStr2.length / lowerStr1.length;
+        }
+        
+        if (lowerStr2.includes(lowerStr1)) {
+            // Calculate how much of str2 is covered by str1
+            return lowerStr1.length / lowerStr2.length;
+        }
+        
+        // Word-level similarity for multi-word personas
+        const words1 = lowerStr1.split(/\s+/);
+        const words2 = lowerStr2.split(/\s+/);
+        
+        // Count matching words
+        let matchCount = 0;
+        for (const word1 of words1) {
+            if (word1.length <= 2) continue; // Skip very short words
+            
+            for (const word2 of words2) {
+                if (word2.length <= 2) continue; // Skip very short words
+                
+                if (word1 === word2 || 
+                    word1.includes(word2) || 
+                    word2.includes(word1)) {
+                    matchCount++;
+                    break;
+                }
+            }
+        }
+        
+        // Calculate word-level similarity score
+        const totalUniqueWords = new Set([...words1, ...words2]).size;
+        if (totalUniqueWords === 0) return 0;
+        
+        return matchCount / totalUniqueWords;
     }
 
-    // Remove the persona request from the message
-    removePersonaRequest(message, matchedRequest) {
-        if (!matchedRequest) return message;
+     // Enhanced removePersonaRequest function to better handle persona removal
+     removePersonaRequest(message, matchedRequest) {
+        if (!matchedRequest || !message) return message;
         
         // Replace the matched request with empty string
         const cleanedMessage = message.replace(matchedRequest, '').trim();
         
         // If there's content remaining, return it, otherwise return original
         // (this avoids completely emptying the message)
-        return cleanedMessage.length > 0 ? cleanedMessage : message;
+        if (cleanedMessage.length > 0) {
+            // Check if the cleaned message starts with common conjunctions
+            // and remove them for better flow
+            const conjunctions = [', ', ': ', '. ', '? ', '! ', ' - '];
+            let finalMessage = cleanedMessage;
+            
+            for (const conj of conjunctions) {
+                if (finalMessage.startsWith(conj)) {
+                    finalMessage = finalMessage.substring(conj.length).trim();
+                }
+            }
+            
+            return finalMessage;
+        }
+        
+        return message;
     }
 
     async selectPersona(message, personaList) {
@@ -577,7 +993,7 @@ class LLMModule {
             if (personaName) {
                 // If we found a persona request, use the cleaned message
                 messageToProcess = requestedPersona ? cleanedMessage : originalMessage;
-                const personaPrompt = this.buildPersonaPrompt(personaName);
+                const personaPrompt = buildPersonaPrompt(this.personasConfig[personaName]);
                 
                 if (personaPrompt) {
                     // Format the enhanced message with the persona instructions
@@ -868,5 +1284,8 @@ class LLMModule {
 // Create instance and initialize quality control
 const llmModuleInstance = new LLMModule();
 llmModuleInstance.initQualityControl();
+
+// Set the global reference to avoid circular dependency issues
+global.llmModule = llmModuleInstance;
 
 module.exports = llmModuleInstance;

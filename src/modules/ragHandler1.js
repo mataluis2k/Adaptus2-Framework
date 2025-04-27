@@ -395,7 +395,8 @@ async function searchAcrossCollections(query, collectionNames, topK = 5) {
 }
 async function handleRAG(query, userId = 'default', personaName = null) {
   if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
-
+  console.log(`[RAG Debug] handleRAG called with query: "${query.substring(0, 50)}..."`, 
+  `userId: ${userId}, personaName: ${personaName}`);
   try {
     // Initialize persona handling
     let enhancedPersona = personaName;
@@ -426,7 +427,19 @@ async function handleRAG(query, userId = 'default', personaName = null) {
     const contextLimit = MODEL_TOKEN_LIMITS[modelName];
 
     // Ensure persona prompt is created with resolved persona value
-    const personaPrompt = enhancedPersona ? await llmModule.buildPersonaPrompt(enhancedPersona) : '';
+    let personaPrompt = '';
+    if (enhancedPersona) {
+      try {
+        // Use global.llmModule as a fallback if direct import has circular dependency issues
+        if (global.llmModule && global.llmModule.buildPersonaPrompt) {
+          personaPrompt = await global.llmModule.buildPersonaPrompt(enhancedPersona);
+        } else if (llmModule.buildPersonaPrompt) {
+          personaPrompt = await llmModule.buildPersonaPrompt(enhancedPersona);
+        }
+      } catch (promptError) {
+        console.error('Error building persona prompt:', promptError);
+      }
+    }
 
     const retriever = vectorStore.asRetriever({ searchKwargs: { k: 30 } });
     const topChunks = await retriever.getRelevantDocuments(query);
