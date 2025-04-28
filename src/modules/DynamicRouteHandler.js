@@ -116,10 +116,11 @@ class DynamicRouteHandler {
         const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
         route = `${route}${getParamPath}`;
       }
-   
-  
+
+      // custom error codes for unauthorized (default behavior if not present)
+      const unauthorized = (endpoint.errorCodes && endpoint.errorCodes.unauthorized) ? endpoint.errorCodes.unauthorized : unauthorizedResponse;
       // Create middleware array for the route
-      const middlewares = [aarMiddleware(auth, {acl,unauthorizedResponse }, ruleEngineInstance)];
+      const middlewares = [aarMiddleware(auth, {acl, unauthorized }, ruleEngineInstance)];
       
       // Add rate limiting middleware if configured
       // if (endpoint.rateLimit && endpoint.rateLimit.requestsPerMinute) {
