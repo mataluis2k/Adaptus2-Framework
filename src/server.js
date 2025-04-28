@@ -84,7 +84,8 @@ const MLAnalytics = require('./core/ml_analytics2');
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
-const IntelligentChatModule = require('./modules/IntelligentChatModule'); // New Chat Module
+const { IntelligentChatModule, setActiveInstance } = require('./modules/IntelligentChatModule');
+
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
 const ollamaModule = require('./modules/ollamaModule'); // Ollama Module
@@ -2822,8 +2823,26 @@ registerMiddleware() {
                 const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
                 
                 //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
-                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
                 this.chatModule.start();
+                // Store the instance globally for access from other modules
+                global.chatModule = this.chatModule;
+                
+                // Define the global helper function AFTER setting global.chatModule
+                global.getUserIdFromSessionId = function(sessionId) {
+                    if (!global.chatModule) return sessionId;
+                    
+                    // Access the connected users directly from the global instance
+                    for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
+                        if (username === sessionId) {
+                            const socket = global.chatModule.io.sockets.sockets.get(socketId);
+                            if (socket && socket.user && socket.user.id) {
+                                return socket.user.id;
+                            }
+                        }
+                    }
+                    return sessionId; // Fallback
+                };
                 httpServer.listen(chat_port, () => {
                     console.log('Chat running on:' + chat_port);
                 });

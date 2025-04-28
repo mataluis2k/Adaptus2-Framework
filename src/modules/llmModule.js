@@ -4,6 +4,8 @@ const ollamaModule = require('./ollamaModule');
 const path = require('path');
 const fs = require('fs');
 const buildPersonaPrompt = require('./buildPersonaPrompt');
+const { redisClient } = require('./redisClient');
+const crypto = require('crypto');
 global.llmModule = null; // Initialize global reference to prevent circular dependency issues
 
 /**
@@ -369,11 +371,24 @@ class LLMModule {
         this.openRouterApiKey = process.env.OPENROUTER_API_KEY;
         this.openaiModel = process.env.OPENAI_MODEL || 'gpt-4o'; // Default to GPT-4o if not specified
         this.claudeModel = process.env.CLAUDE_MODEL || 'claude-2';
-        this.personasConfig = this.loadPersonas();
+        this.personasConfig = {};
         this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
         this.keywordToPersonaMap = {};
+        this.initialize();
     }
 
+    async initialize() {
+        try {
+            // Load personas first
+            this.personasConfig = await this.loadPersonas();
+            console.log(`Personas loaded: ${Object.keys(this.personasConfig).length} personas found`);
+            
+            // Then initialize keyword mapping
+            await this.initializeKeywordMap();
+        } catch (error) {
+            console.error('Error during LLMModule initialization:', error);
+        }
+    }
     // Initialize quality control after the instance is fully constructed
     initQualityControl() {
         this.qualityControl = new QualityControl(this);
@@ -382,45 +397,182 @@ class LLMModule {
 
       /**
      * Initializes or refreshes the keyword-to-persona mapping
+     * Uses Redis cache to avoid regenerating the mapping if personasConfig hasn't changed
      * Should be called during initialization and when personas are reloaded
      * @returns {Promise<void>}
      */
       async initializeKeywordMap() {
         try {
-            // Generate keyword mapping from current personas config
-            this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+            // Generate a hash of the personasConfig to detect changes
+            const configHash = this.generateConfigHash(this.personasConfig);
+            const cacheKey = 'keywordToPersonaMap';
+            const hashKey = 'keywordToPersonaMapHash';
+            
+            // Connect to Redis if not already connected
+            if (redisClient.status !== 'ready') {
+                try {
+                    await redisClient.connect();
+                    console.log('Redis connected for keyword mapping');
+                } catch (connectionError) {
+                    console.warn('Redis connection failed, generating keywords directly:', connectionError.message);
+                    this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                    return;
+                }
+            }
+            
+            // Check if we have a cached mapping and if the config hash matches
+            let cachedHash, cachedMap;
+            try {
+                // Get the hash and map from Redis
+                cachedHash = await redisClient.get(hashKey);
+                cachedMap = await redisClient.get(cacheKey);
+                
+                // Explicitly log what we got back from Redis
+                console.log(`Redis cache check: hashKey exists: ${!!cachedHash}, cacheKey exists: ${!!cachedMap}`);
+            } catch (redisError) {
+                console.error('Redis error when retrieving cached data:', redisError);
+                // Fall back to direct keyword generation
+                this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                return;
+            }
+            
+            // Important check: explicitly handle the case where Redis has no data
+            if (!cachedMap || !cachedHash) {
+                console.log('Redis cache is empty, generating new keyword mapping from scratch');
+                this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                
+                // Store the new mapping in Redis
+                try {
+                    await redisClient.set(cacheKey, JSON.stringify(this.keywordToPersonaMap));
+                    await redisClient.set(hashKey, configHash);
+                    console.log('New keyword mapping stored in Redis cache');
+                } catch (storageError) {
+                    console.error('Failed to store keyword mapping in Redis:', storageError);
+                }
+                
+                return;
+            }
+            
+            if (cachedHash === configHash) {
+                // Config hasn't changed and we have a cached map, use it
+                console.log('Using cached keyword mapping from Redis');
+                try {
+                    this.keywordToPersonaMap = JSON.parse(cachedMap);
+                    console.log(`Loaded ${Object.keys(this.keywordToPersonaMap).length} keywords from Redis cache`);
+                } catch (parseError) {
+                    console.error('Error parsing cached keyword map:', parseError);
+                    // Fall back to direct generation if cached data is corrupt
+                    this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                }
+            } else {
+                // Config has changed
+                console.log('Config hash changed, generating updated keyword mapping');
+                
+                try {
+                    // Parse the cached map if it exists
+                    const existingMap = cachedMap ? JSON.parse(cachedMap) : {};
+                    
+                    // If we have existing map data to work with, do incremental update
+                    if (Object.keys(existingMap).length > 0) {
+                        this.keywordToPersonaMap = await this.generateKeywordToPersonaMapIncremental(existingMap);
+                    } else {
+                        // No existing map, generate a complete new one
+                        this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                    }
+                    
+                    // Cache the new mapping and hash
+                    await redisClient.set(cacheKey, JSON.stringify(this.keywordToPersonaMap));
+                    await redisClient.set(hashKey, configHash);
+                    console.log('Updated keyword mapping stored in Redis cache');
+                } catch (error) {
+                    console.error('Error updating keyword mapping:', error);
+                    // Fallback to direct generation
+                    this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+                }
+            }
             
             // Log success
             console.log(`Keyword mapping initialized with ${Object.keys(this.keywordToPersonaMap).length} keywords`);
-            
-            // Log some example mappings for verification
-            const examples = Object.entries(this.keywordToPersonaMap).slice(0, 5);
-            if (examples.length > 0) {
-                console.log('Example keyword mappings:');
-                for (const [keyword, persona] of examples) {
-                    console.log(`  "${keyword}" -> "${persona}"`);
-                }
-            }
         } catch (error) {
             console.error('Failed to initialize keyword mapping:', error);
             // Keep existing mapping if any, or set to empty object
             this.keywordToPersonaMap = this.keywordToPersonaMap || {};
+            
+            // Always ensure we have keyword data even if everything fails
+            if (Object.keys(this.keywordToPersonaMap).length === 0 && this.personasConfig) {
+                console.log('Emergency fallback: generating keywords directly');
+                this.keywordToPersonaMap = await this.generateKeywordToPersonaMap(this.personasConfig);
+            }
         }
+    }
+    
+    /**
+     * Generates a hash of the personasConfig to detect changes
+     * @param {Object} config - The personas configuration object
+     * @returns {string} - A hash representing the config
+     */
+    generateConfigHash(config) {
+        const configString = JSON.stringify(config);
+        return crypto.createHash('md5').update(configString).digest('hex');
+    }
+    
+    /**
+     * Incrementally updates the keyword map using an existing map as a base
+     * Only regenerates keywords for personas that exist in current config
+     * @param {Object} existingMap - The existing keyword-to-persona mapping from cache
+     * @returns {Promise<Object>} - An updated mapping of keywords to persona names
+     */
+    async generateKeywordToPersonaMapIncremental(existingMap) {
+        if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
+            console.warn('No personas configuration provided for incremental keyword mapping');
+            return existingMap || {};
+        }
+        
+        // Create a clean map with only entries for current personas
+        const updatedMap = {};
+        
+        // First, copy over existing mappings that still point to valid personas
+        for (const [keyword, personaName] of Object.entries(existingMap)) {
+            if (this.personasConfig[personaName]) {
+                updatedMap[keyword] = personaName;
+            }
+        }
+        
+        // Then generate keywords for all current personas to ensure completeness
+        for (const [personaName, personaConfig] of Object.entries(this.personasConfig)) {
+            try {
+                // Extract keywords from persona configuration
+                const keywords = await extractKeywordsFromPersona(personaName, personaConfig);
+                
+                // Add each keyword to the map, pointing to this persona
+                for (const keyword of keywords) {
+                    updatedMap[keyword.toLowerCase()] = personaName;
+                }
+            } catch (error) {
+                console.error(`Error generating keywords for persona ${personaName}:`, error);
+                // Continue with other personas even if one fails
+            }
+        }
+        
+        return updatedMap;
     }
 
     /**
      * Generates a keyword-to-persona mapping based on persona configurations
      * This function analyzes persona descriptions and creates a mapping of relevant keywords
      * @param {Object} personasConfig - The personas configuration object
+     * @param {Object} existingMap - Optional existing map to update instead of creating a new one
      * @returns {Promise<Object>} - A mapping of keywords to persona names
      */
-    async generateKeywordToPersonaMap(personasConfig) {
+    async generateKeywordToPersonaMap(personasConfig, existingMap = {}) {
         if (!personasConfig || Object.keys(personasConfig).length === 0) {
             console.warn('No personas configuration provided for keyword mapping');
-            return {};
+            return existingMap || {};
         }
         
-        const keywordMap = {};
+        // Start with existing map if provided, otherwise empty object
+        const keywordMap = { ...existingMap };
+        const startTime = Date.now();
         
         // For each persona in the configuration
         for (const [personaName, personaConfig] of Object.entries(personasConfig)) {
@@ -438,6 +590,9 @@ class LLMModule {
             }
         }
         
+        const endTime = Date.now();
+        console.log(`Generated keyword mapping in ${endTime - startTime}ms for ${Object.keys(personasConfig).length} personas`);
+        
         return keywordMap;
     }
 
@@ -445,26 +600,50 @@ class LLMModule {
      * Loads personas from configuration and initializes keyword mapping
      * @returns {Object} - The loaded personas configuration
      */
-    loadPersonas() {
+     async loadPersonas() {
         try {
+            const cacheKey = 'personasConfig';
+    
+            if (redisClient.status !== 'ready') {
+                await redisClient.connect();
+            }
+    
+            const cachedPersonas = await redisClient.get(cacheKey);
+            if (cachedPersonas) {
+                console.log('✅ [LLMModule] Loaded personasConfig from Redis cache');
+                const parsedPersonas = JSON.parse(cachedPersonas);
+    
+                setTimeout(() => {
+                    this.initializeKeywordMap().catch(error => {
+                        console.error('Async keyword map initialization failed:', error);
+                    });
+                }, 0);
+    
+                return parsedPersonas;
+            }
+    
+            // Load from disk if cache is missing
             const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
             const data = fs.readFileSync(personaFile, 'utf-8');
             const personasConfig = JSON.parse(data);
-            
-            // Initialize keyword mapping after loading personas
-            // Using setTimeout to avoid blocking and make this asynchronous
+    
+            // Save personasConfig into Redis
+            await redisClient.set(cacheKey, JSON.stringify(personasConfig));
+    
             setTimeout(() => {
                 this.initializeKeywordMap().catch(error => {
                     console.error('Async keyword map initialization failed:', error);
                 });
             }, 0);
-            
+    
             return personasConfig;
+    
         } catch (error) {
-            logger.error('Failed to load personas.json:', error);
+            logger.error('Failed to load personas:', error);
             return {};
         }
     }
+    
 
     // Add message to conversation history
     addToHistory(sessionId, message, role = 'user') {
@@ -1283,7 +1462,10 @@ class LLMModule {
 
 // Create instance and initialize quality control
 const llmModuleInstance = new LLMModule();
-llmModuleInstance.initQualityControl();
+(async () => {
+    llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
+    llmModuleInstance.initQualityControl();
+})();
 
 // Set the global reference to avoid circular dependency issues
 global.llmModule = llmModuleInstance;
