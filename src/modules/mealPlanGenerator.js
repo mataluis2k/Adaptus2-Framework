@@ -87,9 +87,7 @@ async function generateMealPlan(req, res) {
     .map(([sourceId, data]) => ({ id: sourceId, content: data.content.join('\n'), metadata: data.metadata }));
     console.log(`Top documents: ${topDocuments.length} documents found`);
     // Concatenate full context
-    const similarDocs = topDocuments
-    .map(doc => `Source: ${doc.id}\n${doc.content}`)
-    .join('\n\n');
+    const similarDocs = topDocuments;
     console.log(`Concatenated similar documents: ${similarDocs.length} characters`);
     // Build persona-enhanced prompt
     const prompt = buildPromptForMacros(macroRequest, similarDocs);
