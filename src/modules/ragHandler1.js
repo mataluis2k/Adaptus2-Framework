@@ -12,7 +12,7 @@ const llmModule = require('./llmModule');
 const { json } = require('body-parser');
 const { createStuffDocumentsChain } = require('langchain/chains/combine_documents');
 const { ChatPromptTemplate } = require('@langchain/core/prompts');
-
+const buildPersonaPrompt  = require('./buildPersonaPrompt');
 
 const MODEL_TOKEN_LIMITS = {
   'gpt-3.5-turbo': 4096,
@@ -35,7 +35,7 @@ const ragConversationHistories = new Map();
 // Maximum number of exchanges to store per user
 const MAX_HISTORY_LENGTH = 100;
 // Collection name for ChromaDB
-const COLLECTION_NAME = process.env.CHROMA_COLLECTION_NAME || 'meal_plans_1';
+const COLLECTION_NAME = process.env.CHROMA_COLLECTION_NAME || 'vshred_meal_plans';
 
 function setVectorStore(store) {
   vectorStore = store;
@@ -393,6 +393,104 @@ async function searchAcrossCollections(query, collectionNames, topK = 5) {
   }
   return results.sort((a, b) => b.score - a.score).slice(0, topK);
 }
+
+async function sanitizeJsonInPrompt(prompt) {
+  if (!prompt) return '';
+  
+  // Check if the prompt contains JSON-like structures
+  const jsonRegex = /{[\s\S]*?}/g;
+  
+  if (jsonRegex.test(prompt)) {
+    // There might be JSON in the prompt
+    console.log('Detected potential JSON in prompt, performing advanced sanitization');
+    
+    try {
+      // Strategy 1: Stringify and encode any JSON objects in the text
+      // Find JSON-like patterns and replace them with encoded versions
+      const sanitized = prompt.replace(jsonRegex, (match) => {
+        try {
+          // Try to parse it as JSON to validate
+          const jsonObj = JSON.parse(match);
+          // If successful, encode it to prevent template processing
+          return `<JSON_DATA>${JSON.stringify(jsonObj).replace(/{/g, '{{').replace(/}/g, '}}')}</JSON_DATA>`;
+        } catch (e) {
+          // If it's not valid JSON, just escape the braces
+          return match.replace(/{/g, '{{').replace(/}/g, '}}');
+        }
+      });
+      
+      return sanitized;
+    } catch (error) {
+      console.warn('Advanced JSON sanitization failed, falling back to basic escaping', error);
+      // Fall back to basic escaping
+      return prompt.replace(/{/g, '{{').replace(/}/g, '}}');
+    }
+  }
+  
+  // If no JSON detected, just do basic escaping
+  return prompt.replace(/{/g, '{{').replace(/}/g, '}}');
+}
+/**
+ * Recursively converts an object or JSON string into a human-readable paragraph.
+ * @param {string|object} input - JSON string or parsed object.
+ * @returns {string} A paragraph describing the JSON.
+ */
+function jsonToParagraph(input) {
+  let obj;
+  if (typeof input === 'string') {
+    try {
+      obj = JSON.parse(input);
+    } catch {
+      // Not valid JSON? Just return it verbatim.
+      return input;
+    }
+  } else {
+    obj = input;
+  }
+
+  function recurse(val) {
+    if (val === null || typeof val !== 'object') {
+      return String(val);
+    }
+    if (Array.isArray(val)) {
+      return val.map(recurse).join(', ');
+    }
+    // Plain object
+    return Object.entries(val)
+      .map(([k, v]) => {
+        // turn camelCase or snake_case into words
+        const prettyKey = k
+          .replace(/([A-Z])/g, ' $1')
+          .replace(/[_\-]/g, ' ')
+          .trim();
+        return `${prettyKey}: ${recurse(v)}`;
+      })
+      .join('. ')
+      + '.';
+  }
+
+  return recurse(obj);
+}
+
+/**
+ * Scans a block of text for JSON snippets and replaces them
+ * with their paragraph form.
+ */
+function sanitizeJsonBlocks(text) {
+  return text.replace(/(\{[\s\S]*?\})/g, (match) => {
+    // Only replace if it’s valid JSON
+    try {
+      JSON.parse(match);
+      return jsonToParagraph(match);
+    } catch {
+      return match;
+    }
+  });
+}
+
+function stripAllDelimiters(text) {
+  return text.replace(/["\{\}\[\]]/g, '');
+}
 async function handleRAG(query, userId = 'default', personaName = null) {
   if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
   console.log(`[RAG Debug] handleRAG called with query: "${query.substring(0, 50)}..."`, 
@@ -428,19 +526,21 @@ async function handleRAG(query, userId = 'default', personaName = null) {
 
     // Ensure persona prompt is created with resolved persona value
     let personaPrompt = '';
+    let personaConfig = null;
     if (enhancedPersona) {
       try {
-        // Use global.llmModule as a fallback if direct import has circular dependency issues
-        if (global.llmModule && global.llmModule.buildPersonaPrompt) {
-          personaPrompt = await global.llmModule.buildPersonaPrompt(enhancedPersona);
-        } else if (llmModule.buildPersonaPrompt) {
-          personaPrompt = await llmModule.buildPersonaPrompt(enhancedPersona);
+        if (typeof enhancedPersona === 'string') {
+          personaConfig = llmModule.personasConfig[enhancedPersona] || {};
+        }else {
+          personaConfig = enhancedPersona;
         }
+        console.log(`Building persona prompt for: ${enhancedPersona} and userId: ${userId}`);
+        personaPrompt = await buildPersonaPrompt(personaConfig,userId);        
       } catch (promptError) {
         console.error('Error building persona prompt:', promptError);
       }
     }
-
+    console.log(`Using persona prompt: ${personaPrompt}`);
     const retriever = vectorStore.asRetriever({ searchKwargs: { k: 30 } });
     const topChunks = await retriever.getRelevantDocuments(query);
 
@@ -492,7 +592,11 @@ async function handleRAG(query, userId = 'default', personaName = null) {
       );
       fullContext = summaries.join('\n\n');
     }
-
+    // Sanitize the full context to prevent template injection
+    personaPrompt = await sanitizeJsonBlocks(personaPrompt);
+    personaPrompt = stripAllDelimiters(personaPrompt);
+    
+    console.log(`Sanitized persona prompt: ${personaPrompt}`);
     const combineDocsChain = await createStuffDocumentsChain({
       llm,
       prompt: ChatPromptTemplate.fromMessages([

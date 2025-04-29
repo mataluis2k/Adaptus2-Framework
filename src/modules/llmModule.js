@@ -180,32 +180,6 @@ class QualityControl {
       
     }
     
-    
-    /**
-     * Loads personas from configuration and initializes keyword mapping
-     * @returns {Object} - The loaded personas configuration
-     */
-    loadPersonas() {
-        try {
-            const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
-            const data = fs.readFileSync(personaFile, 'utf-8');
-            const personasConfig = JSON.parse(data);
-            
-            // Initialize keyword mapping after loading personas
-            // Using setTimeout to avoid blocking and make this asynchronous
-            setTimeout(() => {
-                this.initializeKeywordMap().catch(error => {
-                    console.error('Async keyword map initialization failed:', error);
-                });
-            }, 0);
-            
-            return personasConfig;
-        } catch (error) {
-            logger.error('Failed to load personas.json:', error);
-            return {};
-        }
-    }
-
     async evaluateResponse(userQuery, llmResponse, context = null) {
         // Prepare evaluation prompt
         const evaluationPrompt = `
@@ -377,16 +351,102 @@ class LLMModule {
         this.initialize();
     }
 
+
     async initialize() {
         try {
-            // Load personas first
+            // Set redisClient connection options for better stability
+            if (redisClient.options) {
+                redisClient.options.retry_strategy = (options) => {
+                    if (options.error && options.error.code === 'ECONNREFUSED') {
+                        // If the Redis server is down, end reconnection attempts
+                        return new Error('The Redis server refused the connection');
+                    }
+                    if (options.total_retry_time > 1000 * 60 * 5) {
+                        // End reconnecting after 5 minutes
+                        return new Error('Retry time exhausted');
+                    }
+                    if (options.attempt > 10) {
+                        // End reconnecting with built in error
+                        return undefined;
+                    }
+                    // Reconnect after increasing intervals
+                    return Math.min(options.attempt * 100, 3000);
+                };
+            }
+    
+            console.log('Initializing LLMModule...');
+            
+            // Step 1: Load personas first (may use cache if available)
             this.personasConfig = await this.loadPersonas();
             console.log(`Personas loaded: ${Object.keys(this.personasConfig).length} personas found`);
             
-            // Then initialize keyword mapping
-            await this.initializeKeywordMap();
+            // Step 2: Check if we need to initialize the keyword map
+            const needsInitialization = await this.needsKeywordMapInitialization();
+            
+            if (needsInitialization) {
+                console.log('Keyword map needs initialization');
+                
+                // Step 3: Check if personas have changed since last time
+                const personasChanged = await this.hasPersonasConfigChanged();
+                
+                if (personasChanged) {
+                    console.log('Personas configuration has changed, rebuilding keyword map');
+                    // Full initialization needed
+                    await this.initializeKeywordMap();
+                } else {
+                    console.log('Trying to load keyword map from Redis cache');
+                    // Try to load from Redis one more time
+                    try {
+                        if (redisClient.status !== 'ready') {
+                            await redisClient.connect();
+                        }
+                        
+                        const cachedMap = await redisClient.get('keywordToPersonaMap');
+                        if (cachedMap) {
+                            this.keywordToPersonaMap = JSON.parse(cachedMap);
+                            console.log(`Loaded ${Object.keys(this.keywordToPersonaMap).length} keywords from Redis cache`);
+                            
+                            // Validate the loaded map
+                            if (!this.validateKeywordMap()) {
+                                console.log('Cached keyword map validation failed, rebuilding');
+                                await this.initializeKeywordMap();
+                            }
+                        } else {
+                            console.log('No keyword map in Redis cache, initializing');
+                            await this.initializeKeywordMap();
+                        }
+                    } catch (error) {
+                        console.warn('Error loading keyword map from cache:', error.message);
+                        console.log('Fallback to keyword map initialization');
+                        await this.initializeKeywordMap();
+                    }
+                }
+            } else {
+                console.log('Using existing keyword map, skipping initialization');
+                
+                // Quick validation of the loaded map
+                if (!this.validateKeywordMap()) {
+                    console.log('Existing keyword map validation failed, rebuilding');
+                    await this.initializeKeywordMap();
+                }
+            }
+            
+            console.log('LLMModule initialization complete');
         } catch (error) {
             console.error('Error during LLMModule initialization:', error);
+            
+            // Ensure personas are loaded even if other initialization fails
+            if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
+                try {
+                    const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
+                    const data = fs.readFileSync(personaFile, 'utf-8');
+                    this.personasConfig = JSON.parse(data);
+                    console.log(`Emergency persona load: ${Object.keys(this.personasConfig).length} personas found`);
+                } catch (fallbackError) {
+                    console.error('Critical error: Unable to load personas:', fallbackError);
+                    this.personasConfig = {};
+                }
+            }
         }
     }
     // Initialize quality control after the instance is fully constructed
@@ -395,6 +455,114 @@ class LLMModule {
         return this.qualityControl;
     }
 
+    /**
+ * Checks if the keywordToPersonaMap needs to be initialized
+ * @returns {Promise<boolean>} - True if the map needs initialization, false otherwise
+ */
+async needsKeywordMapInitialization() {
+    // Check if we already have a map in memory
+    if (this.keywordToPersonaMap && Object.keys(this.keywordToPersonaMap).length > 0) {
+        return false;
+    }
+    
+    // Check if we have a map in Redis cache
+    try {
+        if (redisClient.status !== 'ready') {
+            try {
+                await redisClient.connect();
+            } catch (connectionError) {
+                console.warn('Redis connection failed while checking keyword map:', connectionError.message);
+                return true; // Need to initialize if we can't connect to Redis
+            }
+        }
+        
+        const cachedMap = await redisClient.get('keywordToPersonaMap');
+        if (cachedMap) {
+            try {
+                // Verify it's valid JSON
+                const parsedMap = JSON.parse(cachedMap);
+                if (Object.keys(parsedMap).length > 0) {
+                    // We have a valid map in Redis, load it instead of initializing
+                    this.keywordToPersonaMap = parsedMap;
+                    console.log(`Loaded ${Object.keys(this.keywordToPersonaMap).length} keywords from Redis`);
+                    return false;
+                }
+            } catch (parseError) {
+                console.warn('Error parsing cached keyword map:', parseError.message);
+                return true; // Need to initialize if cached data is corrupt
+            }
+        }
+    } catch (redisError) {
+        console.warn('Error checking Redis for keyword map:', redisError.message);
+    }
+    
+    // If we get here, we need to initialize
+    return true;
+}
+
+/**
+ * Checks if the personas configuration has changed
+ * @returns {Promise<boolean>} - True if personas have changed, false otherwise
+ */
+async hasPersonasConfigChanged() {
+    try {
+        const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
+        
+        // Calculate current file hash
+        const fileData = fs.readFileSync(personaFile, 'utf-8');
+        const currentHash = crypto.createHash('md5').update(fileData).digest('hex');
+        
+        // Check if Redis has a stored hash
+        if (redisClient.status !== 'ready') {
+            try {
+                await redisClient.connect();
+            } catch (connectionError) {
+                console.warn('Redis connection failed while checking personas hash:', connectionError.message);
+                return true; // Assume changed if we can't connect to Redis
+            }
+        }
+        
+        const cachedHash = await redisClient.get('personasConfig_hash');
+        if (cachedHash && cachedHash === currentHash) {
+            return false; // No change
+        }
+        
+        return true; // Changed or no cached hash
+    } catch (error) {
+        console.warn('Error checking if personas config changed:', error.message);
+        return true; // Assume changed if there's an error
+    }
+}
+
+/**
+ * Validates the keywordToPersonaMap against current personas
+ * Ensures all personas referenced in the map exist in the current config
+ * @returns {boolean} - True if the map is valid, false otherwise
+ */
+validateKeywordMap() {
+    if (!this.keywordToPersonaMap || Object.keys(this.keywordToPersonaMap).length === 0) {
+        return false; // Empty map is not valid
+    }
+    
+    if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
+        return false; // No personas to validate against
+    }
+    
+    // Check a sample of keywords to ensure they point to valid personas
+    const sampleSize = Math.min(20, Object.keys(this.keywordToPersonaMap).length);
+    const sampleKeys = Object.keys(this.keywordToPersonaMap).slice(0, sampleSize);
+    
+    // For each sample, verify the persona exists
+    for (const key of sampleKeys) {
+        const persona = this.keywordToPersonaMap[key];
+        if (!this.personasConfig[persona]) {
+            console.warn(`Keyword map validation failed: ${key} -> ${persona} (persona not found)`);
+            return false;
+        }
+    }
+    
+    return true; // All samples valid
+}
       /**
      * Initializes or refreshes the keyword-to-persona mapping
      * Uses Redis cache to avoid regenerating the mapping if personasConfig hasn't changed
@@ -445,7 +613,7 @@ class LLMModule {
                 try {
                     await redisClient.set(cacheKey, JSON.stringify(this.keywordToPersonaMap));
                     await redisClient.set(hashKey, configHash);
-                    console.log('New keyword mapping stored in Redis cache');
+                    console.log('New keyword mapping stored in Redis cache', configHash, cacheKey);
                 } catch (storageError) {
                     console.error('Failed to store keyword mapping in Redis:', storageError);
                 }
@@ -596,53 +764,125 @@ class LLMModule {
         return keywordMap;
     }
 
-     /**
-     * Loads personas from configuration and initializes keyword mapping
-     * @returns {Object} - The loaded personas configuration
-     */
-     async loadPersonas() {
-        try {
-            const cacheKey = 'personasConfig';
-    
-            if (redisClient.status !== 'ready') {
+   /**
+ * Loads personas from configuration
+ * Uses Redis cache to avoid reloading personas from disk if unchanged
+ * @returns {Promise<Object>} - The loaded personas configuration
+ */
+async loadPersonas() {
+    try {
+        const cacheKey = 'personasConfig';
+        const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
+
+        // Try to connect to Redis if not already connected
+        let redisConnected = false;
+        if (redisClient.status !== 'ready') {
+            try {
                 await redisClient.connect();
+                redisConnected = true;
+                console.log('✅ [LLMModule] Redis connected for persona loading');
+            } catch (connectionError) {
+                console.warn('Redis connection failed for persona loading, reading from file:', connectionError.message);
+                redisConnected = false;
             }
-    
-            const cachedPersonas = await redisClient.get(cacheKey);
-            if (cachedPersonas) {
-                console.log('✅ [LLMModule] Loaded personasConfig from Redis cache');
-                const parsedPersonas = JSON.parse(cachedPersonas);
-    
-                setTimeout(() => {
-                    this.initializeKeywordMap().catch(error => {
-                        console.error('Async keyword map initialization failed:', error);
-                    });
-                }, 0);
-    
-                return parsedPersonas;
-            }
-    
-            // Load from disk if cache is missing
-            const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
-            const data = fs.readFileSync(personaFile, 'utf-8');
-            const personasConfig = JSON.parse(data);
-    
-            // Save personasConfig into Redis
-            await redisClient.set(cacheKey, JSON.stringify(personasConfig));
-    
-            setTimeout(() => {
-                this.initializeKeywordMap().catch(error => {
-                    console.error('Async keyword map initialization failed:', error);
-                });
-            }, 0);
-    
-            return personasConfig;
-    
-        } catch (error) {
-            logger.error('Failed to load personas:', error);
-            return {};
+        } else {
+            redisConnected = true;
         }
+
+        // Check if the file has been modified since last load (if possible)
+        let fileModified = true;
+        let fileHash = null;
+        try {
+            // Get file stats and calculate hash
+            const fileStats = fs.statSync(personaFile);
+            const fileData = fs.readFileSync(personaFile, 'utf-8');
+            fileHash = crypto.createHash('md5').update(fileData).digest('hex');
+            
+            // Check if we have a cached hash in Redis
+            if (redisConnected) {
+                const cachedHash = await redisClient.get(`${cacheKey}_hash`);
+                if (cachedHash === fileHash) {
+                    fileModified = false;
+                    console.log('✅ [LLMModule] Personas file unchanged');
+                }
+            }
+        } catch (fileError) {
+            console.error('Error checking personas file:', fileError);
+        }
+
+        // Try to get cached personas if Redis is connected and file hasn't changed
+        if (redisConnected && !fileModified) {
+            try {
+                const cachedPersonas = await redisClient.get(cacheKey);
+                if (cachedPersonas) {
+                    console.log('✅ [LLMModule] Loaded personasConfig from Redis cache');
+                    const parsedPersonas = JSON.parse(cachedPersonas);
+                    
+                    // Check if we already have a keyword map in memory
+                    const hasKeywordMap = this.keywordToPersonaMap && 
+                                         Object.keys(this.keywordToPersonaMap).length > 0;
+                                         
+                    // Check if we have a cached keyword map in Redis
+                    let hasCachedKeywordMap = false;
+                    if (redisConnected) {
+                        const cachedMapExists = await redisClient.get('keywordToPersonaMap');
+                        hasCachedKeywordMap = !!cachedMapExists;
+                    }
+                    
+                    // Only trigger keyword map initialization if:
+                    // 1. We don't have it in memory AND
+                    // 2. We don't have it cached in Redis
+                    if (!hasKeywordMap && !hasCachedKeywordMap) {
+                        console.log('No keyword map found, will initialize after persona loading');
+                        // setTimeout(() => {
+                        //     this.initializeKeywordMap().catch(error => {
+                        //         console.error('Async keyword map initialization failed:', error);
+                        //     });
+                        // }, 0);
+                    } else {
+                        console.log('Keyword map already available, skipping initialization');
+                    }
+
+                    return parsedPersonas;
+                }
+            } catch (cacheError) {
+                console.warn('Error loading from Redis cache:', cacheError);
+            }
+        }
+
+        // If cache miss or Redis unavailable or file modified, load from disk
+        console.log('Loading personas from file');
+        const data = fs.readFileSync(personaFile, 'utf-8');
+        const personasConfig = JSON.parse(data);
+
+        // Save personasConfig into Redis if connected
+        if (redisConnected) {
+            try {
+                await redisClient.set(cacheKey, JSON.stringify(personasConfig));
+                // Store the file hash for future comparisons
+                if (fileHash) {
+                    await redisClient.set(`${cacheKey}_hash`, fileHash);
+                }
+                console.log('✅ [LLMModule] Saved personasConfig to Redis cache');
+            } catch (saveError) {
+                console.warn('Error saving to Redis cache:', saveError);
+            }
+        }
+
+        // Since the file was modified or newly loaded, we need to update the keyword map
+        console.log('Personas modified, will update keyword map');
+        // setTimeout(() => {
+        //     this.initializeKeywordMap().catch(error => {
+        //         console.error('Async keyword map initialization failed:', error);
+        //     });
+        // }, 0);
+
+        return personasConfig;
+    } catch (error) {
+        logger.error('Failed to load personas:', error);
+        return {};
     }
+}
     
 
     // Add message to conversation history
@@ -705,89 +945,110 @@ class LLMModule {
         }));
     }
       
-    // Function to detect if user is explicitly requesting a specific persona
-     // Updated detectRequestedPersona method that uses dynamic keyword mapping
-     async detectRequestedPersona(message) {
-        if (!message) return { requestedPersona: null, cleanedMessage: message };
-        
-        // Get all persona names to check against user message
-        const personaNames = Object.keys(this.personasConfig);
-        if (personaNames.length === 0) {
-            return { requestedPersona: null, cleanedMessage: message };
+   // Updated detectRequestedPersona method that uses dynamic keyword mapping
+async detectRequestedPersona(message) {
+    if (!message) return { requestedPersona: null, cleanedMessage: message };
+    
+    // Get all persona names to check against user message
+    const personaNames = Object.keys(this.personasConfig);
+    if (personaNames.length === 0) {
+        return { requestedPersona: null, cleanedMessage: message };
+    }
+    
+    // If keyword map is empty, check if it's available in Redis before initialization
+    if (Object.keys(this.keywordToPersonaMap || {}).length === 0) {
+        try {
+            // Try to load from Redis first instead of rebuilding
+            if (redisClient.status === 'ready') {
+                const cachedMap = await redisClient.get('keywordToPersonaMap');
+                if (cachedMap) {
+                    this.keywordToPersonaMap = JSON.parse(cachedMap);
+                    console.log(`Loaded ${Object.keys(this.keywordToPersonaMap).length} keywords from Redis for persona detection`);
+                } else {
+                    // Only initialize if we couldn't load from cache
+                    console.log('No keyword map in cache, initializing for persona detection');
+                    await this.initializeKeywordMap();
+                }
+            } else {
+                // Redis not ready, initialize directly
+                console.log('Redis not ready, initializing keyword map for persona detection');
+                await this.initializeKeywordMap();
+            }
+        } catch (error) {
+            console.warn('Error loading keyword map for persona detection:', error.message);
+            // Continue with empty map - we'll use fallback methods
         }
-        
-        // If keyword map is empty, try to initialize it
-        if (Object.keys(this.keywordToPersonaMap).length === 0) {
-            await this.initializeKeywordMap();
-        }
-        
-        // Step 1: Check for explicit personas mentioned in the message using regex patterns
+    }
+    
+    // Step 1: Check for explicit personas mentioned in the message using regex patterns
+    // Direct requests
+    const requestPatterns = [
         // Direct requests
-        const requestPatterns = [
-            // Direct requests
-            /I\s+need\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-            /I\s+want\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-            /(?:get|give)\s+me\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
-            /can\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+help/i,
-            /let\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:handle|answer)/i,
-            
-            // Persona-first patterns
-            /^([a-zA-Z\s]+)\s*[:,.]\s*(.*)/i,
-            /^(?:as|like)\s+(?:a|an|the)\s+([a-zA-Z\s]+)[,.:]\s*(.*)/i
-        ];
+        /I\s+need\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+        /I\s+want\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+        /(?:get|give)\s+me\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:to|that)/i,
+        /can\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+help/i,
+        /let\s+(?:a|an|the)\s+([a-zA-Z\s]+)\s+(?:handle|answer)/i,
         
-        // Check each pattern for direct persona requests
-        for (const pattern of requestPatterns) {
-            const match = message.match(pattern);
-            if (match && match[1]) {
-                const potentialPersona = match[1].trim().toLowerCase();
-                
-                // Find best matching persona - look for exact matches first
-                for (const personaName of personaNames) {
-                    if (personaName.toLowerCase() === potentialPersona) {
-                        // Exact match - high confidence
-                        const cleanedMessage = this.removePersonaRequest(message, match[0]);
-                        return { 
-                            requestedPersona: personaName, 
-                            cleanedMessage,
-                            confidence: 'high',
-                            method: 'exact_name_match'
-                        };
-                    }
-                }
-                
-                // Find partial matches with a high threshold to avoid false positives
-                let bestMatch = null;
-                let bestMatchScore = 0;
-                
-                for (const personaName of personaNames) {
-                    // Check for substring relationship
-                    if (personaName.toLowerCase().includes(potentialPersona) ||
-                        potentialPersona.includes(personaName.toLowerCase())) {
-                        
-                        const score = this.calculateMatchScore(personaName.toLowerCase(), potentialPersona);
-                        
-                        // Higher threshold (0.7) to avoid false positives
-                        if (score > bestMatchScore && score > 0.7) {
-                            bestMatchScore = score;
-                            bestMatch = personaName;
-                        }
-                    }
-                }
-                
-                if (bestMatch) {
+        // Persona-first patterns
+        /^([a-zA-Z\s]+)\s*[:,.]\s*(.*)/i,
+        /^(?:as|like)\s+(?:a|an|the)\s+([a-zA-Z\s]+)[,.:]\s*(.*)/i
+    ];
+    
+    // Check each pattern for direct persona requests
+    for (const pattern of requestPatterns) {
+        const match = message.match(pattern);
+        if (match && match[1]) {
+            const potentialPersona = match[1].trim().toLowerCase();
+            
+            // Find best matching persona - look for exact matches first
+            for (const personaName of personaNames) {
+                if (personaName.toLowerCase() === potentialPersona) {
+                    // Exact match - high confidence
                     const cleanedMessage = this.removePersonaRequest(message, match[0]);
                     return { 
-                        requestedPersona: bestMatch, 
+                        requestedPersona: personaName, 
                         cleanedMessage,
-                        confidence: 'medium',
-                        method: 'partial_name_match' 
+                        confidence: 'high',
+                        method: 'exact_name_match'
                     };
                 }
             }
+            
+            // Find partial matches with a high threshold to avoid false positives
+            let bestMatch = null;
+            let bestMatchScore = 0;
+            
+            for (const personaName of personaNames) {
+                // Check for substring relationship
+                if (personaName.toLowerCase().includes(potentialPersona) ||
+                    potentialPersona.includes(personaName.toLowerCase())) {
+                    
+                    const score = this.calculateMatchScore(personaName.toLowerCase(), potentialPersona);
+                    
+                    // Higher threshold (0.7) to avoid false positives
+                    if (score > bestMatchScore && score > 0.7) {
+                        bestMatchScore = score;
+                        bestMatch = personaName;
+                    }
+                }
+            }
+            
+            if (bestMatch) {
+                const cleanedMessage = this.removePersonaRequest(message, match[0]);
+                return { 
+                    requestedPersona: bestMatch, 
+                    cleanedMessage,
+                    confidence: 'medium',
+                    method: 'partial_name_match' 
+                };
+            }
         }
-        
-        // Step 2: Check for keyword associations using our dynamic keyword map
+    }
+    
+    // Step 2: Check for keyword associations using our dynamic keyword map
+    // Skip if we don't have a keyword map to avoid unnecessary work
+    if (this.keywordToPersonaMap && Object.keys(this.keywordToPersonaMap).length > 0) {
         // Create a weighted scoring system for keywords
         const personaScores = {};
         const normalizedMessage = message.toLowerCase();
@@ -835,25 +1096,26 @@ class LLMModule {
                 score: highestScore
             };
         }
-        
-        // Step 3: If no clear match from keywords, use content analysis
-        // This is a fallback that will use a more robust approach
-        
-        try {
-            // Use the existing selectPersona method as fallback
-            const selectedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
-            
-            return { 
-                requestedPersona: selectedPersona, 
-                cleanedMessage: message,
-                confidence: 'low',
-                method: 'content_analysis'
-            };
-        } catch (error) {
-            console.error('Error in advanced persona detection:', error);
-            return { requestedPersona: null, cleanedMessage: message };
-        }
     }
+    
+    // Step 3: If no clear match from keywords, use content analysis
+    // This is a fallback that will use a more robust approach
+    
+    try {
+        // Use the existing selectPersona method as fallback
+        const selectedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
+        
+        return { 
+            requestedPersona: selectedPersona, 
+            cleanedMessage: message,
+            confidence: 'low',
+            method: 'content_analysis'
+        };
+    } catch (error) {
+        console.error('Error in advanced persona detection:', error);
+        return { requestedPersona: null, cleanedMessage: message };
+    }
+}
     calculateMatchScore(str1, str2) {
         if (!str1 || !str2) return 0;
         
