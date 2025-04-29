@@ -816,7 +816,15 @@ async function addDocumentsToRAG(documents) {
   }
 }
 
+function getVectorStore() {
+  if (!vectorStore) {
+    throw new Error('Chroma vector store has not been initialized yet. Make sure initializeRAG() ran on startup.');
+  }
+  return vectorStore;
+}
+
 module.exports = {
+  getVectorStore,
   initializeRAG,
   handleRAG,
   clearConversationHistory,

@@ -14,20 +14,6 @@ const {
   OLLAMA_EMBEDDING_MODEL
 } = process.env;
 
-// Initialize vector store for meal plans
-let vectorStore;
-async function initVectorStore() {
-  if (vectorStore) return vectorStore;
-  const embeddings = new OllamaEmbeddings({ baseUrl: OLLAMA_BASE_URL, model: OLLAMA_EMBEDDING_MODEL });
-  vectorStore = await Chroma.fromExistingCollection(embeddings, {
-    collectionName: CHROMA_COLLECTION_NAME,
-    url: CHROMA_URL,
-    tenant: CHROMA_TENANT,
-    database: CHROMA_DATABASE
-  });
-  return vectorStore;
-}
-
 /**
  * Build a detailed prompt for the Nutrition Advisor persona.
  */
@@ -71,7 +57,7 @@ async function generateMealPlan(req, res) {
   const macroRequest = req.body;
   try {
     // Initialize vector store
-    await initVectorStore();
+    const vectorStore = ragHandler.getVectorStore();
 
     // Retrieve similar meal plan documents via RAG
     const queryText = `Meal plan with ${macroRequest.target_calories} calories, ${macroRequest.protein_percentage}% protein, ${macroRequest.fat_percentage}% fat, ${macroRequest.carbs_percentage}% carbs` +
@@ -99,7 +85,7 @@ async function generateMealPlan(req, res) {
     const topDocuments = Object.entries(grouped)
     .slice(0, 5)
     .map(([sourceId, data]) => ({ id: sourceId, content: data.content.join('\n'), metadata: data.metadata }));
-    cosnole.log(`Top documents: ${topDocuments.length} documents found`);
+    console.log(`Top documents: ${topDocuments.length} documents found`);
     // Concatenate full context
     const similarDocs = topDocuments
     .map(doc => `Source: ${doc.id}\n${doc.content}`)
@@ -119,6 +105,5 @@ async function generateMealPlan(req, res) {
 }
 
 module.exports = {
-  initVectorStore,
   generateMealPlan
 };
