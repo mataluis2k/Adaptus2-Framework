@@ -6,6 +6,7 @@ const { handleRAG } = require('./ragHandler1');
 const { createToolCallingAgent, AgentExecutor } = require("langchain/agents");
 const { customerSupportTools } = require("./customerSupportModule.js");
 const buildPersonaPrompt  = require('./buildPersonaPrompt');
+const { ChatPromptTemplate } = require('@langchain/core/prompts');
 
 const defaultPersona = process.env.DEFAULT_PERSONA || 'helpfulAssistant';
 // Cache for storing recent query results
@@ -323,8 +324,17 @@ determineQueryType(persona, context = null) {
             // Get LLM instance
             const llm = await llmModule.getLLMInstance();
             
-            // Create tool calling agent
-            const agent = await createToolCallingAgent({ llm, tools: toolsToAttach });
+            // Create tool calling agent with required inputVariables parameter
+            const agent = await createToolCallingAgent({ 
+                llm, 
+                tools: toolsToAttach,
+                prompt: ChatPromptTemplate.fromMessages([
+                        ["system", `Use the any of these tools to help the customer.`],
+                        ["user", "Answer the question using the tools available to you."],
+                        ["placeholder", "{agent_scratchpad}"],
+                ]),
+                
+            });
             const agentExecutor = new AgentExecutor({ agent, tools: toolsToAttach });
             
             // Build persona prompt
@@ -391,7 +401,11 @@ determineQueryType(persona, context = null) {
             
             // Step 3: Create agent with tools
             const llm = await llmModule.getLLMInstance();
-            const agent = await createToolCallingAgent({ llm, tools: toolsToAttach });
+            const agent = await createToolCallingAgent({ 
+                llm, 
+                tools: toolsToAttach,
+                inputVariables: ["input"] // Add required parameter that was missing
+            });
             const agentExecutor = new AgentExecutor({ agent, tools: toolsToAttach });
             
             // Step 4: Build enhanced prompt with persona, RAG context, and user query
