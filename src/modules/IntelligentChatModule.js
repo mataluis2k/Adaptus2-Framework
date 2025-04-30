@@ -50,6 +50,22 @@ class IntelligentChatModule {
         
         // Store customer contexts to avoid repeated DB calls
         this.customerContexts = new Map();
+        // Add quality control initialization
+        this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
+        
+        // Initialize quality control if global LLM module is available
+        if (this.qualityControlEnabled) {
+            if (global.llmModule && global.llmModule.qualityControl) {
+                this.qualityControl = global.llmModule.qualityControl;
+                console.log('[IntelligentChatModule] Quality control initialized from global LLM module');
+            } else if (llmModule.qualityControl) {
+                this.qualityControl = llmModule.qualityControl;
+                console.log('[IntelligentChatModule] Quality control initialized from local LLM module');
+            } else {
+                console.warn('[IntelligentChatModule] Quality control enabled but not available in LLM module');
+                this.qualityControlEnabled = false;
+            }
+        }
         
         console.log('[IntelligentChatModule] Initialized with intelligent routing');
     }
@@ -204,13 +220,9 @@ class IntelligentChatModule {
             };
         }
         
-        // Ensure customer context is available for this session
-        const userId = this.getUserIdFromSessionId(sessionId);
-        if (userId) {
-            // Always check context is present but use cache when possible
-            await this.#safePreloadCustomerContext(sessionId, userId);
-        }
+
         
+
         try {
             // Step 1: Get session context for potential follow-up handling
             const sessionContext = this.getSessionContext(sessionId);
@@ -224,14 +236,52 @@ class IntelligentChatModule {
                     sessionId,
                     message: processedMessage,
                     queryType: 'direct_llm',
-                    persona: 'default',
+                    persona: persona,
                     recipientId,
                     groupName
                 });
                 
-                return {
-                    response,
+                // Apply quality control if enabled
+                const initialResponse = {
+                    message: response,
                     senderId: "AI_Assistant"
+                };
+                
+                // Apply quality control to the response if enabled
+                if (this.qualityControlEnabled && this.qualityControl) {
+                    console.log('[IntelligentChatModule] Applying quality control to AI response');
+                    const improvedResponse = await this.qualityControl.improveResponse(
+                        processedMessage, // Original user query (cleaned)
+                        initialResponse.message, // Initial LLM response
+                        {
+                            persona: 'default', // Using default persona here
+                            sessionId: sessionId,
+                            context: context
+                        }
+                    );
+                    
+                    // Replace the response message with the improved version
+                    initialResponse.message = improvedResponse.finalResponse;
+                    
+                    // Add metadata about quality control
+                    initialResponse._qualityControlInfo = {
+                        applied: true,
+                        attempts: improvedResponse.improvementAttempts,
+                        finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
+                    };
+                    
+                    console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
+                } else if (this.qualityControlEnabled) {
+                    console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
+                    initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
+                } else {
+                    initialResponse._qualityControlInfo = { applied: false };
+                }
+                
+                return {
+                    response: initialResponse.message,
+                    senderId: initialResponse.senderId,
+                    _qualityControlInfo: initialResponse._qualityControlInfo
                 };
             } else if (message.startsWith(RAG_TRIGGER)) {
                 const processedMessage = message.slice(RAG_TRIGGER.length).trim();
@@ -245,9 +295,43 @@ class IntelligentChatModule {
                     groupName
                 });
                 
-                return {
-                    response,
+                // Apply quality control here as well
+                const initialResponse = {
+                    message: response,
                     senderId: "RAG_Assistant"
+                };
+                
+                if (this.qualityControlEnabled && this.qualityControl) {
+                    console.log('[IntelligentChatModule] Applying quality control to RAG response');
+                    const improvedResponse = await this.qualityControl.improveResponse(
+                        processedMessage,
+                        initialResponse.message,
+                        {
+                            persona: 'default',
+                            sessionId: sessionId,
+                            context: context
+                        }
+                    );
+                    
+                    initialResponse.message = improvedResponse.finalResponse;
+                    initialResponse._qualityControlInfo = {
+                        applied: true,
+                        attempts: improvedResponse.improvementAttempts,
+                        finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
+                    };
+                    
+                    console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
+                } else if (this.qualityControlEnabled) {
+                    console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
+                    initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
+                } else {
+                    initialResponse._qualityControlInfo = { applied: false };
+                }
+                
+                return {
+                    response: initialResponse.message,
+                    senderId: initialResponse.senderId,
+                    _qualityControlInfo: initialResponse._qualityControlInfo
                 };
             }
             
@@ -265,41 +349,76 @@ class IntelligentChatModule {
             
             // FIX: Properly handle the routing result structure
             // The routeMessage function returns { response, persona, classification }
-            const response = routingResult.response;
+            const initialResponse = {
+                message: routingResult.response,
+                senderId: "AI_Assistant"
+            };
             
-            if (!response) {
+            if (!initialResponse.message) {
                 throw new Error('Empty response from message router');
+            }
+            
+            // Apply quality control to the response if enabled
+            if (this.qualityControlEnabled && this.qualityControl) {
+                console.log('[IntelligentChatModule] Applying quality control to routed message response');
+                const improvedResponse = await this.qualityControl.improveResponse(
+                    message, // Original user query
+                    initialResponse.message, // Initial LLM response
+                    {
+                        persona: routingResult.persona || 'default',
+                        sessionId: sessionId,
+                        context: context,
+                        classification: routingResult.classification
+                    }
+                );
+                
+                // Replace the response message with the improved version
+                initialResponse.message = improvedResponse.finalResponse;
+                
+                // Add metadata about quality control
+                initialResponse._qualityControlInfo = {
+                    applied: true,
+                    attempts: improvedResponse.improvementAttempts,
+                    finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
+                };
+                
+                console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
+            } else if (this.qualityControlEnabled) {
+                console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
+                initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
+            } else {
+                initialResponse._qualityControlInfo = { applied: false };
             }
             
             // Store context for potential follow-up
             this.storeSessionContext(
                 sessionId,
                 message,
-                response,
+                initialResponse.message,
                 routingResult.classification
             );
             
             // Determine appropriate sender ID based on classification
-            let senderId = "AI_Assistant";
-            
             if (routingResult.classification) {
                 if (routingResult.classification.needsRAG && !routingResult.classification.needsTools) {
-                    senderId = "RAG_Assistant";
+                    initialResponse.senderId = "RAG_Assistant";
                 } else if (routingResult.classification.needsRAG && routingResult.classification.needsTools) {
-                    senderId = "Hybrid_Assistant";
+                    initialResponse.senderId = "Hybrid_Assistant";
                 }
             }
             
             return {
-                response,
-                senderId
+                response: initialResponse.message,
+                senderId: initialResponse.senderId,
+                _qualityControlInfo: initialResponse._qualityControlInfo
             };
         } catch (error) {
             console.error('[IntelligentChatModule] Error processing message:', error);
             
             return {
                 response: "I apologize, but I encountered an error processing your request. Please try again.",
-                senderId: "AI_Assistant"
+                senderId: "AI_Assistant",
+                _qualityControlInfo: { applied: false, error: true }
             };
         }
     }
@@ -392,13 +511,6 @@ class IntelligentChatModule {
                         if (!message) {
                             socket.emit("error", "Empty message received");
                             return;
-                        }
-                        
-                        // Ensure customer context is loaded (using cached value if available)
-                        const { id: userId } = socket.user || {};
-                        if (userId && sessionId) {
-                            // Always check context is present but use cache when possible
-                            await this.#safePreloadCustomerContext(sessionId, userId);
                         }
                         
                         // Save incoming message
@@ -494,6 +606,13 @@ class IntelligentChatModule {
                                 text: "I apologize, but I encountered an error processing your request. Please try again.", 
                                 timestamp: new Date().toISOString() 
                             });
+                        }
+                    }
+                    if (message._qualityControlInfo) {
+                        if (message._qualityControlInfo.applied) {
+                            console.log(`[IntelligentChatModule] Quality control applied to message from ${sessionId}. Score: ${result._qualityControlInfo.finalScore}, Attempts: ${result._qualityControlInfo.attempts}`);
+                        } else {
+                            console.log(`[IntelligentChatModule] Quality control skipped for message from ${sessionId}. Reason: ${result._qualityControlInfo.reason || 'disabled'}`);
                         }
                     }
                 };

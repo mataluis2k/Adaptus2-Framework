@@ -6,6 +6,8 @@ const { handleRAG } = require('./ragHandler1');
 const { createToolCallingAgent, AgentExecutor } = require("langchain/agents");
 const { customerSupportTools } = require("./customerSupportModule.js");
 const buildPersonaPrompt  = require('./buildPersonaPrompt');
+
+const defaultPersona = process.env.DEFAULT_PERSONA || 'helpfulAssistant';
 // Cache for storing recent query results
 class ResponseCache {
     constructor(maxSize = 100, ttlMs = 3600000) { // Default 1 hour TTL
@@ -159,14 +161,14 @@ determineQueryType(persona, context = null) {
             sessionId = 'default',
             message = '',
             queryType = 'simple_query',
-            persona = 'default',
+            persona = defaultPersona,
             context = null,
             recipientId = null, // Added to match parameter from MessageRouter
             groupName = null    // Added to match parameter from MessageRouter
         } = params;
         
         // Determine query type if not specified
-        queryType = this.determineQueryType(persona, context);
+        // queryType = this.determineQueryType(persona, context);
         // Fix logging to ensure the correct persona is shown
         console.log(`[ResponseStrategy] Generating ${queryType} response for ${sessionId} using persona ${persona}`);
         
@@ -298,13 +300,20 @@ determineQueryType(persona, context = null) {
             }
             
             // Get allowed tools for this persona
-            const allowedToolNames = personaConfig.tools || [];
-            
+            let allowedToolNames = personaConfig.tools || [];
+            if (typeof allowedToolNames === 'string') {
+                allowedToolNames = allowedToolNames
+                  .split(',')
+                  .map(name => name.trim())
+                  .filter(name => name.length > 0);
+            }
+            console.log(`[ResponseStrategy] Allowed tools for ${persona}: ${allowedToolNames}`);
             // Filter available tools based on persona permissions
-            const toolsToAttach = customerSupportTools.filter(tool => 
+            const toolsToAttach = customerSupportTools.filter((tool) => 
                 allowedToolNames.includes(tool.name)
             );
-            
+            console.log("Attaching these tool instances:", toolsToAttach.map((t) => t.name));
+
             // If no tools available after filtering, fall back to simple query
             if (!toolsToAttach || toolsToAttach.length === 0) {
                 console.log(`[ResponseStrategy] No tools available for ${persona} after filtering, falling back to simple query`);

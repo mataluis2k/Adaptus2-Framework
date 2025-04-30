@@ -177,7 +177,7 @@ class QualityControl {
     constructor(llmInstance) {
         this.llm = llmInstance;
         this.maxRetries = process.env.QUALITY_CONTROL_MAX_RETRIES || 2;
-      
+        this.personasConfig = llmInstance.personasConfig || {};
     }
     
     async evaluateResponse(userQuery, llmResponse, context = null) {
@@ -219,26 +219,54 @@ class QualityControl {
             status: 'processing'
         };
         
-        const evaluationResponse = await this.llm.simpleLLMCall(messageData);
-        
+        const raw = await this.llm.simpleLLMCall(messageData);
+        let text = raw.message;
+
+        // 1) Strip out any Markdown fences or stray backticks
+        text = text.replace(/```/g, '');
+      
+        // 2) Grab the JSON object itself
+        const braceMatch = text.match(/\{[\s\S]*\}/);
+        if (!braceMatch) {
+          console.warn('QC: no JSON object found, falling back.');
+          return this._defaultAssessment();
+        }
+        let jsonString = braceMatch[0];
+      
+        // 3) Escape any literal newlines inside improvementSuggestions
+        jsonString = jsonString.replace(
+          /("improvementSuggestions"\s*:\s*")([\s\S]*?)(")(\s*,)/,
+          (_, prefix, body, quote, comma) => {
+            // replace real breaks with \n
+            const escapedBody = body.replace(/\r?\n/g, '\\n');
+            return `${prefix}${escapedBody}${quote}${comma}`;
+          }
+        );
+      
+        // 4) Fix the single-quoted empty string in revisedResponse
+        jsonString = jsonString.replace(
+          /("revisedResponse"\s*:\s*)''/,
+          '$1""'
+        );
+        console.log('Quality evaluation response:', jsonString);
         try {
-            // Parse the JSON response
-            const jsonStart = evaluationResponse.message.indexOf('{');
-            const jsonEnd = evaluationResponse.message.lastIndexOf('}') + 1;
-            const jsonString = evaluationResponse.message.substring(jsonStart, jsonEnd);
+
             return JSON.parse(jsonString);
         } catch (error) {
             console.error('Failed to parse quality evaluation response:', error);
             // Return a default assessment
-            return {
-                qualityScore: 5,
-                needsRevision: false,
-                issues: ['Error in quality control process'],
-                improvementSuggestions: '',
-                revisedResponse: ''
-            };
+            return this._defaultAssessment();
         }
     }
+    _defaultAssessment() {
+        return {
+          qualityScore: 5,
+          needsRevision: false,
+          issues: ['Error in quality control process'],
+          improvementSuggestions: '',
+          revisedResponse: ''
+        };
+      }
     
     async improveResponse(userQuery, response, options = {}) {
         const {
@@ -277,7 +305,19 @@ class QualityControl {
             // Prepare improvement prompt with persona if provided
             let personaPrompt = "";
             if (persona) {
-                personaPrompt = buildPersonaPrompt(this.personasConfig[persona]);
+                // if personasConfig empty try to load it
+                if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
+                    try {
+                        this.personasConfig = await this.llm.loadPersonas();
+                    } catch (error) {
+                        console.error('Error loading personas for improvement:', error);
+                    }
+                }
+                if(!this.personasConfig[persona]) {
+                    console.warn(`Persona ${persona} not found in config`);
+                }else {
+                    personaPrompt = buildPersonaPrompt(this.personasConfig[persona]);
+                }
             }
             
             const improvementPrompt = `
@@ -979,7 +1019,7 @@ async detectRequestedPersona(message) {
             // Continue with empty map - we'll use fallback methods
         }
     }
-    
+
     // Step 1: Check for explicit personas mentioned in the message using regex patterns
     // Direct requests
     const requestPatterns = [
@@ -1087,7 +1127,7 @@ async detectRequestedPersona(message) {
         
         // Only return a keyword-based match if the score is at least 2
         // This helps avoid false positives from casual mentions
-        if (mostLikelyPersona && highestScore >= 2) {
+        if (mostLikelyPersona && highestScore >= 4) {
             return { 
                 requestedPersona: mostLikelyPersona, 
                 cleanedMessage: message,

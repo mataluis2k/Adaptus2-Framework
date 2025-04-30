@@ -9,7 +9,8 @@ class MessageRouter {
         this.responseEngine = responseEngine;
         this.recentQueries = new Map(); // Store recent queries by session for context
         this.maxRecentQueries = 5; // Number of recent queries to keep per session
-    }
+        this.defaultPersona = process.env.DEFAULT_PERSONA || 'helpfulAssistant'; // Default persona if none is detected
+    }   
 
     // Record a query for context
     recordQuery(sessionId, message, classification) {
@@ -45,14 +46,17 @@ class MessageRouter {
             console.error('[MessageRouter] Missing required parameters: sessionId or message');
             return {
                 response: "I apologize, but I encountered an error processing your request.",
-                persona: "default",
+                persona: this.defaultPersona,
                 classification: { type: "error" }
             };
         }
         
         try {
             // Step 1: Detect persona from message
-            const { requestedPersona, cleanedMessage } = await llmModule.detectRequestedPersona(message);
+            
+            const PersonaResult = await llmModule.detectRequestedPersona(message);
+            console.log(`[MessageRouter] Detected persona: ` +  JSON.stringify(PersonaResult));
+            const { requestedPersona, cleanedMessage } = PersonaResult;
             
             // Step 2: If no specific persona detected, select best one for this message
             let selectedPersona = requestedPersona;
@@ -64,7 +68,7 @@ class MessageRouter {
             // Safety check - ensure we have a valid persona
             if (!selectedPersona) {
                 console.log('[MessageRouter] No persona selected, using default');
-                selectedPersona = 'default';
+                selectedPersona = this.defaultPersona;
             }
             
             console.log(`[MessageRouter] Selected persona: ${selectedPersona}`);
@@ -153,6 +157,7 @@ class MessageRouter {
     async classifyMessage(message, persona, isFollowUp = false) {
         // Get persona configuration
         const personaConfig = llmModule.personasConfig[persona] || {};
+        console.log(`[MessageRouter] Persona config: ${JSON.stringify(personaConfig)}`);
         
         // Check for explicit triggers (for backward compatibility)
         if (message.startsWith('/ai')) {
@@ -229,6 +234,13 @@ class MessageRouter {
                 type: 'action_query',
                 needsRAG: false,
                 needsTools: true,
+                processedMessage: message
+            };
+        }  else if (hasRagCapability) {
+            return {
+                type: 'direct_rag', 
+                needsRAG: true,
+                needsTools: false,
                 processedMessage: message
             };
         } else {

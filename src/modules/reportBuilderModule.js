@@ -59,7 +59,7 @@ class ReportBuilderModule {
                 return `${table}: ${cols.map(col => `${col.Field} (${col.Type})`).join(', ')}`;
             }).join('\n');
 
-            const prompt = `User wants to build a report.\nSchema:\n${schemaString}\n\nQuery: ${userQuery} .\n Important Generate SQL code ONLY.`;
+            const prompt = `User wants to build a report.\nSchema:\n${schemaString}\n\nQuery: ${userQuery} .\nGenerate SQL code ONLY.`;
             const llmResponse = await llmModule.simpleLLMCall({
                 senderId: ctx.user?.id || 'report_generator',
                 recipientId: 'sql_engine',
