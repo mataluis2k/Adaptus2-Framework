@@ -180,7 +180,14 @@ class QualityControl {
         this.personasConfig = llmInstance.personasConfig || {};
     }
     
-    async evaluateResponse(userQuery, llmResponse, context = null) {
+    async evaluateResponse(userQuery, llmResponse, options = {}) {
+        const { 
+            context = null,
+            queryType = null,
+            persona = null,
+            classification = null
+        } = options;
+        
         // Prepare evaluation prompt
         const evaluationPrompt = `
             You are a Quality Control Agent responsible for ensuring responses meet high standards.
@@ -190,6 +197,8 @@ class QualityControl {
             CURRENT LLM RESPONSE: "${llmResponse}"
             
             ${context ? `RELEVANT CONTEXT: ${context}` : ''}
+            ${queryType ? `RESPONSE GENERATED USING: ${queryType}` : ''}
+            ${persona ? `PERSONA USED: ${persona}` : ''}
             
             Assess this response based on:
             1. Relevance: Does it directly address the user's query?
@@ -203,11 +212,10 @@ class QualityControl {
                 "qualityScore": [0-10], // Overall quality score
                 "needsRevision": true/false, // Whether response needs revision
                 "issues": ["specific issue 1", "specific issue 2"], // Problems with the response
-                "improvementSuggestions": "Detailed suggestions for improvement",
-                "revisedResponse": "Complete revised response if needed"
+                "improvementSuggestions": "Detailed suggestions for improvement"
             }
             
-            If the response is satisfactory (8+ quality score), set needsRevision to false and leave revisedResponse empty.
+            If the response is satisfactory (8+ quality score), set needsRevision to false.
         `;
         
         // Use simpleLLMCall to avoid potential recursion
@@ -216,41 +224,43 @@ class QualityControl {
             recipientId: 'system',
             message: evaluationPrompt,
             timestamp: new Date().toISOString(),
-            status: 'processing'
+            status: 'processing',
+            format: 'json'
         };
         
         const raw = await this.llm.simpleLLMCall(messageData);
         let text = raw.message;
 
-        // 1) Strip out any Markdown fences or stray backticks
-        text = text.replace(/```/g, '');
-      
-        // 2) Grab the JSON object itself
-        const braceMatch = text.match(/\{[\s\S]*\}/);
-        if (!braceMatch) {
-          console.warn('QC: no JSON object found, falling back.');
-          return this._defaultAssessment();
-        }
-        let jsonString = braceMatch[0];
-      
-        // 3) Escape any literal newlines inside improvementSuggestions
-        jsonString = jsonString.replace(
-          /("improvementSuggestions"\s*:\s*")([\s\S]*?)(")(\s*,)/,
-          (_, prefix, body, quote, comma) => {
-            // replace real breaks with \n
-            const escapedBody = body.replace(/\r?\n/g, '\\n');
-            return `${prefix}${escapedBody}${quote}${comma}`;
-          }
-        );
-      
-        // 4) Fix the single-quoted empty string in revisedResponse
-        jsonString = jsonString.replace(
-          /("revisedResponse"\s*:\s*)''/,
-          '$1""'
-        );
-        console.log('Quality evaluation response:', jsonString);
+        // Parse response to get evaluation
         try {
+            // Test if it is a JSON object
+            if (text.startsWith('{') && text.endsWith('}')) {
+                // If it looks like a JSON object, return it directly
+                return JSON.parse(text);
+            }
 
+            // 1) Strip out any Markdown fences or stray backticks
+            text = text.replace(/```/g, '');
+          
+            // 2) Grab the JSON object itself
+            const braceMatch = text.match(/\{[\s\S]*\}/);
+            if (!braceMatch) {
+                console.warn('QC: no JSON object found, falling back.');
+                return this._defaultAssessment();
+            }
+            
+            let jsonString = braceMatch[0];
+          
+            // 3) Escape any literal newlines inside improvementSuggestions
+            jsonString = jsonString.replace(
+                /("improvementSuggestions"\s*:\s*")([\s\S]*?)(")(\s*,)/,
+                (_, prefix, body, quote, comma) => {
+                    // replace real breaks with \n
+                    const escapedBody = body.replace(/\r?\n/g, '\\n');
+                    return `${prefix}${escapedBody}${quote}${comma}`;
+                }
+            );
+          
             return JSON.parse(jsonString);
         } catch (error) {
             console.error('Failed to parse quality evaluation response:', error);
@@ -258,122 +268,16 @@ class QualityControl {
             return this._defaultAssessment();
         }
     }
+    
     _defaultAssessment() {
         return {
-          qualityScore: 5,
-          needsRevision: false,
-          issues: ['Error in quality control process'],
-          improvementSuggestions: '',
-          revisedResponse: ''
-        };
-      }
-    
-    async improveResponse(userQuery, response, options = {}) {
-        const {
-            persona = null,
-            context = null,
-            sessionId = 'default'
-        } = options;
-        
-        let currentResponse = response;
-        let attempts = 0;
-        let evaluationResult;
-        let improvementHistory = [];
-        
-        // Try improving the response up to maxRetries times
-        while (attempts < this.maxRetries) {
-            // Evaluate the current response
-            evaluationResult = await this.evaluateResponse(
-                userQuery, 
-                currentResponse, 
-                context
-            );
-            
-            // Record this attempt
-            improvementHistory.push({
-                attempt: attempts + 1,
-                response: currentResponse,
-                evaluation: evaluationResult
-            });
-            
-            // If response doesn't need revision or we've hit max attempts, break
-            if (!evaluationResult.needsRevision) {
-                console.log(`Quality control: Response accepted after ${attempts + 1} attempts`);
-                break;
-            }
-            
-            // Prepare improvement prompt with persona if provided
-            let personaPrompt = "";
-            if (persona) {
-                // if personasConfig empty try to load it
-                if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
-                    try {
-                        this.personasConfig = await this.llm.loadPersonas();
-                    } catch (error) {
-                        console.error('Error loading personas for improvement:', error);
-                    }
-                }
-                if(!this.personasConfig[persona]) {
-                    console.warn(`Persona ${persona} not found in config`);
-                }else {
-                    personaPrompt = buildPersonaPrompt(this.personasConfig[persona]);
-                }
-            }
-            
-            const improvementPrompt = `
-                ${personaPrompt}
-                
-                You are providing a response to a user query and need to improve your answer.
-                
-                USER QUERY: "${userQuery}"
-                
-                YOUR CURRENT RESPONSE: "${currentResponse}"
-                
-                ${context ? `RELEVANT CONTEXT: ${context}` : ''}
-                
-                QUALITY ASSESSMENT:
-                - Score: ${evaluationResult.qualityScore}/10
-                - Issues identified: ${evaluationResult.issues.join(', ')}
-                - Improvement suggestions: ${evaluationResult.improvementSuggestions}
-                
-                Please provide an improved response that addresses these issues.
-                If the evaluation included a revised response, consider using it as a starting point.
-                Maintain the same persona and tone in your improved response.
-            `;
-            
-            // Call LLM for improved response
-            const messageData = {
-                senderId: sessionId,
-                recipientId: 'AI_Assistant',
-                message: improvementPrompt,
-                timestamp: new Date().toISOString(),
-                status: 'processing'
-            };
-            
-            // Use simpleLLMCall to avoid potential recursion
-            const improvedResponseObj = await this.llm.simpleLLMCall(messageData);
-            
-            if (!improvedResponseObj || !improvedResponseObj.message) {
-                console.error('Failed to get improved response');
-                break;
-            }
-            
-            // Update current response and increment attempt counter
-            currentResponse = improvedResponseObj.message;
-            attempts++;
-            
-            console.log(`Quality control: Completed improvement attempt ${attempts}`);
-        }
-        
-        return {
-            finalResponse: currentResponse,
-            improvementAttempts: attempts,
-            improvementHistory: improvementHistory,
-            finalEvaluation: evaluationResult
+            qualityScore: 5,
+            needsRevision: false,
+            issues: ['Error in quality control process'],
+            improvementSuggestions: ''
         };
     }
 }
-
 class LLMModule {
     constructor() {
         // Initialize conversation history storage
@@ -1232,93 +1136,236 @@ async detectRequestedPersona(message) {
         return message;
     }
 
-    async selectPersona(message, personaList) {
-        if (!personaList || personaList.length === 0) {
-            logger.warn('No personas available for selection');
-            return null;
+/**
+ * Enhanced version of selectPersona that can also provide direct answers
+ * Takes in the user's context (account info, orders, etc.) and determines if it can
+ * answer directly or should route to a specialized persona
+ * 
+ * @param {string} message - The user's message
+ * @param {Array} personaList - List of available personas with descriptions
+ * @param {Object} options - Additional options
+ * @param {Object} options.userContext - User-specific context (orders, account info, etc.)
+ * @param {string} options.sessionId - User's session ID
+ * @returns {Promise<Object>} - Either {persona: personaName} or {directAnswer: answerText}
+ */
+async selectPersona(message, personaList, options = {}) {
+    const { userContext = null, sessionId = null } = options;
+    
+    if (!personaList || personaList.length === 0) {
+        logger.warn('No personas available for selection');
+        
+        // If we have context, we might be able to answer directly even without personas
+        if (userContext) {
+            const directAnswer = await this.generateDirectAnswer(message, userContext, sessionId);
+            if (directAnswer) {
+                return { directAnswer };
+            }
         }
+        
+        return { persona: null };
+    }
 
-        // If there's only one persona, just use it without calling LLM
-        if (personaList.length === 1) {
-            logger.info(`Only one persona available (${personaList[0].persona}), using it automatically`);
-            return personaList[0].persona;
-        }
 
-        // Create a complete message data object with all required fields
-        const messageDataCopy = { 
-            senderId: 'persona_selector', 
-            recipientId: 'system',
-            message: message,
-            groupName: null,
-            timestamp: new Date().toISOString(),
-            status: 'processing'
-        };
 
-        let list = JSON.stringify(personaList, null, 2);
-        const llmPrompt = `
-        You are tasked with selecting the most suitable persona from the list below to answer the user's question.
-        
-        Each persona has a name and a brief description of its expertise:
-        
-        ${list}
-        
-        User's question: "${message}"
-        
-        Instructions:
-        - Review the personas and their descriptions.
-        - Determine which persona is best equipped to answer the user's question based on their expertise.
-        - Respond with **only the persona's name** (the exact name from the list) that is most suitable.
-        - Do not provide any explanation or additional text.
-        
-        Return format:
-        <persona_name>
-        `;
-
-        messageDataCopy.message = llmPrompt;
-        
+    // Format the context information if available
+    let contextInfo = '';
+    if (userContext) {
         try {
-            // Use a simpler LLM call that doesn't add to the main conversation history
-            const response = await this.simpleLLMCall(messageDataCopy);
-            
-            if (!response || !response.message) {
-                logger.warn('No response from persona selector, using default persona');
-                // Use the first persona as default if available
-                return personaList[0]?.persona || null;
+            // Format user context to be easily readable by the LLM
+            if (userContext.customerInfo) {
+                contextInfo += `\n\nCustomer Information:\n${JSON.stringify(userContext.customerInfo, null, 2)}`;
             }
             
-            // Extract just the persona name from response
-            // First, try to extract a name between angle brackets
+            if (userContext.orders && userContext.orders.length > 0) {
+                contextInfo += `\n\nRecent Orders:\n${JSON.stringify(userContext.orders, null, 2)}`;
+            }
+            
+            if (userContext.profile) {
+                contextInfo += `\n\nUser Profile:\n${JSON.stringify(userContext.profile, null, 2)}`;
+            }
+            
+            // Add any other context types that might be relevant
+        } catch (error) {
+            logger.warn('Error formatting user context:', error);
+            // Continue without context if there's an error
+        }
+    }
+
+    // Create a complete message data object with all required fields
+    const messageDataCopy = { 
+        senderId: sessionId || 'persona_selector', 
+        recipientId: 'system',
+        message: '',  // Will be populated below
+        groupName: null,
+        timestamp: new Date().toISOString(),
+        status: 'processing'
+    };
+
+    let personaListStr = JSON.stringify(personaList, null, 2);
+    const llmPrompt = `
+    You are a smart routing agent that can either select a specialized persona to handle a query OR answer directly.
+    
+    Each persona has a name and a brief description of its expertise:
+    
+    ${personaListStr}
+    
+    User's question: "${message}"
+    ${contextInfo ? `\nUser Context Information:${contextInfo}` : ''}
+    
+    Instructions:
+    1. First, determine if you can answer the user's question DIRECTLY using the provided context information.
+    2. If you CAN answer directly with high confidence, respond with a JSON object in this format:
+       {"decision": "direct_answer", "answer": "Your complete answer here"}
+    3. If you CANNOT answer directly or the query would benefit from specialized handling, select the most suitable persona from the list and respond with a JSON object in this format:
+       {"decision": "use_persona", "persona": "exact_persona_name_from_list"}
+    
+    Consider these factors:
+    - Account-specific questions about orders, refunds, or user data should be answered directly when possible
+    - Account, order or refunds updates or changes should be routed to the appropriate persona
+    - Technical or complex questions should be routed to specialized personas
+    - General questions that require domain expertise should be routed to personas
+    - Simple factual questions based on the user's data should be answered directly
+    
+    Your response must be valid JSON, nothing else.
+    `;
+
+    messageDataCopy.message = llmPrompt;
+    
+    try {
+        // Use a simpler LLM call that doesn't add to the main conversation history
+        const response = await this.simpleLLMCall(messageDataCopy);
+        
+        if (!response || !response.message) {
+            logger.warn('No response from persona selector, using default persona');
+            // Use the first persona as default if available
+            return { persona: personaList[0]?.persona || null };
+        }
+        
+        // Try to parse JSON response
+        try {
+            const responseText = response.message.trim();
+            // Extract JSON if it's embedded in other text
+            const jsonMatch = responseText.match(/\{[\s\S]*\}/);
+            const jsonStr = jsonMatch ? jsonMatch[0] : responseText;
+            
+            const result = JSON.parse(jsonStr);
+            
+            if (result.decision === "direct_answer" && result.answer) {
+                logger.info(`Providing direct answer based on context`);
+                return { directAnswer: result.answer };
+            } else if (result.decision === "use_persona" && result.persona) {
+                const personaName = result.persona;
+                
+                // Verify the persona exists in our config
+                if (this.personasConfig[personaName]) {
+                    logger.info(`Selected persona: ${personaName}`);
+                    return { persona: personaName };
+                } else {
+                    // Try to find a close match
+                    const closestPersona = this.findClosestPersona(personaName);
+                    if (closestPersona) {
+                        logger.info(`Using closest matching persona: ${closestPersona}`);
+                        return { persona: closestPersona };
+                    }
+                    
+                    logger.warn(`Selected persona "${personaName}" not found in config, using default`);
+                    return { persona: personaList[0]?.persona || null };
+                }
+            } else {
+                // Invalid or unexpected format, fall back to default
+                logger.warn('Invalid response format from persona selector');
+                return { persona: personaList[0]?.persona || null };
+            }
+        } catch (jsonError) {
+            logger.warn('Error parsing JSON response from persona selector:', jsonError);
+            
+            // Fallback to the original logic if JSON parsing fails
             let personaName = response.message.trim();
             const bracketMatch = personaName.match(/<([^>]+)>/);
             if (bracketMatch) {
                 personaName = bracketMatch[1].trim();
             } else {
-                // If no brackets, use the first line or whole response
                 personaName = personaName.split('\n')[0].trim();
             }
             
-            // Verify the persona exists in our config
+            // Verify the persona exists
             if (this.personasConfig[personaName]) {
-                logger.info(`Selected persona: ${personaName}`);
-                return personaName;
+                return { persona: personaName };
             } else {
-                // Try to find a close match in case the model didn't return the exact name
+                // Try to find a close match
                 const closestPersona = this.findClosestPersona(personaName);
                 if (closestPersona) {
-                    logger.info(`Using closest matching persona: ${closestPersona}`);
-                    return closestPersona;
+                    return { persona: closestPersona };
                 }
                 
-                logger.warn(`Selected persona "${personaName}" not found in config, using default`);
-                // Use the first persona as default if available
-                return personaList[0]?.persona || null;
+                return { persona: personaList[0]?.persona || null };
             }
-        } catch (error) {
-            logger.error('Error selecting persona:', error);
-            // Use the first persona as default if available
-            return personaList[0]?.persona || null;
         }
+    } catch (error) {
+        logger.error('Error selecting persona:', error);
+        // Use the first persona as default if available
+        return { persona: personaList[0]?.persona || null };
     }
+}
+
+/**
+ * Attempts to generate a direct answer to the user's query using the provided context
+ * @param {string} message - The user's message
+ * @param {Object} userContext - User-specific context
+ * @param {string} sessionId - User's session ID
+ * @returns {Promise<string|null>} - Direct answer or null if can't answer
+ */
+async generateDirectAnswer(message, userContext, sessionId) {
+    // Create a direct answer prompt
+    const directAnswerPrompt = `
+    You are a helpful assistant with access to the user's account information.
+    
+    User's question: "${message}"
+    
+    User Context Information:
+    ${JSON.stringify(userContext, null, 2)}
+    
+    Instructions:
+    1. If you can confidently answer the user's question using ONLY the provided context, provide a complete, helpful response.
+    2. If you cannot answer with the provided context or the question requires additional expertise, respond with "NEED_SPECIALIZED_PERSONA".
+    3. Focus on factual information from the context - orders, account details, user profile, etc.
+    4. Be helpful, concise, and accurate.
+    
+    Your response should either be a direct answer to the user's question OR exactly "NEED_SPECIALIZED_PERSONA" if you cannot answer confidently.
+    `;
+    
+    const messageData = { 
+        senderId: sessionId || 'direct_answer_agent', 
+        recipientId: 'system',
+        message: directAnswerPrompt,
+        timestamp: new Date().toISOString(),
+        status: 'processing'
+    };
+    
+    try {
+        const response = await this.simpleLLMCall(messageData);
+        
+        if (!response || !response.message) {
+            logger.warn('No response from direct answer generator');
+            return null;
+        }
+        
+        const answer = response.message.trim();
+        
+        // If the LLM indicates it needs a specialized persona, return null
+        if (answer === 'NEED_SPECIALIZED_PERSONA' || answer.includes('NEED_SPECIALIZED_PERSONA')) {
+            logger.info('Direct answer not possible, need specialized persona');
+            return null;
+        }
+        
+        // Otherwise, return the direct answer
+        logger.info('Generated direct answer from context');
+        return answer;
+    } catch (error) {
+        logger.error('Error generating direct answer:', error);
+        return null;
+    }
+}
     
     // Helper method to find the closest persona name match
     findClosestPersona(personaName) {
@@ -1345,16 +1392,22 @@ async detectRequestedPersona(message) {
         return null; // No match found
     }
 
-    async getLLMInstance() {
+    async getLLMInstance(model = null) {
         const { ChatOllama } = require('@langchain/ollama');
         const { ChatOpenAI } = require('@langchain/openai');
+
+        // Check if the model is provided, otherwise use the default
+        // This overrides the environment variable if needed
+        if (!model) {
+            model = process.env.OLLAMA_INFERENCE || 'llama3';
+        }
     
         switch (this.llmType.toLowerCase()) {
             case 'ollama':
                 try {
                     return new ChatOllama({
                         baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-                        model: process.env.OLLAMA_INFERENCE || 'llama3',
+                        model: model,
                         temperature: 0.3
                     });
                 } catch (error) {
@@ -1411,7 +1464,8 @@ async detectRequestedPersona(message) {
                 message: messageData.message,
                 groupName: messageData.groupName || null,
                 timestamp: messageData.timestamp || new Date().toISOString(),
-                status: 'processing'
+                status: 'processing',
+                format: messageData.format || 'text'
             };
             
             switch (this.llmType.toLowerCase()) {

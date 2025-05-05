@@ -3,6 +3,7 @@
 // Part of the optimized chat architecture design
 
 const llmModule = require('./llmModule');
+const customerSupportModule = require('./customerSupportModule');
 
 class MessageRouter {
     constructor(responseEngine) {
@@ -39,7 +40,7 @@ class MessageRouter {
     }
 
     // Main routing function
-    async routeMessage(sessionId, message, recipientId, groupName = null) {
+    async routeMessage(sessionId, message, recipientId, groupName = null, userId = null) {
         console.log(`[MessageRouter] Routing message from ${sessionId}`);
         
         if (!sessionId || !message) {
@@ -52,29 +53,48 @@ class MessageRouter {
         }
         
         try {
-            // Step 1: Detect persona from message
+            // // Step 1: Detect persona from message
             
-            const PersonaResult = await llmModule.detectRequestedPersona(message);
-            console.log(`[MessageRouter] Detected persona: ` +  JSON.stringify(PersonaResult));
-            const { requestedPersona, cleanedMessage } = PersonaResult;
+            // const PersonaResult = await llmModule.detectRequestedPersona(message);
+            // console.log(`[MessageRouter1] Detected persona: ` +  JSON.stringify(PersonaResult));
+            // const { requestedPersona, cleanedMessage } = PersonaResult;
             
             // Step 2: If no specific persona detected, select best one for this message
-            let selectedPersona = requestedPersona;
-            if (!selectedPersona) {
-                const personaList = llmModule.getPersonasWithDescriptions();
-                selectedPersona = await llmModule.selectPersona(message, personaList);
+
+            const userContext = await customerSupportModule.buildCustomerProfile(userId);
+            console.log(`[MessageRouter2] Routing message with userContext `,JSON.stringify(userContext));
+            let selectedPersona = "";
+            const personas = llmModule.getPersonasWithDescriptions();
+            console.log(`[MessageRouter2] Available personas:`, JSON.stringify(personas));
+            const personaResult = await llmModule.selectPersona(
+                message, 
+                personas, 
+                { userContext, sessionId }
+            );
+            if (personaResult.directAnswer) {
+                console.log(`[MessageRouter] Providing direct answer from context information`);
+                return {
+                    response: personaResult.directAnswer,
+                    persona: null, // No persona was used
+                    classification: {
+                        needsRAG: false,
+                        needsTools: false,
+                        isDirect: true
+                    }
+                };
             }
-            
+            selectedPersona = personaResult.persona;
             // Safety check - ensure we have a valid persona
             if (!selectedPersona) {
                 console.log('[MessageRouter] No persona selected, using default');
                 selectedPersona = this.defaultPersona;
             }
             
-            console.log(`[MessageRouter] Selected persona: ${selectedPersona}`);
+            console.log(`[MessageRouter2] Selected persona:`,JSON.stringify(selectedPersona));
             
             // Step 3: Analyze message for context continuation
-            const processedMessage = requestedPersona ? cleanedMessage : message;
+            // Since we're no longer using persona detection, just use the original message
+            const processedMessage = message;
             const recentQueries = this.getRecentQueries(sessionId);
             
             // Check if this is a follow-up to a recent RAG query
@@ -157,7 +177,7 @@ class MessageRouter {
     async classifyMessage(message, persona, isFollowUp = false) {
         // Get persona configuration
         const personaConfig = llmModule.personasConfig[persona] || {};
-        console.log(`[MessageRouter] Persona config: ${JSON.stringify(personaConfig)}`);
+        console.log(`[MessageRouter3] Persona config: ${JSON.stringify(personaConfig)}`);
         
         // Check for explicit triggers (for backward compatibility)
         if (message.startsWith('/ai')) {

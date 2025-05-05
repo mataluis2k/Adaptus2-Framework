@@ -3,6 +3,7 @@ const { aarMiddleware } = require('../middleware/aarMiddleware');
 const { getDbConnection } = require('./db');
 const llmModule = require('./llmModule');
 const express = require('express');
+const { format } = require('path');
 
 class ReportBuilderModule {
     constructor(globalContext, dbConfig, app) {
@@ -60,20 +61,104 @@ class ReportBuilderModule {
             }).join('\n');
 
             const prompt = `User wants to build a report.\nSchema:\n${schemaString}\n\nQuery: ${userQuery} .\nGenerate SQL code ONLY.`;
-            const llmResponse = await llmModule.simpleLLMCall({
+            const llm = await llmModule.getLLMInstance('sqlcoder');
+            const llmResponse = await llm.simpleLLMCall({
                 senderId: ctx.user?.id || 'report_generator',
                 recipientId: 'sql_engine',
                 message: prompt,
                 timestamp: new Date().toISOString(),
-                status: 'processing'
+                status: 'processing',
+                format: 'json',
             });
-
+            console.log('LLM Response:', llmResponse);
             return { code: llmResponse.message };
         } finally {
-            //connection.release();
+            // Connection is automatically released by the pool wrapper
         }
     }
-
+    
+    async executeFromIntent(ctx, params) {
+        const { prompt } = params;
+        const userIntent = prompt || params.userIntent;
+        if (!userIntent) throw new Error('Missing userIntent');
+        
+        const connection = await getDbConnection(ctx.config);
+        try {
+            // Get schema information (as you're already doing)
+            const [tables] = await connection.execute('SHOW TABLES');
+            const schemaDetails = {};
+            
+            for (const row of tables) {
+                const tableName = Object.values(row)[0];
+                const [columns] = await connection.execute(`DESCRIBE \`${tableName}\``);
+                schemaDetails[tableName] = columns;
+            }
+            
+            const schemaString = Object.entries(schemaDetails).map(([table, cols]) => {
+                return `${table}: ${cols.map(col => `${col.Field} (${col.Type})`).join(', ')}`;
+            }).join('\n');
+            
+            // Generate SQL using LLM
+            const prompt = `
+    Database Schema:
+    ${schemaString}
+    
+    User Intent: ${userIntent}
+    
+    Based on this intent and schema:
+    1. Determine the appropriate SQL operation (SELECT/INSERT/UPDATE/DELETE)
+    2. Identify the correct table(s) to operate on
+    3. Generate precise SQL query to fulfill the intent
+    4. Return the SQL as valid, executable code with appropriate error handling
+    `;
+    
+            const llmResponse = await llmModule.simpleLLMCall({
+                senderId: ctx.user?.id || 'intent_executor',
+                recipientId: 'sql_engine',
+                message: prompt,
+                timestamp: new Date().toISOString(),
+                status: 'processing',
+                format: 'json',
+            });
+    
+            // Execute the generated SQL
+            
+            console.log('LLM Response:', llmResponse);
+            const sqlQuery = llmResponse.sql || llmResponse;
+            console.log('Generated SQL:', sqlQuery);
+            
+            // Add safety checks here
+            if (this.isUnsafeQuery(sqlQuery)) {
+                throw new Error('Generated SQL query appears unsafe');
+            }
+            
+            const [result] = await connection.execute(sqlQuery);
+            return { 
+                executed: true,
+                sql: sqlQuery,
+                result: result
+            };
+        } catch (error) {
+            console.error('Error executing SQL:', error.message);
+        } finally {
+            // Connection is automatically released by the pool wrapper
+        }
+    }
+    
+    // Add a safety check function
+    isUnsafeQuery(sql) {
+        // Implement logic to check for potentially harmful SQL
+        // Example: Check for DROP, TRUNCATE, system tables access, etc.
+        const dangerousPatterns = [
+            /DROP\s+/i,
+            /TRUNCATE\s+/i,
+            /ALTER\s+.*ADD\s+USER/i,
+            /INTO\s+OUTFILE/i,
+            /LOAD\s+DATA/i
+        ];
+        
+        return dangerousPatterns.some(pattern => pattern.test(sql));
+    }
     async saveSQLCode(ctx, params) {
         const { reportName, sqlQuery, acl = [], filters = [] } = params;
         if (!reportName || !sqlQuery) throw new Error('Missing reportName or sqlQuery');
@@ -96,13 +181,22 @@ class ReportBuilderModule {
             ]);
             return { success: true, id };
         } finally {
-           // connection.release();
+            // Connection is automatically released by the pool wrapper
         }
     }
 
     registerRoutes() {
         
         const middleware = aarMiddleware("token", this.acl, this.ruleEngineInstance);
+        this.app.post('/api/userIntent',  aarMiddleware("token", this.acl, this.ruleEngineInstance), async (req, res) => {
+            try {
+                const ctx = { config: this.dbConfig, user: req.user };
+                const result = await this.executeFromIntent(ctx, req.body);
+                res.json(result);
+            } catch (error) {
+                res.status(500).json({ error: error.message });
+            }
+        });
 
         this.app.post('/api/generate-code',  aarMiddleware("token", this.acl, this.ruleEngineInstance), async (req, res) => {
             try {

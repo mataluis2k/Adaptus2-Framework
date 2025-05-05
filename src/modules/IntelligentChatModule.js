@@ -15,6 +15,7 @@ const ResponseStrategy = require("./ResponseStrategy");
 // Keep original triggers for backward compatibility
 const AI_TRIGGER = "/ai";
 const RAG_TRIGGER = "/rag";
+const persona = process.env.DEFAULT_PERSONA || "default";
 
 class IntelligentChatModule {
     constructor(httpServer, app, jwtSecret, dbConfig, corsOptions) {
@@ -219,10 +220,7 @@ class IntelligentChatModule {
                 senderId: "AI_Assistant"
             };
         }
-        
-
-        
-
+    
         try {
             // Step 1: Get session context for potential follow-up handling
             const sessionContext = this.getSessionContext(sessionId);
@@ -250,39 +248,28 @@ class IntelligentChatModule {
                 // Apply quality control to the response if enabled
                 if (this.qualityControlEnabled && this.qualityControl) {
                     console.log('[IntelligentChatModule] Applying quality control to AI response');
-                    const improvedResponse = await this.qualityControl.improveResponse(
-                        processedMessage, // Original user query (cleaned)
-                        initialResponse.message, // Initial LLM response
-                        {
-                            persona: 'default', // Using default persona here
-                            sessionId: sessionId,
-                            context: context
-                        }
+                    
+                    // Create a response object from the initial response
+                    const result = await this.processMessageWithQualityControl(
+                        sessionId,
+                        processedMessage,
+                        recipientId,
+                        groupName,
+                        'direct_llm',  // Important: Keep the queryType consistent
+                        context,
+                        "AI_Assistant", // senderId
+                        null, // classification
+                        { persona: persona } // routing result with persona
                     );
                     
-                    // Replace the response message with the improved version
-                    initialResponse.message = improvedResponse.finalResponse;
-                    
-                    // Add metadata about quality control
-                    initialResponse._qualityControlInfo = {
-                        applied: true,
-                        attempts: improvedResponse.improvementAttempts,
-                        finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
-                    };
-                    
-                    console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
-                } else if (this.qualityControlEnabled) {
-                    console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
-                    initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
+                    return result;
                 } else {
-                    initialResponse._qualityControlInfo = { applied: false };
+                    return {
+                        response: initialResponse.message,
+                        senderId: initialResponse.senderId,
+                        _qualityControlInfo: { applied: false }
+                    };
                 }
-                
-                return {
-                    response: initialResponse.message,
-                    senderId: initialResponse.senderId,
-                    _qualityControlInfo: initialResponse._qualityControlInfo
-                };
             } else if (message.startsWith(RAG_TRIGGER)) {
                 const processedMessage = message.slice(RAG_TRIGGER.length).trim();
                 // Use direct RAG for /rag trigger
@@ -290,128 +277,103 @@ class IntelligentChatModule {
                     sessionId,
                     message: processedMessage,
                     queryType: 'direct_rag',
-                    persona: 'default',
+                    persona: persona,
                     recipientId,
                     groupName
                 });
                 
-                // Apply quality control here as well
-                const initialResponse = {
-                    message: response,
-                    senderId: "RAG_Assistant"
-                };
-                
+                // Apply quality control if enabled
                 if (this.qualityControlEnabled && this.qualityControl) {
                     console.log('[IntelligentChatModule] Applying quality control to RAG response');
-                    const improvedResponse = await this.qualityControl.improveResponse(
+                    
+                    // Use the quality control pipeline
+                    const result = await this.processMessageWithQualityControl(
+                        sessionId,
                         processedMessage,
-                        initialResponse.message,
-                        {
-                            persona: 'default',
-                            sessionId: sessionId,
-                            context: context
-                        }
+                        recipientId,
+                        groupName,
+                        'direct_rag',  // Important: Keep the queryType consistent
+                        context,
+                        "RAG_Assistant", // senderId
+                        null, // classification
+                        { persona: persona } // routing result with persona
                     );
                     
-                    initialResponse.message = improvedResponse.finalResponse;
-                    initialResponse._qualityControlInfo = {
-                        applied: true,
-                        attempts: improvedResponse.improvementAttempts,
-                        finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
-                    };
-                    
-                    console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
-                } else if (this.qualityControlEnabled) {
-                    console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
-                    initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
+                    return result;
                 } else {
-                    initialResponse._qualityControlInfo = { applied: false };
+                    return {
+                        response: response,
+                        senderId: "RAG_Assistant",
+                        _qualityControlInfo: { applied: false }
+                    };
                 }
-                
-                return {
-                    response: initialResponse.message,
-                    senderId: initialResponse.senderId,
-                    _qualityControlInfo: initialResponse._qualityControlInfo
-                };
             }
             
-            // Route through intelligent pipeline for all other messages
+            // Route through intelligent pipeline for all other messages, need to include userId
+            const userId = this.getUserIdFromSessionId(sessionId);
+
             const routingResult = await this.messageRouter.routeMessage(
                 sessionId, 
                 message, 
                 recipientId,
-                groupName
+                groupName,
+                userId
             );
-            
+            console.log(`[IntelligentChatModule] Message routing result: ${JSON.stringify(routingResult)}`);
             if (!routingResult) {
                 throw new Error('No result from message router');
             }
-            
-            // FIX: Properly handle the routing result structure
-            // The routeMessage function returns { response, persona, classification }
-            const initialResponse = {
-                message: routingResult.response,
-                senderId: "AI_Assistant"
-            };
-            
-            if (!initialResponse.message) {
-                throw new Error('Empty response from message router');
-            }
-            
-            // Apply quality control to the response if enabled
-            if (this.qualityControlEnabled && this.qualityControl) {
-                console.log('[IntelligentChatModule] Applying quality control to routed message response');
-                const improvedResponse = await this.qualityControl.improveResponse(
-                    message, // Original user query
-                    initialResponse.message, // Initial LLM response
-                    {
-                        persona: routingResult.persona || 'default',
-                        sessionId: sessionId,
-                        context: context,
-                        classification: routingResult.classification
-                    }
+
+             // Check if this is a direct answer (new behavior)
+            if (routingResult.classification && routingResult.classification.isDirect) {
+                console.log('[IntelligentChatModule] Using direct answer from context');
+                
+                // Store context for potential follow-up
+                this.storeSessionContext(
+                    sessionId,
+                    message,
+                    routingResult.response,
+                    routingResult.classification
                 );
                 
-                // Replace the response message with the improved version
-                initialResponse.message = improvedResponse.finalResponse;
-                
-                // Add metadata about quality control
-                initialResponse._qualityControlInfo = {
-                    applied: true,
-                    attempts: improvedResponse.improvementAttempts,
-                    finalScore: improvedResponse.finalEvaluation?.qualityScore || 'unknown'
+                // Return the direct answer without further processing
+                return {
+                    response: routingResult.response,
+                    senderId: "Context_Assistant", // Could use a special sender ID for context-based answers
+                    _qualityControlInfo: { applied: false, reason: 'direct_answer' }
                 };
-                
-                console.log(`[IntelligentChatModule] Quality control: Response improved after ${improvedResponse.improvementAttempts} attempts`);
-            } else if (this.qualityControlEnabled) {
-                console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
-                initialResponse._qualityControlInfo = { applied: false, reason: 'not_initialized' };
-            } else {
-                initialResponse._qualityControlInfo = { applied: false };
             }
             
-            // Store context for potential follow-up
-            this.storeSessionContext(
-                sessionId,
-                message,
-                initialResponse.message,
-                routingResult.classification
-            );
+            // Determine appropriate sender ID and query type based on classification
+            let queryType = 'direct_llm';
+            let initialSenderId = "AI_Assistant";
             
-            // Determine appropriate sender ID based on classification
             if (routingResult.classification) {
                 if (routingResult.classification.needsRAG && !routingResult.classification.needsTools) {
-                    initialResponse.senderId = "RAG_Assistant";
+                    initialSenderId = "RAG_Assistant";
+                    queryType = 'direct_rag';
                 } else if (routingResult.classification.needsRAG && routingResult.classification.needsTools) {
-                    initialResponse.senderId = "Hybrid_Assistant";
+                    initialSenderId = "Hybrid_Assistant";
+                    queryType = 'hybrid';
+                } else if (routingResult.classification.needsTools) {
+                    initialSenderId = "Tool_Assistant";
+                    queryType = 'action_query';
                 }
             }
             
-            return {
-                response: initialResponse.message,
-                senderId: initialResponse.senderId,
-                _qualityControlInfo: initialResponse._qualityControlInfo
-            };
+            // Pass the routing result to maintain persona consistency
+            return await this.processMessageWithQualityControl(
+                sessionId, 
+                message, 
+                recipientId, 
+                groupName, 
+                queryType, 
+                context, 
+                initialSenderId,
+                routingResult.classification,
+                routingResult // Pass the entire routing result
+            );
+            
         } catch (error) {
             console.error('[IntelligentChatModule] Error processing message:', error);
             
@@ -423,6 +385,155 @@ class IntelligentChatModule {
         }
     }
     
+    async processMessageWithQualityControl(
+        sessionId, 
+        message, 
+        recipientId, 
+        groupName, 
+        queryType, 
+        context, 
+        initialSenderId,
+        classification = null,
+        routingResult = null
+    ) {
+        // Maximum improvement attempts
+        const maxRetries = process.env.QUALITY_CONTROL_MAX_RETRIES || 2;
+        let attempts = 0;
+        let evaluationResult;
+        let currentResponse;
+        let improvementHistory = [];
+        
+        // Important: Save the persona from routing result if available
+        const persona = routingResult?.persona || process.env.DEFAULT_PERSONA || "default";
+        
+        console.log(`[QualityControl] Processing message with queryType: ${queryType}, persona: ${persona}`);
+        
+        // Generate initial response using the appropriate method
+        let response = await this.responseStrategy.generateResponse({
+            sessionId,
+            message,
+            queryType: queryType || 'direct_llm',
+            persona: persona,
+            recipientId,
+            groupName,
+            classification
+        });
+        
+        currentResponse = response;
+        
+        // Quality control improvement loop
+        if (this.qualityControlEnabled && this.qualityControl) {
+            console.log('[IntelligentChatModule] Starting quality control improvement loop');
+            
+            // Try improving the response up to maxRetries times
+            while (attempts < maxRetries) {
+                // Evaluate the current response with FULL CONTEXT
+                evaluationResult = await this.qualityControl.evaluateResponse(
+                    message, 
+                    currentResponse, 
+                    {
+                        context,
+                        queryType,
+                        persona,
+                        classification
+                    }
+                );
+                
+                // Record this attempt
+                improvementHistory.push({
+                    attempt: attempts + 1,
+                    response: currentResponse,
+                    evaluation: evaluationResult
+                });
+                
+                // If response doesn't need revision or we've hit max attempts or the response is too similar to the previous one, break
+                if (!evaluationResult.needsRevision) {
+                    console.log(`Quality control: Response accepted after ${attempts + 1} attempts`);
+                    break;
+                }
+                
+                // Break if the improved response is identical or very similar to the previous one to avoid loops
+                if (attempts > 0 && improvementHistory.length >= 2) {
+                    const previousResponse = improvementHistory[improvementHistory.length - 2].response;
+                    if (previousResponse === currentResponse || 
+                        (previousResponse.length > 30 && currentResponse.length > 30 && 
+                         (previousResponse.substring(0, 30) === currentResponse.substring(0, 30) || 
+                          previousResponse.includes(currentResponse.substring(0, 30))))) {
+                        console.log(`Quality control: Breaking loop due to similar responses after ${attempts + 1} attempts`);
+                        break;
+                    }
+                }
+                
+                // Prepare improvement prompt
+                const improvementPrompt = `
+                    You are providing a response to a user query and need to improve your answer.
+                    
+                    USER QUERY: "${message}"
+                    
+                    YOUR CURRENT RESPONSE: "${currentResponse}"
+                    
+                    ${context ? `RELEVANT CONTEXT: ${context}` : ''}
+                    
+                    QUALITY ASSESSMENT:
+                    - Score: ${evaluationResult.qualityScore}/10
+                    - Issues identified: ${evaluationResult.issues.join(', ')}
+                    - Improvement suggestions: ${evaluationResult.improvementSuggestions}
+                    
+                    IMPORTANT: If this is a customer service request such as "When was my last order?", you MUST provide a direct answer based on the customer's data rather than describing tools or processes.
+                    
+                    Please provide an improved response that directly answers the user's question.
+                    Maintain the same tone in your improved response.
+                    Answer ONLY with the improved response. Do not include any explanations.
+                `;
+                
+                // CRITICAL: Use the EXACT SAME message options as the original
+                const messageOptions = {
+                    sessionId,
+                    message: improvementPrompt,
+                    queryType: queryType || 'direct_llm',
+                    persona: persona,
+                    recipientId,
+                    groupName,
+                    classification,
+                    isImprovement: true // Flag to indicate this is an improvement request
+                };
+                
+                console.log(`[QualityControl] Improvement attempt ${attempts + 1} using queryType: ${queryType}, persona: ${persona}`);
+                
+                // Generate improved response using the SAME query type and persona as original
+                const improvedResponse = await this.responseStrategy.generateResponse(messageOptions);
+                
+                // Update current response and increment attempt counter
+                currentResponse = improvedResponse;
+                attempts++;
+                
+                console.log(`Quality control: Completed improvement attempt ${attempts}`);
+            }
+        } else if (this.qualityControlEnabled) {
+            console.warn('[IntelligentChatModule] Quality control enabled but not properly initialized');
+        }
+        
+        // Store context for potential follow-up
+        this.storeSessionContext(
+            sessionId,
+            message,
+            currentResponse,
+            classification
+        );
+        
+        // Return the final response
+        return {
+            response: currentResponse,
+            senderId: initialSenderId,
+            _qualityControlInfo: this.qualityControlEnabled ? {
+                applied: true,
+                attempts,
+                finalScore: evaluationResult?.qualityScore || 'unknown'
+            } : { applied: false }
+        };
+    }
+    
+
     // Helper to get userId from sessionId (usually they're the same for simple cases)
     getUserIdFromSessionId(sessionId) {
         // Find the socket associated with this session

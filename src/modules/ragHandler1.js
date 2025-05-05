@@ -491,7 +491,7 @@ function sanitizeJsonBlocks(text) {
 function stripAllDelimiters(text) {
   return text.replace(/["\{\}\[\]]/g, '');
 }
-async function handleRAG(query, userId = 'default', personaName = null) {
+async function handleRAG(query, userId = 'default', personaName = null, model = null) {
   if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
   console.log(`[RAG Debug] handleRAG called with query: "${query.substring(0, 50)}..."`, 
   `userId: ${userId}, personaName: ${personaName}`);
@@ -511,14 +511,14 @@ async function handleRAG(query, userId = 'default', personaName = null) {
           enhancedPersona = await enhancedPersona; // Resolve if it's still a promise
         }
         
-        console.log(`Selected persona: ${enhancedPersona}`);
+        console.log(`Selected personaRag: ${enhancedPersona}`);
       } catch (personaError) {
         console.error('Error selecting persona:', personaError);
         enhancedPersona = 'default'; // Fallback to default persona
       }
     }
 
-    const llm = await llmModule.getLLMInstance();
+    const llm = await llmModule.getLLMInstance(model);
     const fallbackModel = 'llama3.3';
     const rawModelName = process.env.OLLAMA_INFERENCE || fallbackModel;
     const modelName = MODEL_TOKEN_LIMITS[rawModelName] ? rawModelName : fallbackModel;

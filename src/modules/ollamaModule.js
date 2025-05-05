@@ -126,7 +126,7 @@ For more information, visit: https://ollama.ai/download
         }
     }
 
-    async generateResponse(prompt, messages = []) {
+    async generateResponse(prompt, messages = [], format = 'text') {
         await this.ensureInitialized();
         try {
             // For Ollama, we'll concatenate previous messages into the prompt
@@ -138,11 +138,16 @@ For more information, visit: https://ollama.ai/download
                 `${contextPrompt}\nuser: ${prompt}` : 
                 prompt;
     
-            const response = await this.ollama.generate({ 
+            const options = { 
                 model: this.model, 
                 prompt: fullPrompt,
-                stream: false 
-            });
+                stream: false,
+            }
+            if (format === 'json') {
+                options.format = 'json';
+            }
+            console.log('Using Ollama model:', this.model);
+            const response = await this.ollama.generate(options);
     
             return response.response;
         } catch (error) {
@@ -152,11 +157,11 @@ For more information, visit: https://ollama.ai/download
     }
     // Method to handle chat messages
     async processMessage(messageData, history = []) {
-        const { senderId, recipientId, groupName, message } = messageData;
+        const { senderId, recipientId, groupName, message,format } = messageData;
         
         try {
             // Pass history directly to generateResponse
-            const aiResponse = await this.generateResponse(message, history);
+            const aiResponse = await this.generateResponse(message, history, format);
             
             // Prepare response data
             const responseData = {

@@ -155,23 +155,12 @@ determineQueryType(persona, context = null) {
     }
 }
     // Main method to generate responses based on strategy
-    async generateResponse(params) {
-        // Validate parameters and set defaults
-        if (!params) params = {};
-        let {
-            sessionId = 'default',
-            message = '',
-            queryType = 'simple_query',
-            persona = defaultPersona,
-            context = null,
-            recipientId = null, // Added to match parameter from MessageRouter
-            groupName = null    // Added to match parameter from MessageRouter
-        } = params;
-        
-        // Determine query type if not specified
+    async generateResponse({ sessionId, message, queryType, persona, recipientId, groupName, classification, isImprovement = false }) {
+        console.log(`[ResponseStrategy] Generating ${queryType} response, improvement: ${isImprovement}`);
+
         // queryType = this.determineQueryType(persona, context);
         // Fix logging to ensure the correct persona is shown
-        console.log(`[ResponseStrategy] Generating ${queryType} response for ${sessionId} using persona ${persona}`);
+        console.log(`[ResponseStrategy1] Generating ${queryType} response for ${sessionId} using persona ${persona}`);
         
         if (!message || typeof message !== 'string') {
             console.error(`[ResponseStrategy] Invalid message: ${typeof message}`);
@@ -182,7 +171,7 @@ determineQueryType(persona, context = null) {
             // Check cache first
             const cachedResult = this.cache.get(sessionId, queryType, message);
             if (cachedResult) {
-                console.log(`[ResponseStrategy] Using cached result for ${queryType} query`);
+                console.log(`[ResponseStrategy2] Using cached result for ${queryType} query`);
                 return cachedResult;
             }
             
@@ -224,7 +213,7 @@ determineQueryType(persona, context = null) {
             if (response && !response.includes("I apologize") && !response.includes("Error")) {
                 this.cache.set(sessionId, queryType, message, response);
             }
-            
+            console.log(`[ResponseStrategy3] Generated response: ${response}`);
             return response;
         } catch (error) {
             console.error('[ResponseStrategy] Error generating response:', error);
@@ -265,19 +254,24 @@ determineQueryType(persona, context = null) {
     
     // Strategy 2: RAG query - knowledge retrieval
     async handleRagQuery({ sessionId, message, persona }) {
-        console.log(`[ResponseStrategy] Processing RAG query for ${persona}`);
-        
+        console.log(`[ResponseStrategy1] Processing RAG query for ${persona}`);
+        let model = null; // Initialize
         try {
             // Check if persona has RAG capability
-            const { hasRagCapability } = checkPersonaCapabilities(persona);
+            const { hasRagCapability, config } = checkPersonaCapabilities(persona);
             
             if (!hasRagCapability) {
                 console.log(`[ResponseStrategy] No RAG capability for ${persona}, falling back to simple query`);
                 return this.handleSimpleQuery({ sessionId, message, persona });
             }
+            if(config.model){
+                console.log(`[ResponseStrategy] Using custom model for ${persona}: ${config.model}`);
+                // Set the model for the LLM instance        
+                model = config.model;       
+            }
             
             // Pass the query to RAG handler
-            const ragResponse = await handleRAG(message, sessionId, persona);
+            const ragResponse = await handleRAG(message, sessionId, persona, model);
             return ragResponse.text || ragResponse;
         } catch (error) {
             console.error('[ResponseStrategy] RAG query error:', error);
@@ -287,79 +281,157 @@ determineQueryType(persona, context = null) {
         }
     }
     
-    // Strategy 3: Action query - using tools
-    async handleActionQuery({ sessionId, message, persona }) {
-        console.log(`[ResponseStrategy] Processing action query for ${persona}`);
+// Improved handleActionQuery method that maintains flexibility
+// Enhanced handleActionQuery method with better LangChain agent configuration
+async handleActionQuery({ sessionId, message, persona }) {
+    console.log(`[ResponseStrategy3] Processing action query for ${persona}`);
+    let llm = null; 
+    try {
+        // Check if persona has tools capability
+        const { config: personaConfig, hasToolsCapability } = checkPersonaCapabilities(persona);
         
-        try {
-            // Check if persona has tools capability
-            const { config: personaConfig, hasToolsCapability } = checkPersonaCapabilities(persona);
-            
-            if (!hasToolsCapability) {
-                console.log(`[ResponseStrategy] No tools available for ${persona}, falling back to simple query`);
-                return this.handleSimpleQuery({ sessionId, message, persona });
-            }
-            
-            // Get allowed tools for this persona
-            let allowedToolNames = personaConfig.tools || [];
-            if (typeof allowedToolNames === 'string') {
-                allowedToolNames = allowedToolNames
-                  .split(',')
-                  .map(name => name.trim())
-                  .filter(name => name.length > 0);
-            }
-            console.log(`[ResponseStrategy] Allowed tools for ${persona}: ${allowedToolNames}`);
-            // Filter available tools based on persona permissions
-            const toolsToAttach = customerSupportTools.filter((tool) => 
-                allowedToolNames.includes(tool.name)
-            );
-            console.log("Attaching these tool instances:", toolsToAttach.map((t) => t.name));
-
-            // If no tools available after filtering, fall back to simple query
-            if (!toolsToAttach || toolsToAttach.length === 0) {
-                console.log(`[ResponseStrategy] No tools available for ${persona} after filtering, falling back to simple query`);
-                return this.handleSimpleQuery({ sessionId, message, persona });
-            }
-            
-            // Get LLM instance
-            const llm = await llmModule.getLLMInstance();
-            
-            // Create tool calling agent with required inputVariables parameter
-            const agent = await createToolCallingAgent({ 
-                llm, 
-                tools: toolsToAttach,
-                prompt: ChatPromptTemplate.fromMessages([
-                        ["system", `Use the any of these tools to help the customer.`],
-                        ["user", "Answer the question using the tools available to you."],
-                        ["placeholder", "{agent_scratchpad}"],
-                ]),
-                
-            });
-            const agentExecutor = new AgentExecutor({ agent, tools: toolsToAttach });
-            
-            // Build persona prompt
-            const personaPrompt = await buildPersonaPrompt(persona);
-            
-            // Enhance message with persona context
-            const enhancedMessage = personaPrompt 
-                ? `${personaPrompt}\n\nUser request: ${message}`
-                : message;
-                
-            // Execute agent with tools
-            const result = await agentExecutor.invoke({ input: enhancedMessage });
-            return result.output;
-        } catch (error) {
-            console.error('[ResponseStrategy] Action query error:', error);
-            
-            // Fallback to simple query if tool execution fails
+        if (!hasToolsCapability) {
+            console.log(`[ResponseStrategy] No tools available for ${persona}, falling back to simple query`);
             return this.handleSimpleQuery({ sessionId, message, persona });
         }
+        
+        // Get allowed tools for this persona
+        let allowedToolNames = personaConfig.tools || [];
+        
+        // Handle different formats of the tools field
+        if (typeof allowedToolNames === 'string') {
+            // Handle comma-separated string format
+            allowedToolNames = allowedToolNames
+              .split(',')
+              .map(name => name.trim())
+              .filter(name => name.length > 0);
+        } else if (Array.isArray(allowedToolNames) && allowedToolNames.length > 0 && typeof allowedToolNames[0] === 'object') {
+            // Handle array of objects format from persona config
+            allowedToolNames = allowedToolNames.map(tool => tool.name);
+        }
+        
+        console.log(`[ResponseStrategy] Allowed tools for ${persona}: ${JSON.stringify(allowedToolNames)}`);
+        
+        // Filter available tools based on persona permissions
+        const toolsToAttach = customerSupportTools.filter((tool) => 
+            allowedToolNames.includes(tool.name)
+        );
+        console.log("Attaching these tool instances:", toolsToAttach.map((t) => t.name));
+        
+        // Check if persona has model capability
+        if (personaConfig.model) {
+            console.log(`[ResponseStrategy] Using custom model for ${persona}: ${personaConfig.model}`);
+            // Here's the key change - enhance the LLM configuration for better tool calling
+            llm = await llmModule.getLLMInstance(personaConfig.model, {
+                // Add model-specific parameters that encourage tool usage
+                temperature: 0.2,  // Lower temperature for more deterministic tool calling
+                responseFormat: { type: "json_object" },  // Many models work better with JSON
+                toolChoice: "auto"  // Explicitly enable automatic tool choice
+            });
+        } else {
+            // Use default model with tool-friendly configuration
+            llm = await llmModule.getLLMInstance(null, {
+                temperature: 0.2,
+                responseFormat: { type: "json_object" },
+                toolChoice: "auto"
+            });
+        }
+
+        // If no tools available after filtering, fall back to simple query
+        if (!toolsToAttach || toolsToAttach.length === 0) {
+            console.log(`[ResponseStrategy] No tools available for ${persona} after filtering, falling back to simple query`);
+            return this.handleSimpleQuery({ sessionId, message, persona });
+        }
+        
+        // Extract the tool descriptions for better agent awareness
+        const toolDescriptions = toolsToAttach.map(tool => 
+            `${tool.name}: ${tool.description}`
+        ).join('\n');
+        
+        // Build persona prompt
+        const personaPrompt = await buildPersonaPrompt(persona, sessionId);
+        
+        // Create a context-aware system message that respects the persona
+        const systemMessage = `You are a ${personaConfig.description || 'helpful assistant'}.
+
+${personaConfig.behaviorInstructions || ''}
+
+You have access to these tools:
+${toolDescriptions}
+
+${personaConfig.functionalDirectives || ''}
+${personaConfig.ethicalGuidelines || ''}`;
+
+        // Create a more sophisticated agent
+        // Consider using createOpenAIFunctionsAgent instead if compatible with your model
+        const agent = await createToolCallingAgent({
+            llm,
+            tools: toolsToAttach,
+            prompt: ChatPromptTemplate.fromMessages([
+                ["system", systemMessage],
+                ["user", "{input}"],
+                ["placeholder", "{agent_scratchpad}"]
+            ])
+        });
+        
+        // Configure the agent executor with optimized settings
+        const agentExecutor = new AgentExecutor({
+            agent,
+            tools: toolsToAttach,
+            // These settings are crucial for effective tool calling
+            maxIterations: 4,
+            returnIntermediateSteps: true,
+            handleParsingErrors: true, // Handle parsing errors gracefully
+            earlyStoppingMethod: "generate", // Continue generating even if a stopping condition is met
+        });
+        
+        // Enhance message with persona context
+        const enhancedMessage = personaPrompt 
+            ? `${personaPrompt}\n\nUser request: ${message}`
+            : message;
+            
+        console.log(`[ResponseStrategy4] Enhanced message for action query: ${enhancedMessage}`);
+        
+        // Add tool-calling debug log
+        console.log(`[ResponseStrategy] Starting tool agent with ${toolsToAttach.length} tools for query: ${message}`);
+        
+        // Execute agent with tools and capture full result including steps
+        const result = await agentExecutor.invoke({
+            input: enhancedMessage,
+            // Add any additional context that might help with tool selection
+            sessionId,
+            allowToolUse: true  // Explicit flag to allow tool usage
+        });
+        
+        // Log the actual tools used for debugging
+        if (result.intermediateSteps && result.intermediateSteps.length > 0) {
+            const toolsUsed = result.intermediateSteps
+                .filter(step => step.action && step.action.tool)
+                .map(step => step.action.tool);
+                
+            console.log(`[ResponseStrategy] Tools used: ${toolsUsed.join(', ') || 'None'}`);
+        } else {
+            console.log(`[ResponseStrategy] Warning: No tools were used in response generation`);
+        }
+
+        return result.output;
+    } catch (error) {
+        console.error('[ResponseStrategy] Action query error:', error);
+        
+        // Log additional details about the error for better debugging
+        if (error.message.includes('tool')) {
+            console.error('[ResponseStrategy] Possible tool calling error:', error.message);
+        }
+        
+        // Fallback to simple query if tool execution fails
+        return this.handleSimpleQuery({ sessionId, message, persona });
     }
+}
     
     // Strategy 4: Hybrid query - RAG + tools
     async handleHybridQuery({ sessionId, message, persona, context }) {
         console.log(`[ResponseStrategy] Processing hybrid query for ${persona}`);
-        
+        let llm = null; // Initialize
         try {
             // Check persona capabilities
             const { config: personaConfig, hasRagCapability, hasToolsCapability } = checkPersonaCapabilities(persona);
@@ -398,18 +470,28 @@ determineQueryType(persona, context = null) {
                 console.log(`[ResponseStrategy] No tools after filtering for hybrid query, using RAG response`);
                 return contextInfo;
             }
-            
-            // Step 3: Create agent with tools
-            const llm = await llmModule.getLLMInstance();
+            if (personaConfig.model) {
+                console.log(`[ResponseStrategy] Using custom model for ${persona}: ${personaConfig.model}`);
+                // Set the model for the LLM instance                
+                llm = await llmModule.getLLMInstance(personaConfig.model);
+            } else {
+                // Use default model if not specified
+                llm = await llmModule.getLLMInstance();
+            }
+
             const agent = await createToolCallingAgent({ 
                 llm, 
                 tools: toolsToAttach,
-                inputVariables: ["input"] // Add required parameter that was missing
+                prompt: ChatPromptTemplate.fromMessages([
+                    ["system", `You are a helpful customer service assistant. Use the provided tools to help answer the customer's question directly. Do not just describe what the tools do - use them to get information and then answer the question with that information. When a customer asks about their orders, use the fetch_customer_last_orders or summarize_last_orders tools to get the actual information before answering.`],
+                    ["user", "{input}"],
+                    ["placeholder", "{agent_scratchpad}"],
+                ])
             });
             const agentExecutor = new AgentExecutor({ agent, tools: toolsToAttach });
             
             // Step 4: Build enhanced prompt with persona, RAG context, and user query
-            const personaPrompt = await buildPersonaPrompt(persona);
+            const personaPrompt = await buildPersonaPrompt(persona,sessionId);
             const enhancedMessage = `
                 ${personaPrompt || ''}
                 

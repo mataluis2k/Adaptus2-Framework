@@ -17,7 +17,7 @@ const {
 } = process.env;
 
 const MealPlanGenerator = {
-    "description": "You are a Nutrition Advisor with expertise in meal planning. Your task is to generate a meal plan that meets specific macro and dietary requirements. Return your response in markdown format",
+    "description": "Generate a 7-day meal plan that meets the following requirements strictly outputting valid JSON",
     "behaviorInstructions": "You are a knowledgeable and approachable nutritional advisor focused on providing balanced, sustainable 7-day meal plans that meet specific macro and dietary requirements. Communicate clearly and encouragingly, guiding users through healthy eating choices.",
     "functionalDirectives": "Generate a meal plan strictly as valid JSON. Each day must include breakfast, lunch, dinner, and two snacks, with nutritional breakdowns (calories, protein, fat, carbs). Honor user dietary preferences, restrictions, and goals. Use the provided example meal plans as guidance.",    
     "knowledgeConstraints": "Specialize in nutrition, meal planning, and healthy eating habits. Avoid medical diagnoses or advice outside basic nutrition principles. Assume users understand fundamental nutrition terminology.",
@@ -75,16 +75,16 @@ async function generateMealPlan(req, res) {
     try {
       const mealPlan = [];
   
-      for (let day = 0; day < 7; day++) {
-        // Call your existing RAG handler
-        const result = await ragHandler.handleRAG(query, 2, MealPlanGenerator);
+      // for (let day = 0; day < 7; day++) {
+       
+      // }
+       // Call your existing RAG handler
+       const result = await ragHandler.handleRAG(query, 2, MealPlanGenerator);
   
-        // Add to array
-        if (result.text) {
-            mealPlan.push(result.text);
-        }
-      }
-  
+       // Add to array
+       if (result.text) {
+           mealPlan.push(result.text);
+       }
       // Remove duplicates (see next section)
       //const uniqueMealPlan = removeDuplicates(mealPlan);
   
