@@ -58,10 +58,28 @@ async function initDatabase() {
             continue;
           }
   
-          // Validate column names and types
-          const invalidColumns = Object.entries(columnDefinitions).filter(([name, type]) => {
-            return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || !type.match(/^[a-zA-Z0-9\s()]+$/);
-          });
+          // Handle different column definition formats
+          // Check if columnDefinitions contains objects or strings
+          const isObjectFormat = Object.values(columnDefinitions).some(
+            value => typeof value === 'object' && value !== null
+          );
+  
+          // Validate column names and types based on format
+          let invalidColumns = [];
+          if (isObjectFormat) {
+            // Format: { column: { type: '...', constraints: '...' } }
+            invalidColumns = Object.entries(columnDefinitions).filter(([name, def]) => {
+              return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || 
+                    (typeof def.type !== 'string') || 
+                    !def.type.match(/^[a-zA-Z0-9\s()]+$/);
+            });
+          } else {
+            // Format: { column: 'TYPE CONSTRAINTS' }
+            invalidColumns = Object.entries(columnDefinitions).filter(([name, type]) => {
+              return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || 
+                    (typeof type !== 'string');
+            });
+          }
   
           if (invalidColumns.length > 0) {
             console.error(`Invalid column definitions in ${dbTable}:`, invalidColumns);
@@ -103,9 +121,23 @@ async function initDatabase() {
             }
   
             // Build and validate the CREATE TABLE query
-            const columns = Object.entries(columnDefinitions)
-              .map(([column, type]) => `${column} ${type}`)
-              .join(', ');
+            // Handle different column definition formats
+            let columns;
+            if (isObjectFormat) {
+              columns = Object.entries(columnDefinitions)
+                .map(([column, def]) => {
+                  if (def.constraints) {
+                    return `${column} ${def.type} ${def.constraints}`;
+                  } else {
+                    return `${column} ${def.type}`;
+                  }
+                })
+                .join(', ');
+            } else {
+              columns = Object.entries(columnDefinitions)
+                .map(([column, type]) => `${column} ${type}`)
+                .join(', ');
+            }
   
             const createTableQuery = `CREATE TABLE ${dbTable} (${columns})`;
             console.log(`Executing query: ${createTableQuery}`);
@@ -149,8 +181,8 @@ async function initDatabase() {
       console.error('Failed to initialize database tables:', error);
       return false;
     }
-  }
-  
+}
+
 async function getDbConnection(config) {
     const { dbType, dbConnection } = config;
     const normalizedDbConnection = dbConnection.replace(/-/g, '_');
