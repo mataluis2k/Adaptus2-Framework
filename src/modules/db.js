@@ -576,6 +576,47 @@ async function deleteRecord(config, entity, query) {
         throw error;
     }
 }
+async function tableExists(config, tableName) {
+    const db = await getDbConnection(config);
+    if (!db) {
+        throw new Error(`Database connection for ${config.dbConnection} could not be established.`);
+    }
+    const dbName = process.env[`${config.dbConnection.replace(/-/g, '_')}_DB`];
+    if (!dbName) {
+        throw new Error(`Database name for ${config.dbConnection} is not defined.`);
+    }
+    if (!tableName) {
+        throw new Error(`Table name is required to check existence.`);
+    }
+    try {
+        switch (config.dbType.toLowerCase()) {
+            case 'mysql':
+            case 'postgres': {
+                const sql = `SELECT COUNT(*) AS count FROM information_schema.tables WHERE  table_schema = ?  AND table_name = ?`;
+                const [rows] = await db.execute(sql, [dbName, tableName]);
+                return rows[0].count > 0;
+            }
+            case 'mongodb': {
+                const collections = await db.listCollections().toArray();
+                return collections.some(collection => collection.name === tableName);
+            }
+            case 'snowflake': {
+                const sql = `SELECT COUNT(*) AS count FROM information_schema.tables WHERE  table_schema = ?  AND table_name = ?`;
+                return new Promise((resolve, reject) => {
+                    db.execute({ sqlText: sql, binds: [dbName, tableName] }, (err, result) => {
+                        if (err) return reject(err);
+                        resolve(result.rows[0].COUNT > 0);
+                    });
+                });
+            }
+            default:
+                throw new Error(`Unsupported database type: ${config.dbType}`);
+        }
+    } catch (error) {
+        console.error(`Error checking existence of table ${tableName}:`, error.message);
+        throw error;
+    }
+}
 
 async function exists(config, entity, params) {
     const db = await getDbConnection(config);
@@ -862,5 +903,6 @@ module.exports = {
     createTable,
     extendContext, 
     query ,
-    initDatabase
+    initDatabase,
+    tableExists
 };
