@@ -4,13 +4,153 @@ const { Client } = require('pg');
 const { MongoClient, ObjectId } = require('mongodb');
 const snowflake = require('snowflake-sdk');
 const { globalContext, getContext } = require('./context'); // Import the shared globalContext and getContext
-const { getApiConfig } = require('./apiConfig');
+const { getApiConfig , loadConfig, categorizeApiConfig} = require('./apiConfig');
 const response = require('./response'); // Import the shared response object
 
 const dbConnections = {};
 let isContextExtended = false; // Ensure extendContext is only called once
 
-
+async function initDatabase() {
+    console.log('Initializing database tables...');
+    
+    try {
+      // Load the API configuration
+      const apiConfig = await loadConfig();
+      
+      // Create a connection pool for better performance
+      const connectionPool = new Map();
+      
+      try {
+        for (const endpoint of apiConfig) {
+          const { dbType, dbTable, columnDefinitions, dbConnection: connString } = endpoint;
+          console.log("Working on endpoint", endpoint);
+  
+          // Input validation
+          if (!dbType || !dbTable || !columnDefinitions) {
+            console.warn(`Skipping invalid endpoint configuration:`, {
+              dbType,
+              dbTable,
+              hasColumnDefs: !!columnDefinitions
+            });
+            continue;
+          }
+  
+          // Validate database type
+          if (!['mysql', 'postgres'].includes(dbType)) {
+            console.warn(`Skipping ${dbTable}: Unsupported database type ${dbType}`);
+            continue;
+          }
+  
+          // Reuse existing connection from pool if available
+          let connection = connectionPool.get(connString);
+          if (!connection) {
+            connection = await getDbConnection(endpoint);
+            if (!connection) {
+              console.error(`Failed to connect to database for ${connString}`);
+              continue;
+            }
+            connectionPool.set(connString, connection);
+          }
+  
+          // Validate column definitions
+          if (!Object.keys(columnDefinitions).length) {
+            console.warn(`Skipping ${dbTable}: Empty column definitions`);
+            continue;
+          }
+  
+          // Validate column names and types
+          const invalidColumns = Object.entries(columnDefinitions).filter(([name, type]) => {
+            return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || !type.match(/^[a-zA-Z0-9\s()]+$/);
+          });
+  
+          if (invalidColumns.length > 0) {
+            console.error(`Invalid column definitions in ${dbTable}:`, invalidColumns);
+            continue;
+          }
+  
+          try {
+            // Check if the table exists using a transaction
+            await connection.beginTransaction();
+  
+            // Check if the table exists with proper error handling
+            let tableExists = false;
+            try {
+              if (dbType === 'mysql') {
+                const [rows] = await connection.execute(
+                  `SELECT COUNT(*) AS count FROM information_schema.tables 
+                   WHERE table_schema = DATABASE() AND table_name = ?`,
+                  [dbTable]
+                );
+                tableExists = rows[0].count > 0;
+              } else if (dbType === 'postgres') {
+                const [rows] = await connection.execute(
+                  `SELECT COUNT(*) AS count FROM information_schema.tables 
+                   WHERE table_name = $1`,
+                  [dbTable]
+                );
+                tableExists = rows[0].count > 0;
+              }
+            } catch (error) {
+              console.error(`Error checking table existence for ${dbTable}:`, error);
+              await connection.rollback();
+              continue;
+            }
+  
+            if (tableExists) {
+              console.log(`Table ${dbTable} already exists. Skipping creation.`);
+              await connection.commit();
+              continue;
+            }
+  
+            // Build and validate the CREATE TABLE query
+            const columns = Object.entries(columnDefinitions)
+              .map(([column, type]) => `${column} ${type}`)
+              .join(', ');
+  
+            const createTableQuery = `CREATE TABLE ${dbTable} (${columns})`;
+            console.log(`Executing query: ${createTableQuery}`);
+  
+            try {
+              await connection.execute(createTableQuery);
+              await connection.commit();
+              console.log(`Table ${dbTable} initialized successfully.`);
+            } catch (error) {
+              await connection.rollback();
+              console.error(`Error creating table ${dbTable}:`, error);
+              
+              // Provide more detailed error information
+              if (error.code === 'ER_DUP_FIELDNAME') {
+                console.error('Duplicate column name detected');
+              } else if (error.code === 'ER_PARSE_ERROR') {
+                console.error('SQL syntax error in CREATE TABLE statement');
+              }
+            }
+          } catch (error) {
+            console.error(`Error in table initialization process for ${dbTable}:`, error);
+            if (connection) {
+              await connection.rollback().catch(console.error);
+            }
+          }
+        }
+      } finally {
+        // Close all connections in the pool
+        for (const connection of connectionPool.values()) {
+          try {
+            await connection.end();
+          } catch (error) {
+            console.error('Error closing database connection:', error);
+          }
+        }
+      }
+      
+      console.log('Database tables initialized successfully.');
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize database tables:', error);
+      return false;
+    }
+  }
+  
 async function getDbConnection(config) {
     const { dbType, dbConnection } = config;
     const normalizedDbConnection = dbConnection.replace(/-/g, '_');
@@ -689,5 +829,6 @@ module.exports = {
     exists, 
     createTable,
     extendContext, 
-    query 
+    query ,
+    initDatabase
 };
