@@ -201,21 +201,42 @@ async function handleRAG(query, userId = 'default') {
     ).join('\n');
     
     console.log(`Using conversation history with ${userHistory.length} previous exchanges for user ${userId}`);
-    
-    // Create the enhanced prompt with context and history
+    console.log(docText);
     const enhancedPrompt = `
-    You are an AI assistant with access to a database. Use the following information to answer the user's question.
+    You are an AI assistant with both document-based knowledge and broader, general knowledge capabilities. When given a user query, follow these steps:
     
-    CONTEXT INFORMATION:
-    ${docText}
+    1. **Search the CONTEXT INFORMATION**  
+       - Carefully scan the “CONTEXT INFORMATION” section for any direct answer.  
+       - If you find relevant details, answer concisely using that context.  
     
-    CONVERSATION HISTORY:
-    ${formattedHistory}
+    2. **Fallback to General Knowledge**  
+       - If the context does **not** contain an answer, switch to your broader knowledge base.  
+       - Provide a helpful, accurate answer even if it’s unrelated to the context documents.  
+       - Be transparent: briefly note that the answer comes from your general knowledge.
     
-    USER QUERY: ${query}
+    ---
     
-    Provide a helpful, concise response based on the information provided. If the information doesn't contain an answer to the user's question, say so clearly.
+    CONTEXT INFORMATION:  
+    \`\`\`  
+    ${docText}  
+    \`\`\`
+    
+    CONVERSATION HISTORY:  
+    \`\`\`  
+    ${formattedHistory}  
+    \`\`\`
+    
+    USER QUERY:  
+    \`\`\`  
+    ${query}  
+    \`\`\`
+    
+    Your response should:
+    - First attempt to answer from the “CONTEXT INFORMATION.”  
+    - If no answer is found, provide a well-reasoned answer from general knowledge.  
+    - Be clear, concise, and user-focused.
     `;
+    
     
     // Prepare message data for llmModule
     const messageData = {
