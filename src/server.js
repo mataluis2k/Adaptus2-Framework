@@ -1675,6 +1675,12 @@ class PluginManager {
      * Load a plugin and broadcast it (if in network mode).
      */
     async loadPlugin(pluginName, broadcast = true) {
+        
+        if (process.env.PLUGIN_MANAGER === 'network' && process.env.SERVER_ROLE !== 'master') {
+            // In network mode, pull code from Redis if it differs
+            await this.loadPluginFromRedisIfDifferent(pluginName);
+            return;
+        }
         const pluginPath = path.join(this.pluginDir, `${pluginName}.js`);
     
         if (this.plugins.has(pluginName)) {
@@ -2944,7 +2950,16 @@ registerMiddleware() {
         });
     }
     
-    
+    async handlePluginUpdate(message) {
+        try {
+          const { name: pluginName } = JSON.parse(message);
+          console.log(`Plugin update for "${pluginName}" received — loading from Redis if different.`);
+          await this.pluginManager.loadPluginFromRedisIfDifferent(pluginName);
+        } catch (err) {
+          console.error('Error in handlePluginUpdate:', err);
+        }
+    }
+
     // Set up WebSocket server and handlers
     setupWebSocket() {
         // Store connected clients
