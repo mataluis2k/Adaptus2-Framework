@@ -40,7 +40,7 @@ yargs(hideBin(process.argv))
     'Initialize database tables',
     (yargs) => yargs,
     async () => {
-      const { initDatabase } = require(path.join(__dirname, './src/db')); // Adjust the path if needed
+      const { initDatabase } = require(path.join(__dirname, './src/modules/db')); // Adjust the path if needed
       await initDatabase();
       console.log('Database tables initialized successfully.');
       process.exit(0);
