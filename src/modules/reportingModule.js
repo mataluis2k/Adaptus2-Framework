@@ -24,6 +24,7 @@ class ReportingModule {
         const ruleEngineInstance = this.app.locals.ruleEngineMiddleware;
         this.app.get("/reports", aarMiddleware("token", [], ruleEngineInstance), async (req, res) => {
             try {
+                consolelog.log("Fetching reports...");
                 responseBus.Reset();
                 const result = await this.getReports();
                 return res.json(result);

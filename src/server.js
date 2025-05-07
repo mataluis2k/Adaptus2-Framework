@@ -241,6 +241,7 @@ const mlAnalytics = new MLAnalytics();
 
 
 const { globalContext, middleware,getContext } = require('./modules/context');
+const { exit } = require('process');
 
 
 globalContext.actions.log = (ctx, action) => {
@@ -2790,6 +2791,7 @@ registerMiddleware() {
             console.log('Reporting module initialized successfully');
         } catch(error) {
             console.error('Failed to initialize Reporting module:', error.message);
+            process.exit(1);
         }
         try {
             const ReportBuilderModule = require('./modules/reportBuilderModule');           

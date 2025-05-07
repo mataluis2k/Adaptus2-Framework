@@ -430,7 +430,7 @@ class MLAnalytics {
                         if (typeof connection.release === 'function') {
                             //await connection.release();
                           } else if (typeof connection.end === 'function') {
-                            await connection.end();
+                          //  await connection.end();
                           }
                     } catch (error) {
                         console.error(`Error releasing connection for ${dbTable}:`, error);

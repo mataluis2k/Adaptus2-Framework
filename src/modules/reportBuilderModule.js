@@ -43,8 +43,11 @@ class ReportBuilderModule {
     async generateSQLCode(ctx, params) {
         const { userQuery } = params;
         if (!userQuery) throw new Error('Missing userQuery');
-
+        console.log(ctx.config);
         const connection = await getDbConnection(ctx.config);
+        if (!connection) {
+            return { code: 'Failed to connect to database' };
+        }
         try {
             const [tables] = await connection.execute('SHOW TABLES');
             const schemaDetails = {};
@@ -61,17 +64,47 @@ class ReportBuilderModule {
             }).join('\n');
 
             const prompt = `User wants to build a report.\nSchema:\n${schemaString}\n\nQuery: ${userQuery} .\nGenerate SQL code ONLY.`;
-            const llm = await llmModule.getLLMInstance('sqlcoder');
-            const llmResponse = await llm.simpleLLMCall({
-                senderId: ctx.user?.id || 'report_generator',
-                recipientId: 'sql_engine',
-                message: prompt,
-                timestamp: new Date().toISOString(),
-                status: 'processing',
-                format: 'json',
-            });
+            const llm = await llmModule.getLLMInstance('llama3');
+            
+            // Create a properly formatted message array
+            const messages = [
+                { role: "system", content: "You are expert generating SQL code , make sure you reply in JSON" },
+                { role: "user", content: prompt }
+            ];
+
+            // Ensure messages is an array before passing to llm.call
+            if (!Array.isArray(messages)) {
+                throw new Error('Messages must be an array');
+            }
+
+            // Modified to handle the response correctly
+            const llmResponse = await llm.call(messages);
+
+            // Handle different response formats
+            let sqlCode;
+            if (typeof llmResponse === 'string') {
+                sqlCode = llmResponse;
+            } else if (llmResponse.message) {
+                sqlCode = llmResponse.message;
+            } else if (llmResponse.content) {
+                sqlCode = llmResponse.content;
+            } else {
+                return { code: 'Failed to generate SQL code' };
+            }
             console.log('LLM Response:', llmResponse);
-            return { code: llmResponse.message };
+            if(sqlCode.sql){
+                return { code: sqlCode.sql };
+            } else if(sqlCode.query ){
+                return { code: sqlCode.query };
+            } else {
+                return { code: sqlCode };
+            }
+
+           
+           
+        } catch (error) {
+            console.error('Error in generateSQLCode:', error);
+            return { code: `Error: ${error.message}` };
         } finally {
             // Connection is automatically released by the pool wrapper
         }
@@ -82,15 +115,15 @@ class ReportBuilderModule {
         const userIntent = prompt || params.userIntent;
         if (!userIntent) throw new Error('Missing userIntent');
         
-        const connection = await getDbConnection(ctx.config);
+        const connection1 = await getDbConnection(ctx.config);
         try {
             // Get schema information (as you're already doing)
-            const [tables] = await connection.execute('SHOW TABLES');
+            const [tables] = await connection1.execute('SHOW TABLES');
             const schemaDetails = {};
             
             for (const row of tables) {
                 const tableName = Object.values(row)[0];
-                const [columns] = await connection.execute(`DESCRIBE \`${tableName}\``);
+                const [columns] = await connection1.execute(`DESCRIBE \`${tableName}\``);
                 schemaDetails[tableName] = columns;
             }
             
@@ -132,7 +165,7 @@ class ReportBuilderModule {
                 throw new Error('Generated SQL query appears unsafe');
             }
             
-            const [result] = await connection.execute(sqlQuery);
+            const [result] = await connection1.execute(sqlQuery);
             return { 
                 executed: true,
                 sql: sqlQuery,

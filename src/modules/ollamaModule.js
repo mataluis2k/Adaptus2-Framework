@@ -2,7 +2,7 @@ const { spawn, execSync } = require('child_process');
 const { getDbConnection } = require("./db");
 const { authenticateMiddleware } = require("../middleware/authenticationMiddleware");
 const { Ollama }= require('ollama');
-
+const eventLogger  = require('./EventLogger');
 // Configure Ollama client with base URL
 const OLLAMA_HOST = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const ollamaClient = new Ollama({ host: OLLAMA_HOST });
@@ -45,7 +45,7 @@ class OllamaModule {
             }
 
             this.initialized = true;
-            console.log('Ollama module initialized successfully');
+            console.log('Ollama module initialized successfully',models);
         } catch (error) {
             console.error('Failed to initialize Ollama module:', error.message);
             throw error;
@@ -183,32 +183,28 @@ For more information, visit: https://ollama.ai/download
     }
 
     async saveResponse(responseData) {
-        const dbType = process.env.STREAMING_DBTYPE || "mysql";
-        const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
-        const config = { dbType, dbConnection };
-
-        const sql = `
-            INSERT INTO messages (sender_id, recipient_id, group_name, message, status, timestamp)
-            VALUES (?, ?, ?, ?, ?, NOW())
-        `;
-
-        const values = [
-            responseData.senderId,
-            responseData.recipientId,
-            responseData.groupName,
-            responseData.message,
-            responseData.status
-        ];
-
-        try {
-            const connection = await getDbConnection(config);
-            const [result] = await connection.execute(sql, values);
-            console.log("AI response saved successfully:", result);
-        } catch (error) {
-            console.error("Error saving AI response:", error);
-            throw error;
-        }
-    }
+        // Build the same DB config you were using
+        const dbType       = process.env.DEFAULT_DBTYPE        || "mysql";
+        const dbConnection = process.env.DEFAULT_DBCONNECTION || "MYSQL_1";
+        const config       = { dbType, dbConnection };
+      
+        // Shape a payload matching your messages table columns
+        const payload = {
+          sender_id:    responseData.senderId   || null,
+          recipient_id: responseData.recipientId|| null,
+          group_name:   responseData.groupName  || null,
+          message:      responseData.message    || null,
+          status:       responseData.status     || null,
+          created_at:   new Date()               // was NOW() in SQL
+        };
+      
+        // Enqueue for non-blocking insert
+        await eventLogger.log(
+          config,      // { dbType, dbConnection }
+          'messages',  // table/entity name
+          payload
+        );
+      }
 
     // Setup REST endpoints with token authentication
     setupRoutes(app) {
