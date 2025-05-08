@@ -1,15 +1,15 @@
 const { spawn, execSync } = require('child_process');
-const { getDbConnection } = require("./db");
+
 const { authenticateMiddleware } = require("../middleware/authenticationMiddleware");
 const { Ollama }= require('ollama');
-
+const eventLogger  = require('./EventLogger');
 // Configure Ollama client with base URL
-const OLLAMA_HOST = process.env.OLLAMA_HOST || 'http://localhost:11434';
+const OLLAMA_HOST = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
 const ollamaClient = new Ollama({ host: OLLAMA_HOST });
-
+const ollama_inference = process.env.OLLAMA_INFERENCE || 'llama3';
 class OllamaModule {
     constructor() {
-        this.model = 'deepseek-r1:7b';
+        this.model = ollama_inference;
         this.initialized = true;
         this.ollamaProcess = null;
         this.ollama = ollamaClient;
@@ -45,7 +45,7 @@ class OllamaModule {
             }
 
             this.initialized = true;
-            console.log('Ollama module initialized successfully');
+            console.log('Ollama module initialized successfully',models);
         } catch (error) {
             console.error('Failed to initialize Ollama module:', error.message);
             throw error;
@@ -126,7 +126,7 @@ For more information, visit: https://ollama.ai/download
         }
     }
 
-    async generateResponse(prompt, messages = []) {
+    async generateResponse(prompt, messages = [], format = 'text') {
         await this.ensureInitialized();
         try {
             // For Ollama, we'll concatenate previous messages into the prompt
@@ -138,11 +138,16 @@ For more information, visit: https://ollama.ai/download
                 `${contextPrompt}\nuser: ${prompt}` : 
                 prompt;
     
-            const response = await this.ollama.generate({ 
+            const options = { 
                 model: this.model, 
                 prompt: fullPrompt,
-                stream: false 
-            });
+                stream: false,
+            }
+            if (format === 'json') {
+                options.format = 'json';
+            }
+            console.log('Using Ollama model:', this.model);
+            const response = await this.ollama.generate(options);
     
             return response.response;
         } catch (error) {
@@ -152,11 +157,11 @@ For more information, visit: https://ollama.ai/download
     }
     // Method to handle chat messages
     async processMessage(messageData, history = []) {
-        const { senderId, recipientId, groupName, message } = messageData;
+        const { senderId, recipientId, groupName, message,format } = messageData;
         
         try {
             // Pass history directly to generateResponse
-            const aiResponse = await this.generateResponse(message, history);
+            const aiResponse = await this.generateResponse(message, history, format);
             
             // Prepare response data
             const responseData = {
@@ -178,32 +183,29 @@ For more information, visit: https://ollama.ai/download
     }
 
     async saveResponse(responseData) {
-        const dbType = process.env.STREAMING_DBTYPE || "mysql";
-        const dbConnection = process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1";
-        const config = { dbType, dbConnection };
+  
+      
+        // Shape a payload matching your messages table columns
+        const payload = {
+          sender_id:    responseData.senderId   || null,
+          recipient_id: responseData.recipientId|| null,
+          group_name:   responseData.groupName  || null,
+          message:      responseData.message    || null,
+          status:       responseData.status     || null,
+          created_at:   new Date()               // was NOW() in SQL
+        };
+       let config = {
+            dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+            dbConnection: process.env.DEFAULT_DB_CONNECTION || 'default'
+            };
 
-        const sql = `
-            INSERT INTO messages (sender_id, recipient_id, group_name, message, status, timestamp)
-            VALUES (?, ?, ?, ?, ?, NOW())
-        `;
-
-        const values = [
-            responseData.senderId,
-            responseData.recipientId,
-            responseData.groupName,
-            responseData.message,
-            responseData.status
-        ];
-
-        try {
-            const connection = await getDbConnection(config);
-            const [result] = await connection.execute(sql, values);
-            console.log("AI response saved successfully:", result);
-        } catch (error) {
-            console.error("Error saving AI response:", error);
-            throw error;
-        }
-    }
+        // Enqueue for non-blocking insert
+        await eventLogger.log(
+          config,      // { dbType, dbConnection }
+          'messages',  // table/entity name
+          payload
+        );
+      }
 
     // Setup REST endpoints with token authentication
     setupRoutes(app) {

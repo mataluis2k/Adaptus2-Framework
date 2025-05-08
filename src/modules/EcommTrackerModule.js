@@ -8,6 +8,7 @@ const rateLimit = require('express-rate-limit');
 const { getDbConnection } = require('./db');
 const { v4: uuidv4 } = require('uuid');
 const UAParser = require('ua-parser-js');
+const eventLogger  = require('./EventLogger');
 
 class EcommerceTracker {
     constructor(globalContext, dbConfig) {
@@ -32,26 +33,16 @@ class EcommerceTracker {
      * Process and store a single tracking event
      */
     async trackEvent(ctx, params) {
-        // Ensure tables exist before processing any events
-        if (!this.tablesVerified) {
-            await this.verifyDatabaseTables();
-        }
-        
-        const connection = await getDbConnection(ctx.config.db);
-        try {
-            await connection.beginTransaction();
-            
-            const result = await this._processEvent(connection, params);
-            
-            await connection.commit();
+                
+        try {         
+            console.log("Batch Single Events:", params);   
+            const result = await this._processEvent(connection, params);            
             return { success: true, id: result.eventId };
         } catch (error) {
-            await connection.rollback();
+            
             console.error("Error in trackEvent:", error.message);
             throw new Error("Internal error during event tracking");
-        } finally {
-            // connection.release();
-        }
+        } 
     }
 
     /**
@@ -62,14 +53,12 @@ class EcommerceTracker {
             return { success: false, error: "No events provided" };
         }
 
-        // Ensure tables exist before processing any events
-        if (!this.tablesVerified) {
-            await this.verifyDatabaseTables();
-        }
+      console.log("Batch events:", params);
+      
 
-        const connection = await getDbConnection(ctx.config.db);
+      
         try {
-            await connection.beginTransaction();
+      
             
             const results = [];
             for (const eventData of params.events) {
@@ -86,19 +75,16 @@ class EcommerceTracker {
                     viewport: params.viewport
                 };
                 
-                const result = await this._processEvent(connection, fullEventData);
+                const result = await this._processEvent(this.dbConfig, fullEventData);
                 results.push(result);
             }
-            
-            await connection.commit();
+                  
             return { success: true, results };
         } catch (error) {
-            await connection.rollback();
+            
             console.error("Error in trackBatchEvents:", error.message, error.stack);
             throw new Error("Internal error during batch event tracking");
-        } finally {
-            //connection.release();
-        }
+        } 
     }
 
     /**
@@ -107,6 +93,10 @@ class EcommerceTracker {
      */
     async _processEvent(connection, eventData) {
         try {
+            if(connection === undefined) {
+                connection = this.dbConfig;
+            }
+            
             // 1. Get user ID from data or generate one
             const userId = eventData.userId || eventData.user_id || uuidv4();
             
@@ -117,6 +107,7 @@ class EcommerceTracker {
             
             // 2. Store the main event - we don't need session tracking in this version
             const eventId = await this._storeEvent(connection, { ...eventData, userId });
+            await this._processEventSpecificData(connection, { ...eventData, eventId });
             
             // 3. Process event-specific data based on event name if needed
             // Skip session/user management for now since the schema is different
@@ -132,13 +123,13 @@ class EcommerceTracker {
      * Ensure the user exists in the database, create if not
      * @private
      */
-    async _ensureUser(connection, data) {
+    async _ensureUser(dbConfig, data) {
         const { userId, userAgent, referrer, url } = data;
         
         if (!userId) {
             throw new Error("User ID is required");
         }
-        
+        const connection = await getDbConnection(dbConfig);
         // Check if user exists
         const [users] = await connection.execute(
             'SELECT user_id FROM users WHERE user_id = ?',
@@ -166,13 +157,13 @@ class EcommerceTracker {
      * Ensure the session exists in the database, create if not
      * @private
      */
-    async _ensureSession(connection, data) {
+    async _ensureSession(dbConfig, data) {
         const { sessionId, userId, userAgent, referrer, url, viewport } = data;
         
         if (!sessionId) {
             throw new Error("Session ID is required");
         }
-        
+        const connection = await getDbConnection(dbConfig);
         // Check if session exists
         const [sessions] = await connection.execute(
             'SELECT session_id FROM sessions WHERE session_id = ?',
@@ -246,56 +237,32 @@ class EcommerceTracker {
      * @private
      */
     async _storeEvent(connection, data) {
-        const { 
-            userId, 
-            sessionId, 
-            name, 
-            event_type,
-            eventType,
-            timestamp, 
-            url: pageUrl, 
-            data: eventData, 
-            queryParams
+        const {
+          userId,
+          sessionId,
+          name,
+          event_type,
+          eventType,
+          timestamp,
+          url: pageUrl,
+          data: eventData,
+          queryParams
         } = data;
-        
-        // Convert timestamp to MySQL datetime - use created_at instead of event_time
-        const eventTime = timestamp 
-            ? new Date(timestamp).toISOString().slice(0, 19).replace('T', ' ')
-            : new Date().toISOString().slice(0, 19).replace('T', ' ');
-        
-        // Get user agent from event data if available
-        const userAgent = data.userAgent || null;
-        const ipAddress = data.ipAddress || null;
-        
-        // Ensure all values are not undefined, replace undefined with null
-        const safeUserId = userId || null;
-        
-        // Try to get event type from any of the possible field names
-        const eventName = name || event_type || eventType;
-        if (!eventName) {
-            throw new Error("Event type is required - cannot be null");
-        }
-        
-        const safePageUrl = pageUrl || null;
-        
-        // Store the event using the actual table schema
-        const [result] = await connection.execute(
-            `INSERT INTO events 
-            (event_type, user_id, page_url, user_agent, ip_address, event_data, created_at) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventName,
-                safeUserId,
-                safePageUrl,
-                userAgent,
-                ipAddress,
-                JSON.stringify(eventData || {}),
-                eventTime
-            ]
-        );
-        
-        return result.insertId;
-    }
+      
+        const payload = {
+          event_type: eventType || event_type || name,
+          user_id:    userId,
+          page_url:   pageUrl,
+          user_agent: data.userAgent || null,
+          ip_address: data.ipAddress || null,
+          event_data: eventData,
+          created_at: timestamp
+        };
+      
+        // now enqueue `payload` instead of writing directly to the DB
+        await eventLogger.log(this.dbConfig, 'events', payload);
+        return payload;
+      }
 
     /**
      * Process event-specific data based on event type
@@ -346,195 +313,183 @@ class EcommerceTracker {
      * Process pageview events
      * @private
      */
-    async _processPageview(connection, data) {
-        const { eventId, data: eventData, url } = data;
-        
-        if (!url) {
-            return;
-        }
-        
+    async _processPageview(_, data) {
+        const { eventId, data: eventData = {}, url } = data;
+        if (!url) return;
+      
         const urlObj = new URL(url);
         const path = urlObj.pathname;
-        
-        await connection.execute(
-            `INSERT INTO pageviews 
-            (event_id, url, path, title, referrer) 
-            VALUES (?, ?, ?, ?, ?)`,
-            [
-                eventId || null,
-                url || null,
-                path || null,
-                (eventData && eventData.title) || null,
-                (eventData && eventData.referrer) || null
-            ]
+      
+        const payload = {
+          event_id: eventId           || null,
+          url:      url               || null,
+          path:     path              || null,
+          title:    eventData.title   || null,
+          referrer: eventData.referrer|| null,
+        };
+      
+        await eventLogger.log(
+          this.dbConfig,    // { dbType, dbConnection }
+          'pageviews',      // table/entity name
+          payload
         );
-    }
-
-    /**
-     * Process click events
-     * @private
-     */
-    async _processClick(connection, data) {
+      }
+      
+      async _processClick(_, data) {
         const { eventId, data: eventData = {} } = data;
-        
-        await connection.execute(
-            `INSERT INTO clicks 
-            (event_id, element_type, element_text, element_id, element_class, element_path, href) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId || null,
-                eventData.element || null,
-                eventData.text || null,
-                eventData.id || null,
-                eventData.classes || null,
-                eventData.path ? JSON.stringify(eventData.path) : null,
-                eventData.href || null
-            ]
+      
+        const payload = {
+          event_id:     eventId                      || null,
+          element_type: eventData.element            || null,
+          element_text: eventData.text               || null,
+          element_id:   eventData.id                 || null,
+          element_class:eventData.classes            || null,
+          element_path: eventData.path
+                           ? JSON.stringify(eventData.path)
+                           : null,
+          href:         eventData.href               || null,
+        };
+      
+        await eventLogger.log(
+          this.dbConfig,   // { dbType, dbConnection }
+          'clicks',        // table/entity name
+          payload
         );
-    }
-
+      }
     /**
      * Process form submission events
      * @private
      */
-    async _processFormSubmission(connection, data) {
+    async _processFormSubmission(_, data) {
         const { eventId, data: eventData = {} } = data;
-        
-        await connection.execute(
-            `INSERT INTO form_submissions 
-            (event_id, form_name, form_action, form_fields) 
-            VALUES (?, ?, ?, ?)`,
-            [
-                eventId || null,
-                eventData.formName || null,
-                eventData.formAction || null,
-                JSON.stringify(eventData.formFields || [])
-            ]
+      
+        const payload = {
+          event_id:    eventId                   || null,
+          form_name:   eventData.formName        || null,
+          form_action: eventData.formAction      || null,
+          form_fields: JSON.stringify(eventData.formFields || [])
+        };
+      
+        await eventLogger.log(
+          this.dbConfig,        // { dbType, dbConnection }
+          'form_submissions',   // table/entity name
+          payload
         );
-    }
+      }
+      
 
     /**
      * Process product view events
      * @private
      */
-    async _processProductView(connection, data) {
+    async _processProductView(_, data) {
         const { eventId, data: eventData = {} } = data;
-        
-        if (!eventData.id) {
-            return;
-        }
-        
-        await connection.execute(
-            `INSERT INTO product_views 
-            (event_id, product_id, product_name, product_price, product_category, product_brand, product_variant) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId || null,
-                eventData.id || null,
-                eventData.name || null,
-                eventData.price || null,
-                eventData.category || null,
-                eventData.brand || null,
-                eventData.variant || null
-            ]
+        if (!eventData.id) return;
+      
+        const payload = {
+          event_id:        eventId || null,
+          product_id:      eventData.id,
+          product_name:    eventData.name || null,
+          product_price:   eventData.price || null,
+          product_category:eventData.category || null,
+          product_brand:   eventData.brand || null,
+          product_variant: eventData.variant || null,
+        };
+      
+        await eventLogger.log(
+          this.dbConfig,     // { dbType, dbConnection }
+          'product_views',   // table/entity name
+          payload
         );
-    }
+      }
+      
 
     /**
      * Process cart action events (add to cart, remove from cart)
      * @private
      */
-    async _processCartAction(connection, data) {
+    async _processCartAction(_, data) {
         const { eventId, name: eventName, data: eventData = {} } = data;
-        
-        if (!eventData.id) {
-            return;
-        }
-        
-        // Determine action type from event name
-        let actionType = 'add';
-        if (eventName === 'remove_from_cart') {
-            actionType = 'remove';
-        }
-        
-        // Calculate total value
-        const quantity = eventData.quantity || 1;
-        const price = eventData.price || 0;
+        if (!eventData.id) return;
+      
+        // Determine action type
+        const actionType = eventName === 'remove_from_cart' ? 'remove' : 'add';
+      
+        // Calculate values
+        const quantity   = eventData.quantity || 1;
+        const price      = eventData.price    || 0;
         const totalValue = quantity * price;
-        
-        await connection.execute(
-            `INSERT INTO cart_actions 
-            (event_id, action_type, product_id, product_name, product_price, quantity, total_value) 
-            VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId || null,
-                actionType || null,
-                eventData.id || null,
-                eventData.name || null,
-                price,
-                quantity,
-                totalValue
-            ]
+      
+        // Build payload matching cart_actions table
+        const payload = {
+          event_id:     eventId   || null,
+          action_type:  actionType,
+          product_id:   eventData.id,
+          product_name: eventData.name    || null,
+          product_price: price,
+          quantity,
+          total_value: totalValue,
+        };
+      
+        // Enqueue for non-blocking insert
+        await eventLogger.log(
+          this.dbConfig,     // { dbType, dbConnection }
+          'cart_actions',    // table/entity name
+          payload
         );
-    }
-
+      }
+      
     /**
      * Process purchase events
      * @private
      */
-    async _processPurchase(connection, data) {
+    async _processPurchase(_, data) {
         const { eventId, data: eventData = {} } = data;
-        
-        if (!eventData.transaction_id) {
-            return;
-        }
-        
-        await connection.execute(
-            `INSERT INTO purchases 
-            (event_id, transaction_id, revenue, tax, shipping, currency, coupon_code, items) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [
-                eventId || null,
-                eventData.transaction_id || null,
-                eventData.value || 0,
-                eventData.tax || null,
-                eventData.shipping || null,
-                eventData.currency || 'USD',
-                eventData.coupon || null,
-                JSON.stringify(eventData.items || [])
-            ]
+        if (!eventData.transaction_id) return;
+      
+        const payload = {
+          event_id:        eventId || null,
+          transaction_id:  eventData.transaction_id || null,
+          revenue:         eventData.value        || 0,
+          tax:             eventData.tax          || null,
+          shipping:        eventData.shipping     || null,
+          currency:        eventData.currency     || 'USD',
+          coupon_code:     eventData.coupon       || null,
+          items:           JSON.stringify(eventData.items || [])
+        };
+      
+        await eventLogger.log(
+          this.dbConfig,   // { dbType, dbConnection }
+          'purchases',     // table/entity name
+          payload
         );
-    }
-
+      }
+      
     /**
      * Update session based on session-related events
      * @private
      */
-    async _updateSession(connection, data) {
+    async _updateSession(_, data) {
         const { sessionId, name: eventName } = data;
-        
-        if (!sessionId) {
-            return; // Skip if sessionId is missing
-        }
-        
+        if (!sessionId) return;
+      
+        let sql, params = [sessionId];
         if (eventName === 'page_exit') {
-            // Update session end time when user exits
-            await connection.execute(
-                `UPDATE sessions 
-                SET ended_at = NOW(), 
-                    is_active = FALSE, 
-                    duration_seconds = TIMESTAMPDIFF(SECOND, started_at, NOW()) 
-                WHERE session_id = ?`,
-                [sessionId]
-            );
+          sql = `
+            UPDATE sessions
+              SET ended_at          = NOW(),
+                  is_active         = FALSE,
+                  duration_seconds  = TIMESTAMPDIFF(SECOND, started_at, NOW())
+            WHERE session_id = ?`;
         } else if (eventName === 'session_renewed') {
-            // Reset session timeout
-            await connection.execute(
-                'UPDATE sessions SET is_active = TRUE WHERE session_id = ?',
-                [sessionId]
-            );
+          sql    = `UPDATE sessions SET is_active = TRUE WHERE session_id = ?`;
+        } else {
+          return;
         }
-    }
+      
+        // enqueue the UPDATE for non-blocking execution
+        await eventLogger.logUpdate(this.dbConfig, sql, params);
+      }
 
     /**
      * Extract UTM parameters from URL
@@ -823,9 +778,9 @@ class EcommerceTracker {
                     if (typeof connection.release === 'function') {
                        // await connection.release();
                     } else if (typeof connection.end === 'function') {
-                        await connection.end();
+                       // await connection.end();
                     } else if (typeof connection.close === 'function') {
-                        await connection.close();
+                       // await connection.close();
                     } else {
                         console.warn("Could not find a method to close the connection");
                     }

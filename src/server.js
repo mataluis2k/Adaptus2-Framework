@@ -84,7 +84,7 @@ const MLAnalytics = require('./core/ml_analytics2');
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
-const ChatModule = require('./modules/chatModule'); // Chat Module
+const { IntelligentChatModule, setActiveInstance } = require('./modules/IntelligentChatModule');
 
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
@@ -241,6 +241,7 @@ const mlAnalytics = new MLAnalytics();
 
 
 const { globalContext, middleware,getContext } = require('./modules/context');
+const { exit } = require('process');
 
 
 globalContext.actions.log = (ctx, action) => {
@@ -2571,6 +2572,7 @@ class Adaptus2Server {
             // Close all connections in the pool
             for (const connection of connectionPool.values()) {
                 try {
+                    console.log('Closing database connection...');
                     await connection.end();
                 } catch (error) {
                     console.error('Error closing database connection:', error);
@@ -2748,6 +2750,7 @@ registerMiddleware() {
 
     // Initialize optional modules safely
     initializeOptionalModules(app) {
+        app.use(cors(corsOptions));
         const httpServer = require('http').createServer(app); // Reuse server
         const { redisClient } = require('./modules/redisClient');
         // Initialize CMS if enabled
@@ -2795,6 +2798,32 @@ registerMiddleware() {
             console.log('Reporting module initialized successfully');
         } catch(error) {
             console.error('Failed to initialize Reporting module:', error.message);
+            process.exit(1);
+        }
+        try {
+            const ReportBuilderModule = require('./modules/reportBuilderModule');           
+            // You must have `ruleEngineInstance` and `app` already available
+            this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            
+            console.log('ReportBuilder module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize ReportBuilder module:', error.message);
+        }
+
+        try {                      
+            const RenderPageModule = require('./modules/RenderPageModule');
+            const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            console.log('RenderPageModule module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize RenderPageModule module:', error.message);
+        }
+
+        try {                      
+            const PageCloneModule = require('./modules/pageCloneModule');
+            const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+            console.log('PageClone module initialized successfully');
+        } catch (error) {
+            console.error('Failed to initialize PageClone module:', error.message);
         }
         // Initialize Chat Module
         if(process.env.CHAT_SERVER_PORT){
@@ -2802,8 +2831,27 @@ registerMiddleware() {
             try {
                 const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
                 
-                this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
                 this.chatModule.start();
+                // Store the instance globally for access from other modules
+                global.chatModule = this.chatModule;
+                
+                // Define the global helper function AFTER setting global.chatModule
+                global.getUserIdFromSessionId = function(sessionId) {
+                    if (!global.chatModule) return sessionId;
+                    
+                    // Access the connected users directly from the global instance
+                    for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
+                        if (username === sessionId) {
+                            const socket = global.chatModule.io.sockets.sockets.get(socketId);
+                            if (socket && socket.user && socket.user.id) {
+                                return socket.user.id;
+                            }
+                        }
+                    }
+                    return sessionId; // Fallback
+                };
                 httpServer.listen(chat_port, () => {
                     console.log('Chat running on:' + chat_port);
                 });
@@ -2837,6 +2885,20 @@ registerMiddleware() {
                 console.error('Failed to initialize SDUI Module:', error.message);
             }
         }
+        if (process.env.AGENT_WORKFLOW_ENABLED) {
+            try {
+                const AgentWorkflowModule = require('./modules/agentWorkflowModule.js');
+                // Pass database configuration
+                const dbConfig = {
+                    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+                    dbConnection: process.env.DEFAULT_DBCONNECTION || 'local'
+                };
+                const agentWorkflowManager = new AgentWorkflowModule(dbConfig, redisClient, app);
+                console.log('Agent Workflow Builder module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize Agent Workflow Builder Module:', error.message);
+            }
+        }
 
         if (process.env.WS_SIGNALING_PORT) {
             const signalingHttpServer = require('http').createServer();
@@ -2866,8 +2928,6 @@ registerMiddleware() {
         }
 
       
-
-        app.use(cors(corsOptions));
         mlAnalytics.loadConfig();
         mlAnalytics.trainModels(app);
         mlAnalytics.scheduleTraining();
