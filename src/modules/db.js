@@ -6,12 +6,21 @@ const snowflake = require('snowflake-sdk');
 const { globalContext, getContext } = require('./context'); // Import the shared globalContext and getContext
 const { getApiConfig } = require('./apiConfig');
 const response = require('./response'); // Import the shared response object
+const process = require('process');
 
 const dbConnections = {};
+const mysqlPools = {};
 let isContextExtended = false; // Ensure extendContext is only called once
 
 
 async function getDbConnection(config) {
+    console.log('getDbConnection', config);
+    if (!config || !config.dbType || !config.dbConnection) {
+        // use env default values 
+        config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
+        config.dbConnection = process.env.DEFAULT_DBCONNECTION || 'MYSQL_1';
+    }
+
     const { dbType, dbConnection } = config;
     const normalizedDbConnection = dbConnection.replace(/-/g, '_');
 
@@ -27,8 +36,18 @@ async function getDbConnection(config) {
                 password: process.env[`${normalizedDbConnection}_PASSWORD`],
                 database: process.env[`${normalizedDbConnection}_DB`],
                 port: process.env[`${normalizedDbConnection}_PORT`] || 3306,
+                waitForConnections: true,
+                connectionLimit: 10,
+                queueLimit: 0
             };            
-            dbConnections[normalizedDbConnection] = await mysql.createConnection(mysqlConfig);
+            if (!mysqlPools[normalizedDbConnection]) {
+                const pool = mysql.createPool(mysqlConfig);
+                pool.on('error', (err) => {
+                    console.error(`[MySQL Pool Error][${normalizedDbConnection}]:`, err);
+                });
+                mysqlPools[normalizedDbConnection] = pool;
+            }
+            dbConnections[normalizedDbConnection] = mysqlPools[normalizedDbConnection];
         } else if (dbType.toLowerCase() === 'postgres') {
             const client = new Client({
                 host: process.env[`${normalizedDbConnection}_HOST`],
@@ -85,6 +104,10 @@ function findDefUsersRoute(table) {
 async function create(config, entity, data) {
 
     console.log('create', config, entity, data);
+    if(config.dbConnection === 'default') {
+        config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
+        config.dbConnection = process.env.DEFAULT_DBCONNECTION || 'MYSQL_1';
+    }
     const db = await getDbConnection(config);    
     const modelConfig = findDefUsersRoute(entity);
 
@@ -153,7 +176,7 @@ async function create(config, entity, data) {
             }
         }
     } catch (error) {
-        console.error(`Error creating record in ${entity}:`, error.message);
+        console.error(`Error creating record in`, entity , error.message);
         response.setResponse(500, 'Error creating record in ${entity}', error.message, {}, 'create_record');
         return { error: error.message };
     }
@@ -509,6 +532,16 @@ function extendContext() {
         
     };
 }
+async function closeAllMysqlPools() {
+    for (const name in mysqlPools) {
+        try {
+            await mysqlPools[name].end();
+            console.log(`Closed MySQL pool: ${name}`);
+        } catch (err) {
+            console.error(`Error closing MySQL pool ${name}:`, err);
+        }
+    }
+}
 
 async function createTable(config, tableName, columnDefinitions) {
     const db = await getDbConnection(config);
@@ -689,5 +722,6 @@ module.exports = {
     exists, 
     createTable,
     extendContext, 
-    query 
+    query,
+    closeAllMysqlPools
 };

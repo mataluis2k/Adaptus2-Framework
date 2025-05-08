@@ -34,7 +34,8 @@ class EcommerceTracker {
      */
     async trackEvent(ctx, params) {
                 
-        try {            
+        try {         
+            console.log("Batch Single Events:", params);   
             const result = await this._processEvent(connection, params);            
             return { success: true, id: result.eventId };
         } catch (error) {
@@ -52,6 +53,7 @@ class EcommerceTracker {
             return { success: false, error: "No events provided" };
         }
 
+      console.log("Batch events:", params);
       
 
       
@@ -73,7 +75,7 @@ class EcommerceTracker {
                     viewport: params.viewport
                 };
                 
-                const result = await this._processEvent(connection, fullEventData);
+                const result = await this._processEvent(this.dbConfig, fullEventData);
                 results.push(result);
             }
                   
@@ -105,6 +107,7 @@ class EcommerceTracker {
             
             // 2. Store the main event - we don't need session tracking in this version
             const eventId = await this._storeEvent(connection, { ...eventData, userId });
+            await this._processEventSpecificData(connection, { ...eventData, eventId });
             
             // 3. Process event-specific data based on event name if needed
             // Skip session/user management for now since the schema is different
@@ -120,13 +123,13 @@ class EcommerceTracker {
      * Ensure the user exists in the database, create if not
      * @private
      */
-    async _ensureUser(connection, data) {
+    async _ensureUser(dbConfig, data) {
         const { userId, userAgent, referrer, url } = data;
         
         if (!userId) {
             throw new Error("User ID is required");
         }
-        
+        const connection = await getDbConnection(dbConfig);
         // Check if user exists
         const [users] = await connection.execute(
             'SELECT user_id FROM users WHERE user_id = ?',
@@ -154,13 +157,13 @@ class EcommerceTracker {
      * Ensure the session exists in the database, create if not
      * @private
      */
-    async _ensureSession(connection, data) {
+    async _ensureSession(dbConfig, data) {
         const { sessionId, userId, userAgent, referrer, url, viewport } = data;
         
         if (!sessionId) {
             throw new Error("Session ID is required");
         }
-        
+        const connection = await getDbConnection(dbConfig);
         // Check if session exists
         const [sessions] = await connection.execute(
             'SELECT session_id FROM sessions WHERE session_id = ?',
@@ -775,9 +778,9 @@ class EcommerceTracker {
                     if (typeof connection.release === 'function') {
                        // await connection.release();
                     } else if (typeof connection.end === 'function') {
-                        await connection.end();
+                       // await connection.end();
                     } else if (typeof connection.close === 'function') {
-                        await connection.close();
+                       // await connection.close();
                     } else {
                         console.warn("Could not find a method to close the connection");
                     }

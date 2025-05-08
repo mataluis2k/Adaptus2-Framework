@@ -3,6 +3,7 @@ const consolelog = require('./logger');
 const { exit } = require('process');
 const path = require('path');
 const CMS_TABLE_SCHEMA = require('./cmsDefinition');
+const ECOMMTRACKER_TABLE_SCHEMAS = require('./EcommDefinitions');
 require('dotenv').config({ path: __dirname + '/.env' });
 const configDir = process.env.CONFIG_DIR || path.join(process.cwd(), 'config');
 const configPath = path.join(configDir, 'apiConfig.json');
@@ -190,6 +191,10 @@ const loadConfig = async (configFile = configPath) => {
         // Add CMS_TABLE_SCHEMA to apiConfig
         if (!apiConfig.find(config => config.dbTable === CMS_TABLE_SCHEMA.dbTable)) {
             apiConfig.push(CMS_TABLE_SCHEMA);
+        }
+        // Add ECOMMTRACKER_TABLE_SCHEMAS to apiConfig
+        if (!apiConfig.find(config => config.dbTable === ECOMMTRACKER_TABLE_SCHEMAS.dbTable)) {
+            apiConfig.push(ECOMMTRACKER_TABLE_SCHEMAS);
         }
         categorizedConfig = categorizeApiConfig(apiConfig);
 

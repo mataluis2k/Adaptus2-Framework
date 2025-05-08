@@ -119,10 +119,10 @@ async function  buildCustomerProfile(userId) {
   // need to put an expiration on the cache
 
   const profile = await redisClient.get("customerProfile:" + userId);
-  // if (profile) {
-  //   console.log(`[buildCustomerProfile2] Using cached profile for userId: ${userId}`);
-  //   return JSON.parse(profile);
-  // }
+  if (profile) {
+    console.log(`[buildCustomerProfile2] Using cached profile for userId: ${userId}`);
+    return JSON.parse(profile);
+  }
   
   const db = await getDbConnection(SUPPORT_DB_CONFIG);
   let orders = [];

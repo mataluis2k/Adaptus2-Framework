@@ -1,5 +1,5 @@
 const { spawn, execSync } = require('child_process');
-const { getDbConnection } = require("./db");
+
 const { authenticateMiddleware } = require("../middleware/authenticationMiddleware");
 const { Ollama }= require('ollama');
 const eventLogger  = require('./EventLogger');
@@ -183,10 +183,7 @@ For more information, visit: https://ollama.ai/download
     }
 
     async saveResponse(responseData) {
-        // Build the same DB config you were using
-        const dbType       = process.env.DEFAULT_DBTYPE        || "mysql";
-        const dbConnection = process.env.DEFAULT_DBCONNECTION || "MYSQL_1";
-        const config       = { dbType, dbConnection };
+  
       
         // Shape a payload matching your messages table columns
         const payload = {
@@ -197,7 +194,11 @@ For more information, visit: https://ollama.ai/download
           status:       responseData.status     || null,
           created_at:   new Date()               // was NOW() in SQL
         };
-      
+       let config = {
+            dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+            dbConnection: process.env.DEFAULT_DB_CONNECTION || 'default'
+            };
+
         // Enqueue for non-blocking insert
         await eventLogger.log(
           config,      // { dbType, dbConnection }

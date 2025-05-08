@@ -2,8 +2,10 @@ const { v4: uuidv4 } = require('uuid');
 const { aarMiddleware } = require('../middleware/aarMiddleware');
 const { getDbConnection } = require('./db');
 const llmModule = require('./llmModule');
+const { redisClient } = require('./redisClient');
+const { create, query } = require('./db');  
+const eventLogger = require('./EventLogger');
 const express = require('express');
-const { format } = require('path');
 
 class ReportBuilderModule {
     constructor(globalContext, dbConfig, app) {
@@ -12,6 +14,7 @@ class ReportBuilderModule {
         this.app = app;
         this.ruleEngineInstance = this.app.locals.ruleEngineMiddleware;
         this.acl = [process.env.DEFAULT_ADMIN || 'admin'];
+        this.schemaCache = {};
         this.registerActions();
         this.registerRoutes();
     }
@@ -20,7 +23,42 @@ class ReportBuilderModule {
         this.globalContext.actions.generate_sql_code = this.generateSQLCode.bind(this);
         this.globalContext.actions.save_sql_code = this.saveSQLCode.bind(this);
     }
+    
+    /**
+     * Fetch schema details from cache or database and cache for future use
+     */
+    async getSchemaString(config) {
+        const schemaKey = `schema:${config.dbConnection}`;
+        
+        // Try to get schema from Redis cache first
+        let schemaString = await redisClient.get(schemaKey);
+        
+        if (!schemaString) {
+            console.log('Schema cache miss, fetching from database');
+            // If not in cache, fetch schema and cache it
+            const tables = await query(config, 'SHOW TABLES');
+            const schemaDetails = {};
 
+            for (const row of tables) {
+                const tableName = Object.values(row)[0];
+                const columns = await query(config, `DESCRIBE \`${tableName}\``);
+                schemaDetails[tableName] = columns;
+            }
+
+            schemaString = Object.entries(schemaDetails).map(([table, cols]) => {
+                return `${table}: ${cols.map(col => `${col.Field} (${col.Type})`).join(', ')}`;
+            }).join('\n');
+            
+            // Cache schema for 1 hour (3600 seconds)
+            await redisClient.set(schemaKey, schemaString, 'EX', 3600);
+        }
+        
+        return schemaString;
+    }
+
+    /**
+     * Run SQL query with safety limits
+     */
     async runSQLQuery(ctx, params) {
         const { sql } = params;
         if (!sql || typeof sql !== 'string') throw new Error('Missing or invalid SQL query');
@@ -31,51 +69,34 @@ class ReportBuilderModule {
             ? normalized.replace(/limit\s+\d+/i, 'LIMIT 10')
             : `${normalized} LIMIT 10`;
 
-        const connection = await getDbConnection(ctx.config);
         try {
-            const [rows] = await connection.execute(limitedQuery);
+            const rows = await query(ctx.config, limitedQuery);
             return { data: rows };
         } catch (error) {
             console.error('SQL execution error:', error.message);
             throw new Error('Failed to execute query');
         }
     }
+    
+    /**
+     * Generate SQL code based on user query and database schema
+     */
     async generateSQLCode(ctx, params) {
         const { userQuery } = params;
         if (!userQuery) throw new Error('Missing userQuery');
-        console.log(ctx.config);
-        const connection = await getDbConnection(ctx.config);
-        if (!connection) {
-            return { code: 'Failed to connect to database' };
-        }
+        
         try {
-            const [tables] = await connection.execute('SHOW TABLES');
-            const schemaDetails = {};
-
-            for (const row of tables) {
-                const tableName = Object.values(row)[0];
-                const [columns] = await connection.execute(`DESCRIBE \`${tableName}\``);
-
-                schemaDetails[tableName] = columns;
-            }
-
-            const schemaString = Object.entries(schemaDetails).map(([table, cols]) => {
-                return `${table}: ${cols.map(col => `${col.Field} (${col.Type})`).join(', ')}`;
-            }).join('\n');
-
+            // Get schema using the helper method 
+            const schemaString = await this.getSchemaString(ctx.config);
+            
             const prompt = `User wants to build a report.\nSchema:\n${schemaString}\n\nQuery: ${userQuery} .\nGenerate SQL code ONLY.`;
             const llm = await llmModule.getLLMInstance('llama3');
             
             // Create a properly formatted message array
             const messages = [
-                { role: "system", content: "You are expert generating SQL code , make sure you reply in JSON" },
+                { role: "system", content: "You are expert generating SQL code, make sure you reply in JSON" },
                 { role: "user", content: prompt }
             ];
-
-            // Ensure messages is an array before passing to llm.call
-            if (!Array.isArray(messages)) {
-                throw new Error('Messages must be an array');
-            }
 
             // Modified to handle the response correctly
             const llmResponse = await llm.call(messages);
@@ -91,73 +112,113 @@ class ReportBuilderModule {
             } else {
                 return { code: 'Failed to generate SQL code' };
             }
-            console.log('LLM Response:', llmResponse);
-            if(sqlCode.sql){
+            
+            // Parse JSON response if needed
+            let parsedResponse;
+            try {
+                if (typeof sqlCode === 'string' && (sqlCode.startsWith('{') || sqlCode.includes('```json'))) {
+                    // Extract JSON if it's wrapped in code blocks
+                    const jsonMatch = sqlCode.match(/```json\s*([\s\S]*?)\s*```/) || 
+                                    sqlCode.match(/```\s*([\s\S]*?)\s*```/);
+                    const jsonStr = jsonMatch ? jsonMatch[1] : sqlCode;
+                    parsedResponse = JSON.parse(jsonStr.replace(/^```json|```$/g, '').trim());
+                }
+            } catch (jsonError) {
+                console.warn('Failed to parse JSON from LLM response, using raw text');
+            }
+            
+            // Return the SQL code, checking different possible locations
+            if (parsedResponse && parsedResponse.sql) {
+                return { code: parsedResponse.sql };
+            } else if (parsedResponse && parsedResponse.query) {
+                return { code: parsedResponse.query };
+            } else if (typeof sqlCode === 'object' && sqlCode.sql) {
                 return { code: sqlCode.sql };
-            } else if(sqlCode.query ){
+            } else if (typeof sqlCode === 'object' && sqlCode.query) {
                 return { code: sqlCode.query };
             } else {
                 return { code: sqlCode };
             }
-
-           
-           
         } catch (error) {
             console.error('Error in generateSQLCode:', error);
             return { code: `Error: ${error.message}` };
-        } finally {
-            // Connection is automatically released by the pool wrapper
         }
     }
-    
-    async executeFromIntent(ctx, params) {
-        const { prompt } = params;
-        const userIntent = prompt || params.userIntent;
-        if (!userIntent) throw new Error('Missing userIntent');
-        
-        const connection1 = await getDbConnection(ctx.config);
+     
+    extractSQL(aiMessage) {
         try {
-            // Get schema information (as you're already doing)
-            const [tables] = await connection1.execute('SHOW TABLES');
-            const schemaDetails = {};
-            
-            for (const row of tables) {
-                const tableName = Object.values(row)[0];
-                const [columns] = await connection1.execute(`DESCRIBE \`${tableName}\``);
-                schemaDetails[tableName] = columns;
+          const contentStr = aiMessage.content?.trim();
+          if (!contentStr) return null;
+      
+          // Try to parse as JSON if it looks like JSON
+          if (contentStr.startsWith('{') || contentStr.startsWith('"')) {
+            const parsed = JSON.parse(contentStr);
+            if (typeof parsed.SQL === 'string') {
+              return parsed.SQL.trim();
             }
-            
-            const schemaString = Object.entries(schemaDetails).map(([table, cols]) => {
-                return `${table}: ${cols.map(col => `${col.Field} (${col.Type})`).join(', ')}`;
-            }).join('\n');
+          }
+      
+          // If not JSON, try to extract SQL from raw string (strip common prefixes)
+          const sqlMatch = contentStr.match(/(SELECT|INSERT|UPDATE|DELETE)\s.+/i);
+          if (sqlMatch) {
+            return sqlMatch[0].trim();
+          }
+      
+          return null;
+        } catch (err) {
+          console.warn('Warning: could not extract SQL from LLM content:', err.message);
+          return null;
+        }
+      }
+      
+    /**
+     * Execute SQL from natural language intent
+     */
+    async executeFromIntent(ctx, params) {
+        const { userQuery } = params;
+        if (!userQuery) throw new Error('Missing userQuery');
+        const userIntent = userQuery.trim();
+      
+        
+        try {
+            // Get cached schema
+            const schemaString = await this.getSchemaString(ctx.config);
             
             // Generate SQL using LLM
-            const prompt = `
-    Database Schema:
-    ${schemaString}
-    
-    User Intent: ${userIntent}
-    
-    Based on this intent and schema:
-    1. Determine the appropriate SQL operation (SELECT/INSERT/UPDATE/DELETE)
-    2. Identify the correct table(s) to operate on
-    3. Generate precise SQL query to fulfill the intent
-    4. Return the SQL as valid, executable code with appropriate error handling
-    `;
-    
-            const llmResponse = await llmModule.simpleLLMCall({
-                senderId: ctx.user?.id || 'intent_executor',
-                recipientId: 'sql_engine',
-                message: prompt,
-                timestamp: new Date().toISOString(),
-                status: 'processing',
-                format: 'json',
-            });
-    
-            // Execute the generated SQL
+            const promptTemplate = `
+Database Schema:
+${schemaString}
+
+User Question: ${userIntent}
+
+Based on this Question and schema:
+1. Determine the appropriate SQL operation (SELECT/INSERT/UPDATE/DELETE)
+2. Identify the correct table(s) to operate on
+3. Generate precise SQL query to fulfill the Question
+4. Return the SQL as valid, executable code with appropriate error handling
+`;
             
+
+            const llm = await llmModule.getLLMInstance('sqlcoder');
+                        
+            // Create a properly formatted message array
+            const messages = [
+                { role: "system", content: "You are expert generating SQL code, make sure you reply in JSON" },
+                { role: "user", content: promptTemplate }
+            ];
+
+            // Modified to handle the response correctly
+            const llmResponse = await llm.call(messages);
+
+          
+
             console.log('LLM Response:', llmResponse);
-            const sqlQuery = llmResponse.sql || llmResponse;
+
+            // Extract SQL
+            const sqlQuery = this.extractSQL(llmResponse);
+            if (!sqlQuery) {
+                throw new Error('Failed to extract SQL from LLM response');
+            }
             console.log('Generated SQL:', sqlQuery);
             
             // Add safety checks here
@@ -165,7 +226,16 @@ class ReportBuilderModule {
                 throw new Error('Generated SQL query appears unsafe');
             }
             
-            const [result] = await connection1.execute(sqlQuery);
+            // Execute query and log the execution
+            const result = await query(ctx.config, sqlQuery);
+            
+            // Log the SQL execution for analytics (optional)
+            await eventLogger.logUpdate(
+                ctx.config,
+                'INSERT INTO query_logs (user_id, query, timestamp) VALUES (?, ?, NOW())',
+                [ctx.user?.id || 'system', sqlQuery]
+            );
+            
             return { 
                 executed: true,
                 sql: sqlQuery,
@@ -173,12 +243,11 @@ class ReportBuilderModule {
             };
         } catch (error) {
             console.error('Error executing SQL:', error.message);
-        } finally {
-            // Connection is automatically released by the pool wrapper
+            throw error;
         }
     }
     
-    // Add a safety check function
+    // Safety check function
     isUnsafeQuery(sql) {
         // Implement logic to check for potentially harmful SQL
         // Example: Check for DROP, TRUNCATE, system tables access, etc.
@@ -192,36 +261,39 @@ class ReportBuilderModule {
         
         return dangerousPatterns.some(pattern => pattern.test(sql));
     }
+    
+    /**
+     * Save SQL code using EventLogger for performance
+     */
     async saveSQLCode(ctx, params) {
         const { reportName, sqlQuery, acl = [], filters = [] } = params;
         if (!reportName || !sqlQuery) throw new Error('Missing reportName or sqlQuery');
 
         // if acl is empty array then set it to this.acl 
-        if (acl.length === 0) {
-            acl.push(...this.acl);
-        }
-        const connection = await getDbConnection(ctx.config);
-        const query = `INSERT INTO adaptus2_reports (id, reportName, sqlQuery, acl, filters) VALUES (?, ?, ?, ?, ?)`;
+        const effectiveAcl = acl.length === 0 ? [...this.acl] : acl;
+        
         const id = uuidv4();
-
-        try {
-            await connection.execute(query, [
+        
+        // Use EventLogger instead of direct query execution
+        await eventLogger.log(
+            ctx.config, 
+            'adaptus2_reports', 
+            {
                 id,
                 reportName,
                 sqlQuery,
-                JSON.stringify(acl),
-                JSON.stringify(filters)
-            ]);
-            return { success: true, id };
-        } finally {
-            // Connection is automatically released by the pool wrapper
-        }
+                acl: JSON.stringify(effectiveAcl),
+                filters: JSON.stringify(filters)
+            }
+        );
+        
+        return { success: true, id };
     }
 
     registerRoutes() {
-        
         const middleware = aarMiddleware("token", this.acl, this.ruleEngineInstance);
-        this.app.post('/api/userIntent',  aarMiddleware("token", this.acl, this.ruleEngineInstance), async (req, res) => {
+        
+        this.app.post('/api/userIntent', middleware, async (req, res) => {
             try {
                 const ctx = { config: this.dbConfig, user: req.user };
                 const result = await this.executeFromIntent(ctx, req.body);
@@ -231,7 +303,7 @@ class ReportBuilderModule {
             }
         });
 
-        this.app.post('/api/generate-code',  aarMiddleware("token", this.acl, this.ruleEngineInstance), async (req, res) => {
+        this.app.post('/api/generate-code', middleware, async (req, res) => {
             try {
                 const ctx = { config: this.dbConfig, user: req.user };
                 const result = await this.generateSQLCode(ctx, req.body);
@@ -241,7 +313,7 @@ class ReportBuilderModule {
             }
         });
 
-        this.app.post('/api/save-code',  aarMiddleware("token", this.acl, this.ruleEngineInstance), async (req, res) => {
+        this.app.post('/api/save-code', middleware, async (req, res) => {
             try {
                 const ctx = { config: this.dbConfig, user: req.user };
                 const result = await this.saveSQLCode(ctx, req.body);
@@ -260,7 +332,6 @@ class ReportBuilderModule {
                 res.status(500).json({ error: error.message });
             }
         });
-       
     }
 }
 

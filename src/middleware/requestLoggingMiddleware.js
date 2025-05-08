@@ -1,5 +1,6 @@
 const { getDbConnection, query } = require('../modules/db');
 const logger = require('../modules/logger');
+const eventLogger = require('../modules/EventLogger');
 const crypto = require('crypto');
 
 class RequestLogger {
@@ -110,6 +111,10 @@ class RequestLogger {
         
         return JSON.parse(decrypted);
     }
+    formatForMySQL(date) {
+        if (!(date instanceof Date)) return null;
+        return date.toISOString().slice(0, 23).replace('T', ' ');
+    }
 
     middleware() {
         return async (req, res, next) => {
@@ -186,8 +191,8 @@ class RequestLogger {
 
                     const logData = {
                         request_id: requestId,
-                        timestamp_start: startTimestamp,
-                        timestamp_end: endTimestamp,
+                        timestamp_start: this.formatForMySQL(startTimestamp),
+                        timestamp_end: this.formatForMySQL(endTimestamp),
                         method: req.method,
                         url: req.originalUrl,
                         path: req.path,
@@ -203,16 +208,12 @@ class RequestLogger {
                         encrypted: this.encryptPayload
                     };
 
-                    const columns = Object.keys(logData);
-                    const values = Object.values(logData);
-                    const placeholders = columns.map(() => '?').join(', ');
+                    try {
+                        await eventLogger.log(this.dbConfig, this.tableName, logData);
+                    } catch (e) {
+                        logger.error('EventLogger failed to queue request log:', e);
+                    }
 
-                    const insertQuery = {
-                        text: `INSERT INTO ${this.tableName} (${columns.join(', ')}) VALUES (${placeholders})`,
-                        values: values
-                    };
-
-                    await query(this.dbConfig, insertQuery.text, insertQuery.values);
 
                 } catch (error) {
                     logger.error('Failed to log request:', error);

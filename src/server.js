@@ -2566,6 +2566,7 @@ class Adaptus2Server {
             // Close all connections in the pool
             for (const connection of connectionPool.values()) {
                 try {
+                    console.log('Closing database connection...');
                     await connection.end();
                 } catch (error) {
                     console.error('Error closing database connection:', error);
