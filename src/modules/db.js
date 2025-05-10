@@ -12,7 +12,178 @@ const dbConnections = {};
 const mysqlPools = {};
 let isContextExtended = false; // Ensure extendContext is only called once
 
-
+async function initDatabase() {
+    console.log('Initializing database tables...');
+    
+    try {
+      // Load the API configuration
+      const apiConfig = await loadConfig();
+      
+      // Create a connection pool for better performance
+      const connectionPool = new Map();
+      
+      try {
+        for (const endpoint of apiConfig) {
+          const { dbType, dbTable, columnDefinitions, dbConnection: connString } = endpoint;
+          console.log("Working on endpoint", endpoint);
+  
+          // Input validation
+          if (!dbType || !dbTable || !columnDefinitions) {
+            console.warn(`Skipping invalid endpoint configuration:`, {
+              dbType,
+              dbTable,
+              hasColumnDefs: !!columnDefinitions
+            });
+            continue;
+          }
+  
+          // Validate database type
+          if (!['mysql', 'postgres'].includes(dbType)) {
+            console.warn(`Skipping ${dbTable}: Unsupported database type ${dbType}`);
+            continue;
+          }
+  
+          // Reuse existing connection from pool if available
+          let connection = connectionPool.get(connString);
+          if (!connection) {
+            connection = await getDbConnection(endpoint);
+            if (!connection) {
+              console.error(`Failed to connect to database for ${connString}`);
+              continue;
+            }
+            connectionPool.set(connString, connection);
+          }
+  
+          // Validate column definitions
+          if (!Object.keys(columnDefinitions).length) {
+            console.warn(`Skipping ${dbTable}: Empty column definitions`);
+            continue;
+          }
+  
+          // Handle different column definition formats
+          // Check if columnDefinitions contains objects or strings
+          const isObjectFormat = Object.values(columnDefinitions).some(
+            value => typeof value === 'object' && value !== null
+          );
+  
+          // Validate column names and types based on format
+          let invalidColumns = [];
+          if (isObjectFormat) {
+            // Format: { column: { type: '...', constraints: '...' } }
+            invalidColumns = Object.entries(columnDefinitions).filter(([name, def]) => {
+              return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || 
+                    (typeof def.type !== 'string') || 
+                    !def.type.match(/^[a-zA-Z0-9\s()]+$/);
+            });
+          } else {
+            // Format: { column: 'TYPE CONSTRAINTS' }
+            invalidColumns = Object.entries(columnDefinitions).filter(([name, type]) => {
+              return !name.match(/^[a-zA-Z_][a-zA-Z0-9_]*$/) || 
+                    (typeof type !== 'string');
+            });
+          }
+  
+          if (invalidColumns.length > 0) {
+            console.error(`Invalid column definitions in ${dbTable}:`, invalidColumns);
+            continue;
+          }
+  
+          try {
+            // Check if the table exists using a transaction
+            await connection.beginTransaction();
+  
+            // Check if the table exists with proper error handling
+            let tableExists = false;
+            try {
+              if (dbType === 'mysql') {
+                const [rows] = await connection.execute(
+                  `SELECT COUNT(*) AS count FROM information_schema.tables 
+                   WHERE table_schema = DATABASE() AND table_name = ?`,
+                  [dbTable]
+                );
+                tableExists = rows[0].count > 0;
+              } else if (dbType === 'postgres') {
+                const [rows] = await connection.execute(
+                  `SELECT COUNT(*) AS count FROM information_schema.tables 
+                   WHERE table_name = $1`,
+                  [dbTable]
+                );
+                tableExists = rows[0].count > 0;
+              }
+            } catch (error) {
+              console.error(`Error checking table existence for ${dbTable}:`, error);
+              await connection.rollback();
+              continue;
+            }
+  
+            if (tableExists) {
+              console.log(`Table ${dbTable} already exists. Skipping creation.`);
+              await connection.commit();
+              continue;
+            }
+  
+            // Build and validate the CREATE TABLE query
+            // Handle different column definition formats
+            let columns;
+            if (isObjectFormat) {
+              columns = Object.entries(columnDefinitions)
+                .map(([column, def]) => {
+                  if (def.constraints) {
+                    return `${column} ${def.type} ${def.constraints}`;
+                  } else {
+                    return `${column} ${def.type}`;
+                  }
+                })
+                .join(', ');
+            } else {
+              columns = Object.entries(columnDefinitions)
+                .map(([column, type]) => `${column} ${type}`)
+                .join(', ');
+            }
+  
+            const createTableQuery = `CREATE TABLE ${dbTable} (${columns})`;
+            console.log(`Executing query: ${createTableQuery}`);
+  
+            try {
+              await connection.execute(createTableQuery);
+              await connection.commit();
+              console.log(`Table ${dbTable} initialized successfully.`);
+            } catch (error) {
+              await connection.rollback();
+              console.error(`Error creating table ${dbTable}:`, error);
+              
+              // Provide more detailed error information
+              if (error.code === 'ER_DUP_FIELDNAME') {
+                console.error('Duplicate column name detected');
+              } else if (error.code === 'ER_PARSE_ERROR') {
+                console.error('SQL syntax error in CREATE TABLE statement');
+              }
+            }
+          } catch (error) {
+            console.error(`Error in table initialization process for ${dbTable}:`, error);
+            if (connection) {
+              await connection.rollback().catch(console.error);
+            }
+          }
+        }
+      } finally {
+        // Close all connections in the pool
+        for (const connection of connectionPool.values()) {
+          try {
+            await connection.end();
+          } catch (error) {
+            console.error('Error closing database connection:', error);
+          }
+        }
+      }
+      
+      console.log('Database tables initialized successfully.');
+      return true;
+    } catch (error) {
+      console.error('Failed to initialize database tables:', error);
+      return false;
+    }
+}
 async function getDbConnection(config) {
     console.log('getDbConnection', config);
     if (!config || !config.dbType || !config.dbConnection) {
@@ -427,7 +598,47 @@ async function deleteRecord(config, entity, query) {
         throw error;
     }
 }
-
+async function tableExists(config, tableName) {
+    const db = await getDbConnection(config);
+    if (!db) {
+        throw new Error(`Database connection for ${config.dbConnection} could not be established.`);
+    }
+    const dbName = process.env[`${config.dbConnection.replace(/-/g, '_')}_DB`];
+    if (!dbName) {
+        throw new Error(`Database name for ${config.dbConnection} is not defined.`);
+    }
+    if (!tableName) {
+        throw new Error(`Table name is required to check existence.`);
+    }
+    try {
+        switch (config.dbType.toLowerCase()) {
+            case 'mysql':
+            case 'postgres': {
+                const sql = `SELECT COUNT(*) AS count FROM information_schema.tables WHERE  table_schema = ?  AND table_name = ?`;
+                const [rows] = await db.execute(sql, [dbName, tableName]);
+                return rows[0].count > 0;
+            }
+            case 'mongodb': {
+                const collections = await db.listCollections().toArray();
+                return collections.some(collection => collection.name === tableName);
+            }
+            case 'snowflake': {
+                const sql = `SELECT COUNT(*) AS count FROM information_schema.tables WHERE  table_schema = ?  AND table_name = ?`;
+                return new Promise((resolve, reject) => {
+                    db.execute({ sqlText: sql, binds: [dbName, tableName] }, (err, result) => {
+                        if (err) return reject(err);
+                        resolve(result.rows[0].COUNT > 0);
+                    });
+                });
+            }
+            default:
+                throw new Error(`Unsupported database type: ${config.dbType}`);
+        }
+    } catch (error) {
+        console.error(`Error checking existence of table ${tableName}:`, error.message);
+        throw error;
+    }
+}
 async function exists(config, entity, params) {
     const db = await getDbConnection(config);
     const modelConfig = findDefUsersRoute(entity);
@@ -723,5 +934,7 @@ module.exports = {
     createTable,
     extendContext, 
     query,
-    closeAllMysqlPools
+    closeAllMysqlPools,
+    initDatabase,
+    tableExists
 };

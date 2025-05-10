@@ -1,6 +1,6 @@
 {
   "name": "adaptus2-framework",
-  "version": "2.2.30",
+  "version": "2.2.41",
   "description": "The Highly Scalable and Configurable API Express Framework for Node.js",
   "private": false,
   "preferGlobal": true,
@@ -17,8 +17,8 @@
   },
   "scripts": {
     "postinstall": "node scripts/copy-plugins.js",
-    "start": "node index.js",
-    "dev": "nodemon index.js",
+    "start": "node --max-old-space-size=8192 index.js",
+    "dev": "nodemon --max-old-space-size=8192 index.js",
     "test": "jest"
   },
   "keywords": [

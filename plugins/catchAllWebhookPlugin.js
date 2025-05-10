@@ -78,12 +78,12 @@ module.exports = {
             dbType: process.env.DEFAULT_DBTYPE,
             dbConnection: process.env.DEFAULT_DBCONNECTION
         };
-
+        const dbName = process.env[`${this.dbConfig.dbConnection}_DB`] || 'adaptus2';
         try {
             // Check if audit log table exists
             const tableExistsQuery = {
-                text: 'SELECT 1 FROM information_schema.tables WHERE table_name = ?',
-                values: ['webhook_audit_log']
+                text: 'SELECT 1 FROM information_schema.tables WHERE  table_schema = ? AND table_name = ?',
+                values: [dbName, 'webhook_audit_log']
             };
             const result = await query(dbConfig, tableExistsQuery.text, tableExistsQuery.values);
             

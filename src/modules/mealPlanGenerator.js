@@ -123,7 +123,7 @@ async function generateMealPlan2(req, res) {
       // Retrieve similar meal plan documents via RAG
       const queryText = `Meal plan with ${macroRequest.target_calories} calories, ${macroRequest.protein_percentage}% protein, ${macroRequest.fat_percentage}% fat, ${macroRequest.carbs_percentage}% carbs` +
                         (macroRequest.dietary_restrictions?.length ? ` with restrictions: ${macroRequest.dietary_restrictions.join(',')}` : '');
-      const retriever = vectorStore.asRetriever({ searchKwargs: { k: 100 } });
+      const retriever = vectorStore.asRetriever({ searchKwargs: { k: 30 } });
       const topChunks = await retriever.getRelevantDocuments(queryText);
       if (!Array.isArray(topChunks)) {
               throw new Error(`Expected topChunks to be an array, but got: ${typeof topChunks}`);

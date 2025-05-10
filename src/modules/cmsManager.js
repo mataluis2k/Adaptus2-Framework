@@ -24,6 +24,7 @@ class CMSManager {
             logger.error('Failed to initialize CMS:', err);
             throw err;
         });
+        this.dbName = process.env[`${this.dbConfig.dbConnection}_DB`] || 'adaptus2';
     }
 
     async initialize() {
@@ -35,8 +36,8 @@ class CMSManager {
 
             // Check if CMS table exists
             const tableExistsQuery = {
-                text: 'SELECT 1 FROM information_schema.tables WHERE table_name = ?',
-                values: [CMS_TABLE_SCHEMA.dbTable]
+              text: 'SELECT 1 FROM information_schema.tables WHERE  table_schema = ? AND table_name = ?',
+              values: [this.dbName,CMS_TABLE_SCHEMA.dbTable]
             };
 
             const result = await query(this.dbConfig, tableExistsQuery.text, tableExistsQuery.values);

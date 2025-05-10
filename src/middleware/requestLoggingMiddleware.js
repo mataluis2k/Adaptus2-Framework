@@ -13,7 +13,7 @@ class RequestLogger {
             dbType: process.env.DEFAULT_DBTYPE,
             dbConnection: process.env.DEFAULT_DBCONNECTION
         };
-
+        this.dbName = process.env[`${this.dbConfig.dbConnection}_DB`] || 'adaptus2';
         if (this.enabled) {
             this.initialize();
         }
@@ -23,8 +23,8 @@ class RequestLogger {
         try {
             // Check if table exists
             const tableExistsQuery = {
-                text: 'SELECT 1 FROM information_schema.tables WHERE table_name = ?',
-                values: [this.tableName]
+                text: 'SELECT 1 FROM information_schema.tables WHERE  table_schema = ? AND table_name = ?',
+                values: [this.dbName, this.tableName]
             };
 
             const connection = await getDbConnection(this.dbConfig);

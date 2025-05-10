@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 const yargs = require('yargs/yargs');
 const { hideBin } = require('yargs/helpers');
+const path = require('path');
 
 yargs(hideBin(process.argv))
   // Build command
@@ -28,7 +29,7 @@ yargs(hideBin(process.argv))
             'Comma-separated list of tables to build configuration for (optional)',
         }),
     async (argv) => {
-      const buildApiConfigFromDatabase = require('./src/modules/buildConfig');
+      const buildApiConfigFromDatabase = require(path.join(__dirname, './src/modules/buildConfig'));
       await buildApiConfigFromDatabase(argv);
       process.exit(0);
     }
@@ -39,7 +40,7 @@ yargs(hideBin(process.argv))
     'Initialize database tables',
     (yargs) => yargs,
     async () => {
-      const { initDatabase } = require('./src/db'); // Adjust the path if needed.
+      const { initDatabase } = require(path.join(__dirname, './src/modules/db')); // Adjust the path if needed
       await initDatabase();
       console.log('Database tables initialized successfully.');
       process.exit(0);
@@ -51,7 +52,7 @@ yargs(hideBin(process.argv))
     'Generate Swagger documentation',
     (yargs) => yargs,
     async () => {
-      const generateSwaggerDoc = require('./src/modules/generateSwaggerDoc');
+      const generateSwaggerDoc = require(path.join(__dirname, './src/modules/generateSwaggerDoc'));
       await generateSwaggerDoc();
       console.log('Swagger documentation generated successfully.');
       process.exit(0);
@@ -74,11 +75,11 @@ yargs(hideBin(process.argv))
           describe: 'Set the port',
         }),
     (argv) => {
-      const { Adaptus2Server } = require('./src/server');
+      const { Adaptus2Server } = require(path.join(__dirname, './src/server'));
       const app = new Adaptus2Server({
         port: argv.port,
         host: argv.host,
-        configPath: './config/apiConfig.json',
+        configPath: path.join(__dirname, './config/apiConfig.json'), // Also fix this path
       });
       app.start(() => {
         console.log(`Adaptus2-Framework Server is running on ${argv.host}:${argv.port}`);
