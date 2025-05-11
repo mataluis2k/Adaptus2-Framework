@@ -33,16 +33,16 @@ class EcommerceTracker {
      * Process and store a single tracking event
      */
     async trackEvent(ctx, params) {
-                
-        try {         
-            console.log("Batch Single Events:", params);   
-            const result = await this._processEvent(connection, params);            
+
+        try {
+            console.log("Batch Single Events:", params);
+            const result = await this._processEvent(this.dbConfig, params);
             return { success: true, id: result.eventId };
         } catch (error) {
-            
+
             console.error("Error in trackEvent:", error.message);
             throw new Error("Internal error during event tracking");
-        } 
+        }
     }
 
     /**
@@ -91,27 +91,28 @@ class EcommerceTracker {
      * Core function to process a single event and store it in the database
      * @private
      */
-    async _processEvent(connection, eventData) {
+    async _processEvent(dbConfig, eventData) {
         try {
-            if(connection === undefined) {
-                connection = this.dbConfig;
+            // Ensure we have a valid dbConfig
+            if(dbConfig === undefined) {
+                dbConfig = this.dbConfig;
             }
-            
+
             // 1. Get user ID from data or generate one
             const userId = eventData.userId || eventData.user_id || uuidv4();
-            
+
             // Check if event has a name/type - required field
             if (!eventData.name && !eventData.event_type && !eventData.eventType) {
                 throw new Error("Event type is required (name, event_type, or eventType must be provided)");
             }
-            
+
             // 2. Store the main event - we don't need session tracking in this version
-            const eventId = await this._storeEvent(connection, { ...eventData, userId });
-            await this._processEventSpecificData(connection, { ...eventData, eventId });
-            
+            const eventId = await this._storeEvent(dbConfig, { ...eventData, userId });
+            await this._processEventSpecificData(dbConfig, { ...eventData, eventId });
+
             // 3. Process event-specific data based on event name if needed
             // Skip session/user management for now since the schema is different
-            
+
             return { eventId, userId };
         } catch (error) {
             console.error("Error processing event:", error);
@@ -125,31 +126,39 @@ class EcommerceTracker {
      */
     async _ensureUser(dbConfig, data) {
         const { userId, userAgent, referrer, url } = data;
-        
+
         if (!userId) {
             throw new Error("User ID is required");
         }
-        const connection = await getDbConnection(dbConfig);
+
+        // Use the query method from the db module that works with adaptus2-orm
+        const { query } = require('./db');
+
         // Check if user exists
-        const [users] = await connection.execute(
+        const usersResult = await query(
+            dbConfig,
             'SELECT user_id FROM users WHERE user_id = ?',
             [userId]
         );
-        
+
+        const users = usersResult.data || [];
+
         if (users.length === 0) {
             // Create new user
-            await connection.execute(
+            await query(
+                dbConfig,
                 'INSERT INTO users (user_id, first_seen, last_seen, user_agent, first_referrer, first_landing_page) VALUES (?, NOW(), NOW(), ?, ?, ?)',
                 [userId, userAgent || null, referrer || null, url || null]
             );
         } else {
             // Update existing user's last_seen
-            await connection.execute(
+            await query(
+                dbConfig,
                 'UPDATE users SET last_seen = NOW(), total_sessions = total_sessions + 1 WHERE user_id = ?',
                 [userId]
             );
         }
-        
+
         return userId;
     }
 
@@ -159,52 +168,59 @@ class EcommerceTracker {
      */
     async _ensureSession(dbConfig, data) {
         const { sessionId, userId, userAgent, referrer, url, viewport } = data;
-        
+
         if (!sessionId) {
             throw new Error("Session ID is required");
         }
-        const connection = await getDbConnection(dbConfig);
+
+        // Use the query method from the db module that works with adaptus2-orm
+        const { query } = require('./db');
+
         // Check if session exists
-        const [sessions] = await connection.execute(
+        const sessionsResult = await query(
+            dbConfig,
             'SELECT session_id FROM sessions WHERE session_id = ?',
             [sessionId]
         );
-        
+
+        const sessions = sessionsResult.data || [];
+
         if (sessions.length === 0) {
             // Parse user agent if available
             let browserName = '';
             let browserVersion = '';
             let deviceType = 'desktop';
             let osName = '';
-            
+
             if (userAgent) {
                 const uaParser = new UAParser(userAgent);
                 const browser = uaParser.getBrowser() || {};
                 const device = uaParser.getDevice() || {};
                 const os = uaParser.getOS() || {};
-                
+
                 browserName = browser.name || '';
                 browserVersion = browser.version || '';
                 deviceType = device.type || 'desktop';
                 osName = os.name || '';
             }
-            
+
             // Parse UTM parameters from URL if available
             const utmParams = url ? this._extractUtmParams(url) : {};
-            
+
             // Get viewport dimensions safely
             const viewportWidth = viewport && viewport.width ? viewport.width : null;
             const viewportHeight = viewport && viewport.height ? viewport.height : null;
-            
+
             // Create new session
-            await connection.execute(
-                `INSERT INTO sessions 
-                (session_id, user_id, started_at, device_type, browser, browser_version, 
+            await query(
+                dbConfig,
+                `INSERT INTO sessions
+                (session_id, user_id, started_at, device_type, browser, browser_version,
                 os, viewport_width, viewport_height, referrer, landing_page,
-                utm_source, utm_medium, utm_campaign, utm_term, utm_content) 
+                utm_source, utm_medium, utm_campaign, utm_term, utm_content)
                 VALUES (?, ?, NOW(), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    sessionId, 
+                    sessionId,
                     userId || null,
                     deviceType,
                     browserName,
@@ -223,12 +239,13 @@ class EcommerceTracker {
             );
         } else {
             // Update session's last activity
-            await connection.execute(
+            await query(
+                dbConfig,
                 'UPDATE sessions SET is_active = TRUE WHERE session_id = ?',
                 [sessionId]
             );
         }
-        
+
         return sessionId;
     }
 
@@ -236,7 +253,7 @@ class EcommerceTracker {
      * Store the main event record
      * @private
      */
-    async _storeEvent(connection, data) {
+    async _storeEvent(dbConfig, data) {
         const {
           userId,
           sessionId,
@@ -248,7 +265,7 @@ class EcommerceTracker {
           data: eventData,
           queryParams
         } = data;
-      
+
         const payload = {
           event_type: eventType || event_type || name,
           user_id:    userId,
@@ -258,9 +275,9 @@ class EcommerceTracker {
           event_data: eventData,
           created_at: timestamp
         };
-      
+
         // now enqueue `payload` instead of writing directly to the DB
-        await eventLogger.log(this.dbConfig, 'events', payload);
+        await eventLogger.log(dbConfig, 'events', payload);
         return payload;
       }
 
@@ -268,44 +285,44 @@ class EcommerceTracker {
      * Process event-specific data based on event type
      * @private
      */
-    async _processEventSpecificData(connection, data) {
+    async _processEventSpecificData(dbConfig, data) {
         const { eventId, name: eventName, data: eventData } = data;
-        
+
         switch (eventName) {
             case 'pageview':
-                await this._processPageview(connection, data);
+                await this._processPageview(dbConfig, data);
                 break;
-                
+
             case 'click':
-                await this._processClick(connection, data);
+                await this._processClick(dbConfig, data);
                 break;
-                
+
             case 'form_submit':
-                await this._processFormSubmission(connection, data);
+                await this._processFormSubmission(dbConfig, data);
                 break;
-                
+
             case 'view_item':
-                await this._processProductView(connection, data);
+                await this._processProductView(dbConfig, data);
                 break;
-                
+
             case 'add_to_cart':
             case 'remove_from_cart':
-                await this._processCartAction(connection, data);
+                await this._processCartAction(dbConfig, data);
                 break;
-                
+
             case 'purchase':
-                await this._processPurchase(connection, data);
+                await this._processPurchase(dbConfig, data);
                 break;
-                
+
             // Handle session events
             case 'session_renewed':
             case 'visibility_visible':
             case 'visibility_hidden':
             case 'page_exit':
-                await this._updateSession(connection, data);
+                await this._updateSession(dbConfig, data);
                 break;
         }
-        
+
         return true;
     }
 
@@ -704,53 +721,57 @@ class EcommerceTracker {
      * Verify that all required database tables exist and create them if they don't
      */
     async verifyDatabaseTables() {
-        let connection;
         try {
-            connection = await getDbConnection(this.dbConfig);
             console.log("Verifying database tables for tracking system...");
-            
-            // Get list of existing tables
-            const [tables] = await connection.query(`
-                SELECT table_name 
-                FROM information_schema.tables 
+
+            // Use the query method from the db module which works with adaptus2-orm
+            const { query } = require('./db');
+
+            // Get list of existing tables using the db.query function
+            const tablesResult = await query(this.dbConfig, `
+                SELECT table_name
+                FROM information_schema.tables
                 WHERE table_schema = DATABASE()
             `);
-            
+
+            // Handle the result based on the adaptus2-orm return structure
+            const tables = tablesResult.data || [];
+
             // Handle null or undefined tables safely
-            const existingTables = Array.isArray(tables) 
+            const existingTables = Array.isArray(tables)
                 ? tables.map(t => (t.table_name || t.TABLE_NAME || '').toLowerCase())
                 : [];
-            
+
             console.log("Existing tables:", existingTables);
-            
+
             // Define required tables - we only need the events table in this simplified version
             const requiredTables = ['events'];
-            
+
             // Check which tables need to be created
             const missingTables = requiredTables.filter(
                 table => !existingTables.includes(table)
             );
-            
+
             if (missingTables.length === 0) {
                 console.log("All tracking tables verified.");
                 this.tablesVerified = true;
                 return { success: true, message: "All tracking tables exist." };
             }
-            
+
             console.log(`Creating ${missingTables.length} missing tables: ${missingTables.join(', ')}`);
-            
+
             try {
                 // Create the events table if missing
                 if (missingTables.includes('events')) {
                     const createTableSQL = this._getCreateTableSQL('events', false);
                     if (createTableSQL) {
-                        await connection.query(createTableSQL);
+                        await query(this.dbConfig, createTableSQL);
                         console.log(`Created table: events`);
-                        
+
                         // Create indexes for the events table
-                        await connection.query('CREATE INDEX idx_events_user_id ON events(user_id)');
-                        await connection.query('CREATE INDEX idx_events_event_type ON events(event_type)');
-                        await connection.query('CREATE INDEX idx_events_created_at ON events(created_at)');
+                        await query(this.dbConfig, 'CREATE INDEX idx_events_user_id ON events(user_id)');
+                        await query(this.dbConfig, 'CREATE INDEX idx_events_event_type ON events(event_type)');
+                        await query(this.dbConfig, 'CREATE INDEX idx_events_created_at ON events(created_at)');
                     } else {
                         console.error(`No creation SQL found for events table`);
                         throw new Error(`Unable to create events table`);
@@ -760,34 +781,16 @@ class EcommerceTracker {
                 console.error("Error creating tables:", error);
                 throw error;
             }
-            
+
             this.tablesVerified = true;
-            return { 
-                success: true, 
-                message: `Created ${missingTables.length} missing tables: ${missingTables.join(', ')}` 
+            return {
+                success: true,
+                message: `Created ${missingTables.length} missing tables: ${missingTables.join(', ')}`
             };
         } catch (error) {
             console.error("Error verifying/creating database tables:", error);
             this.tablesVerified = false;
             throw new Error("Failed to verify database structure: " + error.message);
-        } finally {
-            if (connection) {
-                try {
-                    // For mysql2/promise, use end() instead of release() for direct connections
-                    // Check if connection has release function first
-                    if (typeof connection.release === 'function') {
-                       // await connection.release();
-                    } else if (typeof connection.end === 'function') {
-                       // await connection.end();
-                    } else if (typeof connection.close === 'function') {
-                       // await connection.close();
-                    } else {
-                        console.warn("Could not find a method to close the connection");
-                    }
-                } catch (releaseErr) {
-                    console.error("Error closing database connection:", releaseErr);
-                }
-            }
         }
     }
 
