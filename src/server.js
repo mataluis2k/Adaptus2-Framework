@@ -116,6 +116,9 @@ const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
 const defaultUnauthorized = { httpCode: 403, message: 'Access Denied', code: null };
 
+// New socket server
+const SocketCLI = require('./modules/socketCLI');
+
 const SECRET_SALT = process.env.SECRET_SALT || ''; 
 
 
@@ -2113,416 +2116,6 @@ class Adaptus2Server {
   }
       
 
-    setupSocketServer(host) {
-        this.socketServer = net.createServer((socket) => {
-            console.log("CLI client connected.");
-
-            socket.on("data", async (data) => {
-                const input = data.toString().trim();
-                const [command, ...args] = input.split(" ");
-
-                try {
-                    switch (command) {
-                        case "unlock":
-                            if (args.length === 1) {
-                                const fileName = args[0];
-                                const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.del(lockKey);
-                                socket.write(`Lock removed for ${fileName}\n`);
-                            } else {
-                                socket.write("Usage: unlock <fileName>\n");
-                            }
-                            break;
-
-                        case "permalock":
-                            if (args.length === 2) {
-                                const [fileName, userId] = args;
-                                const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.set(lockKey, userId);
-                                socket.write(`Permanent lock set on ${fileName} by user ${userId}\n`);
-                            } else {
-                                socket.write("Usage: permalock <fileName> <userId>\n");
-                            }
-                            break;
-                        case "listlocks":
-                                try {
-                                    const keys = await this.redisClient.keys("config-lock:*");
-                            
-                                    if (keys.length === 0) {
-                                        socket.write("No locked config files found.\n");
-                                        break;
-                                    }
-                            
-                                    const results = [];
-                                    for (const key of keys) {
-                                        const userId = await this.redisClient.get(key);
-                                        const ttl = await this.redisClient.ttl(key);
-                                        const fileName = key.replace("config-lock:", "");
-                                        const expiresIn = ttl === -1 ? 'permanent' : `${ttl}s`;
-                            
-                                        results.push(`${fileName} → userId: ${userId}, expires in: ${expiresIn}`);
-                                    }
-                            
-                                    socket.write(`Locked Config Files:\n${results.join("\n")}\n`);
-                                } catch (err) {
-                                    socket.write(`Error listing locks: ${err.message}\n`);
-                                }
-                                break;                            
-                        case "version":
-                            console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
-                            socket.write(`Adaptus2-Framework Version: ${packageJson.version}\n`);
-                            break;
-                        case "requestLog":
-                            const requestId = args[0];
-                            // Look up complete log
-                            const log = await requestLogger.getRequestLog(requestId);
-                            socket.write(JSON.stringify(log));
-                            break;
-                        case "shutdown":
-                            console.log("Shutting down server...");
-                            socket.write(command);
-                            await this.shutdown();                            
-                            break;
-                        case "userGenToken":
-                            if (args.length < 2) {
-                                socket.write("Usage: userGenToken <username> <acl>\n");
-                            } else {
-                                const [username, acl] = args;
-                                try {
-                                    // Generate the JWT
-                                    const payload = { username, acl };
-                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    
-                                    socket.write(`Generated user token:\n${token}\n`);
-                                } catch (error) {
-                                    console.error("Error generating user token:", error.message);
-                                    socket.write(`Error generating user token: ${error.message}\n`);
-                                }
-                            }
-                            break;
-    
-                        case "appGenToken":
-                            if (args.length < 2) {
-                                socket.write("Usage: appGenToken <table> <acl>\n");
-                            } else {
-                                const [table, acl] = args;
-                                try {
-                                    // Generate the JWT
-                                    const payload = { table, acl, username: table };
-                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    
-                                    socket.write(`Generated app token:\n${token}\n`);
-                                } catch (error) {
-                                    console.error("Error generating app token:", error.message);
-                                    socket.write(`Error generating app token: ${error.message}\n`);
-                                }
-                            }
-                            break;  
-                        case "showConfig":
-                            socket.write(JSON.stringify(this.apiConfig, null, 2));
-                            break;   
-                        case "showRules":
-                            if (ruleEngine) {
-                                socket.write(JSON.stringify(ruleEngine.getRules(), null, 2));
-                            } else {
-                                socket.write("No rules currently loaded.\n");
-                            }
-                            break;
-                        case "nodeInfo":
-                            if (args.length < 2) {
-                                socket.write("Usage: nodeInfo <route|table> <routeType>\n");
-                            } else {
-                                let configObject;
-                                console.log(args[0], args[1]);
-                                // need to show based on object name
-                                if (args[1] === 'def') {
-                                configObject = this.apiConfig.find(item => 
-                                    item.routeType === args[1] &&
-                                    item.dbTable === args[0]
-                                  );                   
-                                } else {
-                                configObject = this.apiConfig.find(item => 
-                                    item.route === args[0] &&
-                                    item.routeType === args[1]
-                                  );
-                                }            
-                                if (configObject) {
-                                    socket.write(JSON.stringify(configObject, null, 2));
-                                } else {
-                                    socket.write(`Config object ${args[0]} not found.\n`);
-                                }  
-                            }
-                            break;
-                            case "configReload":
-                                try {                               
-                                    consolelog.log('Reloading configuration...');
-                                    clearRedisCache();
-                                    initializeRules(this.app);
-                                    this.apiConfig = await loadConfig();
-                                    consolelog.log(this.apiConfig);
-                                    this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
-                                    updateValidationRules();
-                                    
-                                    // Create new RuleEngineMiddleware instance with reloaded ruleEngine
-                                    const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
-                                    this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
-                            
-                                    // CLEAR ALL ROUTES
-                                    this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
-                                    
-                                    // RE-REGISTER ROUTES
-                                    registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
-                                    registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
-                                    this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
-                                    this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app, route));
-                                    this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
-                                    
-                            
-                                    if (PLUGIN_MANAGER === 'network') {
-                                        const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
-                            
-                                        // Only broadcast if this is NOT a self-originating request
-                                        if (!process.env.SERVER_ID || process.env.SERVER_ID !== this.serverId) {
-                                            await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
-                                        }
-                            
-                                        subscribeToConfigUpdates((updatedConfig, sourceServerId) => {
-                                            if (sourceServerId === process.env.SERVER_ID) {
-                                                consolelog.log(`Ignoring config update from self (Server ID: ${sourceServerId})`);
-                                                return;
-                                            }
-                                            this.apiConfig = updatedConfig.apiConfig;
-                                            this.categorizedConfig = updatedConfig.categorizedConfig;
-                                            globalContext.resources = updatedConfig.globalContext.resources || {};
-                                            globalContext.actions = updatedConfig.globalContext.actions || {};
-                                            if (updatedConfig.globalContext.dslText) {
-                                                globalContext.dslText = updatedConfig.globalContext.dslText;
-                                                const newRuleEngine = RuleEngine.fromDSL(updatedConfig.globalContext.dslText, globalContext);
-                                                if (newRuleEngine) {
-                                                    globalContext.ruleEngine = newRuleEngine;
-                                                    app.locals.ruleEngineMiddleware = new RuleEngineMiddleware(newRuleEngine);
-                                                }
-                                            }
-                                            console.log('Configuration updated from cluster.');
-                                        });
-                                    }                                                              
-                                    consolelog.log("API config reloaded successfully.");
-                                    socket.write("API config reloaded successfully.");
-                                } catch (error) {
-                                    consolelog.error(`Error reloading API config: ${error.message}`);
-                                    socket.write(`Error reloading API config: ${error.message}`);
-                                }
-                                break;
-                            
-                        case "listPlugins":
-                            try {
-                                const plugins = fs.readdirSync(this.pluginDir)
-                                    .filter(file => file.endsWith('.js')) // Only include JavaScript files
-                                    .map(file => path.basename(file, '.js')); // Remove file extension
-                                if (plugins.length === 0) {
-                                    socket.write("No plugins found in the plugins folder.\n");
-                                } else {
-                                    socket.write(`Available plugins:\n${plugins.join("\n")}\n`);
-                                }
-                            } catch (err) {
-                                socket.write(`Error reading plugins folder: ${err.message}\n`);
-                            }
-                            break;
-                        case "listActions":
-                            // Fetch and display all actions from globalContext.actions
-                            const actions = Object.keys(globalContext.actions);
-                            if (actions.length === 0) {
-                                socket.write("No actions available.\n");
-                            } else {
-                                socket.write(`Available actions:\n${actions.join("\n")}\n`);
-                            }
-                            break;
-                        case "load":
-                            if (args.length) {
-                                const response = await this.pluginManager.loadPlugin(args[0]);
-                                socket.write(`We got: ${response}\n`);
-                            } else {
-                                socket.write("Usage: load <pluginName>\n");
-                            }
-                            break;
-                        case "unload":
-                            if (args.length) {
-                                this.pluginManager.unloadPlugin(args[0]);
-                                socket.write(`Plugin ${args[0]} unloaded successfully.\n`);
-                            } else {
-                                socket.write("Usage: unload <pluginName>\n");
-                            }
-                            break;
-                        case "reload":
-                            if (args.length) {
-                                this.pluginManager.unloadPlugin(args[0]);
-                                this.pluginManager.loadPlugin(args[0]);
-                                socket.write(`Plugin ${args[0]} reloaded successfully.\n`);
-                            } else {
-                                socket.write("Usage: reload <pluginName>\n");
-                            }
-                            break;
-                        case "reloadall":
-                            this.pluginManager.plugins.forEach((_, pluginName) => {
-                                this.pluginManager.unloadPlugin(pluginName);
-                                this.pluginManager.loadPlugin(pluginName);
-                            });
-                            socket.write("All plugins reloaded successfully.\n");
-                            break;
-                        case "list":
-                            const plugins = Array.from(this.pluginManager.plugins.keys());
-                            socket.write(`Loaded plugins: ${plugins.join(", ")}\n`);
-                            break;
-                        case "routes":
-                            const routes = this.getRoutes(this.app);
-                            socket.write(`Registered routes: ${JSON.stringify(routes, null, 2)}\n`);
-                            break;
-                        case "exit":
-                            socket.write("Goodbye!\n");
-                            socket.end();
-                            break;
-                        case "validate-config":
-                            try {
-                                if (!this.devTools) {
-                                    this.devTools = new DevTools();
-                                }
-                                const schema = {
-                                    type: "array",
-                                    items: {
-                                        type: "object",
-                                        required: ["routeType"],
-                                        allOf: [
-                                            {
-                                                if: {
-                                                    properties: { routeType: { const: "def" } }
-                                                },
-                                                then: {
-                                                    required: []
-                                                }
-                                            },
-                                            {
-                                                if: {
-                                                    properties: { routeType: { not: { const: "def" } } }
-                                                },
-                                                then: {
-                                                    required: ["route"]
-                                                }
-                                            }
-                                        ],
-                                        properties: {
-                                            routeType: {
-                                                type: "string",
-                                                enum: ["dynamic", "static", "database", "proxy", "def", "fileUpload"]
-                                            },
-                                            dbType: {
-                                                type: "string",
-                                                enum: ["mysql"]
-                                            },
-                                            dbConnection: {
-                                                type: "string"
-                                            },
-                                            route: {
-                                                type: "string",
-                                                pattern: "^/"
-                                            },
-                                            auth: {
-                                                type: "string"
-                                            },
-                                            acl: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            allowMethods: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string",
-                                                    enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
-                                                }
-                                            },
-                                            allowRead: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            allowWrite: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            columnDefinitions: {
-                                                type: "object",
-                                                additionalProperties: {
-                                                    type: "string"
-                                                }
-                                            }
-                                        }
-                                    }
-                                };
-
-                                const configPath = path.join(process.cwd(), 'config', 'apiConfig.json');
-                                const result = await this.devTools.validateConfig(configPath, schema);
-                                
-                                // Filter and format the results to only show objects with errors
-                                if (!result.valid && result.errors) {
-                                    const errorsByObject = {};
-                                    
-                                    result.errors.forEach(error => {
-                                        // Handle both array indices and property paths
-                                        const matches = error.instancePath.match(/\/(\d+)/);
-                                        if (matches) {
-                                            const index = matches[1];
-                                            if (!errorsByObject[index]) {
-                                                errorsByObject[index] = {
-                                                    object: result.config[index],
-                                                    errors: []
-                                                };
-                                            }
-                                            // Format the error message to be more descriptive
-                                            const property = error.instancePath.split('/').slice(2).join('/') || 'object';
-                                            const message = `${property}: ${error.message}`;
-                                            errorsByObject[index].errors.push(message);
-                                        }
-                                    });
-
-                                    const formattedResult = Object.entries(errorsByObject).map(([index, data]) => ({
-                                        index: parseInt(index),
-                                        object: data.object,
-                                        errors: data.errors
-                                    }));
-
-                                    socket.write(JSON.stringify(formattedResult, null, 2) + '\n');
-                                } else {
-                                    socket.write("Configuration is valid. No errors found.\n");
-                                }
-                            } catch (error) {
-                                socket.write(`Error validating config: ${error.message}\n`);
-                            }
-                            break;
-
-                        case "help":                   
-                        default:
-                            socket.write("Available commands: version, showRules, nodeInfo, showConfig, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
-                    }
-                } catch (error) {
-                    socket.write(`Error: ${error.message}\n`);
-                }
-            });
-
-            socket.on("end", () => {
-                console.log("CLI client disconnected.");
-            });
-        });
-
-        const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
-        this.socketServer.listen(SOCKET_CLI_PORT, host, () => {
-            console.log("Socket CLI server running on localhost"+SOCKET_CLI_PORT);
-        });
-    }
-
     setupPluginLoader() {
         consolelog.log('pluginManager loaded...');
        // Signal to dynamically load a plugin
@@ -3411,7 +3004,22 @@ MOD_PAGECLONE=false
            
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
-                this.setupSocketServer(this.host); // Start the socket server
+                this.socketCLI = new SocketCLI({
+                    server: this,
+                    redisClient: this.redisClient,
+                    jwtSecret: JWT_SECRET,
+                    jwtExpiry: JWT_EXPIRY,
+                    ruleEngine: globalContext.ruleEngine,
+                    pluginManager: this.pluginManager,
+                    clearRedisCache: clearRedisCache,
+                    loadConfig: loadConfig,
+                    getContext: getContext,
+                    updateValidationRules: updateValidationRules,
+                    requestLogger: requestLogger,
+                    packageJson: packageJson,
+                    initializeRules: initializeRules
+                });
+                this.socketCLI.start(this.host, process.env.SOCKET_CLI_PORT);
             }
   
             // Synchronize plugins and subscribe to updates
@@ -3495,6 +3103,10 @@ MOD_PAGECLONE=false
                     consolelog.error(`Failed to close connection ${index}:`, result.reason);
                 }
             });
+
+            if (this.socketCLI) {
+                await this.socketCLI.stop();
+            }
     
             // Close the server
             if (this.server) {
@@ -3503,13 +3115,7 @@ MOD_PAGECLONE=false
                 });
             }
     
-            // Close socket server if it exists
-            if (this.socketServer) {
-                await new Promise((resolve) => {
-                    this.socketServer.close(resolve);
-                });
-            }
-    
+              
             consolelog.log('All connections closed successfully');
             consolelog.log('Graceful shutdown completed');
     
