@@ -1743,29 +1743,51 @@ class PluginManager {
             return;
         }
     
-        const { instance: plugin, routes } = this.plugins.get(pluginName);
+        const { instance: plugin, routes, path: pluginPath } = this.plugins.get(pluginName);
         try {
-            if (plugin.cleanup) {
+            // Call plugin cleanup method if available
+            if (typeof plugin.cleanup === 'function') {
                 console.log(`Cleaning up ${pluginName}...`);
-                plugin.cleanup();
+                await plugin.cleanup();
             }
     
-            routes.forEach(({ method, path }) => {
-                const stack = this.server.app._router.stack;
-                for (let i = 0; i < stack.length; i++) {
-                    const layer = stack[i];
-                    if (layer.route && layer.route.path === path && layer.route.methods[method]) {
-                        stack.splice(i, 1);
-                        console.log(`Unregistered route ${method.toUpperCase()} ${path}`);
+            // Unregister routes
+            if (Array.isArray(routes)) {
+                routes.forEach(({ method, path }) => {
+                    const stack = this.server.app._router.stack;
+                    for (let i = 0; i < stack.length; i++) {
+                        const layer = stack[i];
+                        if (layer.route && layer.route.path === path && layer.route.methods[method]) {
+                            stack.splice(i, 1);
+                            console.log(`Unregistered route ${method.toUpperCase()} ${path}`);
+                        }
                     }
-                }
-            });
+                });
+            }
     
-            delete require.cache[require.resolve(path.join(this.pluginDir, `${pluginName}.js`))];
+            // Remove plugin from require cache
+            if (pluginPath && require.cache[require.resolve(pluginPath)]) {
+                delete require.cache[require.resolve(pluginPath)];
+            }
+            
+            // Clean up temp file
+            if (this.tempFiles && this.tempFiles.has(pluginPath)) {
+                try {
+                    if (fs.existsSync(pluginPath)) {
+                        fs.unlinkSync(pluginPath);
+                    }
+                    this.tempFiles.delete(pluginPath);
+                } catch (cleanupError) {
+                    console.error(`Failed to clean up temp file ${pluginPath}:`, cleanupError);
+                }
+            }
+    
+            // Remove plugin from the plugins map
             this.plugins.delete(pluginName);
     
             console.log(`Plugin ${pluginName} unloaded successfully.`);
     
+            // Broadcast unload event if requested
             if (process.env.PLUGIN_MANAGER === 'network' && broadcast) {
                 await this.publisherRedis.publish(
                     PLUGIN_EVENT_CHANNEL,
@@ -1774,7 +1796,7 @@ class PluginManager {
                 console.log(`Broadcasted unload event for plugin: ${pluginName}`);
             }
         } catch (error) {
-            console.error(`Error unloading plugin ${pluginName}:`, error.message);
+            console.error(`Error unloading plugin ${pluginName}:`, error);
         }
     }
 
@@ -1829,10 +1851,11 @@ class PluginManager {
             if (!pluginData.code) {
                 throw new Error(`No code found for plugin ${pluginName} in Redis.`);
             }
-
+    
             const pluginCode = Buffer.from(pluginData.code, 'base64').toString('utf-8');
             const pluginHash = this.getHash(pluginCode);
-
+    
+            // Check if plugin is already loaded with the same code
             if (this.plugins.has(pluginName)) {
                 const currentPluginHash = this.plugins.get(pluginName).hash;
                 if (currentPluginHash === pluginHash) {
@@ -1840,18 +1863,70 @@ class PluginManager {
                     return;
                 } else {
                     console.log(`Plugin ${pluginName} code has changed. Reloading.`);
-                    this.unloadPlugin(pluginName);
+                    await this.unloadPlugin(pluginName, false); // Pass false to avoid broadcasting
                 }
             }
-
+    
             const tempPath = path.join(this.pluginDir, `${pluginName}.js`);
+            
+            // Keep track of created temp files to clean them up later
+            if (!this.tempFiles) this.tempFiles = new Set();
+            this.tempFiles.add(tempPath);
+            
+            // Write the plugin code to a file
             fs.writeFileSync(tempPath, pluginCode, 'utf-8');
-
-            await this.loadPlugin(pluginName);
-
-            this.plugins.get(pluginName).hash = pluginHash;
+    
+            try {
+                // Use a more robust approach to load the module
+                // Clear the module from require cache first to ensure we load the new version
+                if (require.cache[require.resolve(tempPath)]) {
+                    delete require.cache[require.resolve(tempPath)];
+                }
+                
+                // Load the plugin
+                const plugin = require(tempPath);
+                
+                if (!this.validatePlugin(plugin)) {
+                    throw new Error(`Plugin ${pluginName} failed validation.`);
+                }
+                
+                const dependencies = this.dependencyManager.getDependencies();
+                if (typeof plugin.initialize === 'function') {
+                    plugin.initialize(dependencies);
+                }
+                
+                let registeredRoutes = [];
+                if (typeof plugin.registerRoutes === 'function') {
+                    registeredRoutes = plugin.registerRoutes({ app: this.server.app });
+                }
+                
+                // Store the plugin with its hash
+                this.plugins.set(pluginName, { 
+                    instance: plugin, 
+                    routes: registeredRoutes, 
+                    hash: pluginHash,
+                    path: tempPath 
+                });
+                
+                console.log(`Plugin ${pluginName} loaded successfully.`);
+                
+            } catch (error) {
+                console.error(`Failed to load plugin ${pluginName}:`, error);
+                
+                // Clean up the temp file if loading failed
+                try {
+                    if (fs.existsSync(tempPath)) {
+                        fs.unlinkSync(tempPath);
+                        this.tempFiles.delete(tempPath);
+                    }
+                } catch (cleanupError) {
+                    console.error(`Failed to clean up temp file ${tempPath}:`, cleanupError);
+                }
+                
+                throw error;
+            }
         } catch (error) {
-            console.error(`Failed to load plugin ${pluginName} from Redis:`, error.message);
+            console.error(`Failed to load plugin ${pluginName} from Redis:`, error);
         }
     }
 
@@ -1865,8 +1940,42 @@ class PluginManager {
     }
 
     close() {
-        this.publisherRedis.disconnect();
-        this.subscriberRedis.disconnect();
+        // Unload all plugins to clean up their resources
+        Array.from(this.plugins.keys()).forEach(pluginName => {
+            this.unloadPlugin(pluginName, false);
+        });
+        
+        // Clean up any remaining temp files
+        if (this.tempFiles) {
+            this.tempFiles.forEach(filePath => {
+                try {
+                    if (fs.existsSync(filePath)) {
+                        fs.unlinkSync(filePath);
+                    }
+                } catch (error) {
+                    console.error(`Failed to clean up temp file ${filePath}:`, error);
+                }
+            });
+            this.tempFiles.clear();
+        }
+        
+        // If we've subscribed to plugin events, unsubscribe
+        if (this.pluginSubscription) {
+            this.pluginSubscription.unsubscribe();
+        }
+        
+        // Close Redis connections properly
+        if (this.publisherRedis) {
+            this.publisherRedis.quit().catch(err => {
+                console.error('Error closing publisher Redis connection:', err);
+            });
+        }
+        
+        if (this.subscriberRedis) {
+            this.subscriberRedis.quit().catch(err => {
+                console.error('Error closing subscriber Redis connection:', err);
+            });
+        }
     }
 }
 
@@ -2448,7 +2557,30 @@ class Adaptus2Server {
         });
     }
         
-    
+    setupMemoryMonitoring() {
+        const memoryMonitoringInterval = parseInt(process.env.MEMORY_MONITORING_INTERVAL, 10) || 60000; // Default: 1 minute
+        const memoryThresholdPercent = parseInt(process.env.MEMORY_THRESHOLD_PERCENT, 10) || 80; // Default: 80%
+        
+        console.log(`Setting up memory monitoring: interval=${memoryMonitoringInterval}ms, threshold=${memoryThresholdPercent}%`);
+        
+        setInterval(() => {
+            const memUsage = process.memoryUsage();
+            const heapUsed = Math.round(memUsage.heapUsed / 1024 / 1024);
+            const heapTotal = Math.round(memUsage.heapTotal / 1024 / 1024);
+            const percentUsed = Math.round((heapUsed / heapTotal) * 100);
+            
+            console.log(`Memory usage: ${heapUsed}MB / ${heapTotal}MB (${percentUsed}%)`);
+            
+            if (percentUsed > memoryThresholdPercent) {
+                console.warn(`MEMORY WARNING: Usage at ${percentUsed}%, exceeding threshold of ${memoryThresholdPercent}%`);
+                // Optional: Force garbage collection if --expose-gc flag is used
+                if (global.gc) {
+                    console.log('Forcing garbage collection...');
+                    global.gc();
+                }
+            }
+        }, memoryMonitoringInterval);
+    }
 
     async initializeTables() {
         console.log('Initializing tables...');
@@ -3010,11 +3142,16 @@ MOD_PAGECLONE=false
             }
         }
     }
-    subscribeToPluginUpdates() {
-        if (process.env.PLUGIN_MANAGER !== 'network') return;
+    subscribeToPluginEvents() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
     
-        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
-        this.redis.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+        // Store subscription in class instance to track it
+        this.pluginSubscription = this.subscriberRedis;
+        
+        this.pluginSubscription.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
             if (err) {
                 console.error(`Failed to subscribe to plugin updates: ${err.message}`);
             } else {
@@ -3022,9 +3159,32 @@ MOD_PAGECLONE=false
             }
         });
     
-        this.redis.on('message', async (channel, message) => {
-            if (channel === `${process.env.CLUSTER_NAME}:plugins:update`) {
-                await this.handlePluginUpdate(message);
+        this.pluginSubscription.on('message', async (channel, message) => {
+            if (channel !== `${process.env.CLUSTER_NAME}:plugins:update`) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { action, pluginName, serverId } = JSON.parse(message);
+        
+                // Ignore messages originating from the current server
+                if (serverId === this.serverId) {
+                    console.log(`Ignoring message from self (Server ID: ${serverId}).`);
+                    return;
+                }
+        
+                if (action === 'load') {
+                    console.log(`Processing load event for plugin: ${pluginName}`);
+                    await this.loadPlugin(pluginName, false); // Do not rebroadcast
+                } else if (action === 'unload') {
+                    console.log(`Processing unload event for plugin: ${pluginName}`);
+                    await this.unloadPlugin(pluginName, false); // Do not rebroadcast
+                } else {
+                    console.warn(`Unknown action: ${action}`);
+                }
+            } catch (error) {
+                console.error(`Failed to process message: ${error.message}`);
             }
         });
     }
@@ -3211,6 +3371,10 @@ MOD_PAGECLONE=false
                     console.log('Configuration updated from cluster.');
                 });
             }
+
+            if (process.env.ENABLE_MEMORY_MONITORING === 'true') {
+                this.setupMemoryMonitoring();
+            }
     
             // Set up other parts of the server
             this.setupDependencies();
@@ -3276,7 +3440,12 @@ MOD_PAGECLONE=false
         const consolelog = require('./modules/logger');
         try {
             consolelog.log('Initiating graceful shutdown...');
-    
+            // Clean up plugin manager resources
+            if (this.pluginManager) {
+                consolelog.log('Cleaning up plugin manager resources...');
+                this.pluginManager.close();
+            }
+        
             // Cleanup CMS if initialized
             if (this.cmsManager) {
                 try {
