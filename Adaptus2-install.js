@@ -175,7 +175,8 @@ const groups = {
   "REDIS CONFIGURATION": [
     "REDIS_URL",
     "REPORT_CACHE_TTL",
-    "CACHE_DURATION"
+    "CACHE_DURATION",
+    "CLEAR_REDIS_CACHE"
   ],
   
   "STREAMING & MEDIA": [
@@ -243,11 +244,33 @@ const groups = {
     "CLI_PASSWORD"
   ],
   
+  "MEMORY & PERFORMANCE": [
+    "MEMORY_MONITORING_INTERVAL",
+    "MEMORY_THRESHOLD_PERCENT",
+    "ENABLE_MEMORY_MONITORING",
+    "DBPRECACHE"
+  ],
+  
+  "MODULE TOGGLES": [
+    "ENABLE_CMS",
+    "MOD_PAGERENDER",
+    "MOD_PAGECLONE",
+    "MOD_CHATSERVER",
+    "MOD_ECOMMTRACKER",
+    "MOD_SDUIADMIN",
+    "MOD_AGENT_WORKFLOW_ENABLED",
+    "MOD_VIDEOCONFERENCE",
+    "MOD_STREAMINGSERVER",
+    "MOD_REPORTING",
+    "MOD_REPORTBUILDER",
+    "ML_ANALYTICS"
+  ],
+  
   "DEVELOPMENT TOOLS": [
-    "NODE_ENV",
     "DEBUG",
     "LOG_LEVEL",
-    "SHUTDOWN_ON_UNCAUGHT"
+    "SHUTDOWN_ON_UNCAUGHT",
+    "SHUTDOWN_ON_REJECTION"
   ]
 };
 
@@ -331,11 +354,11 @@ const fullConfig = {
   // Payments
   PAYMENT_MODULE: "FALSE",
   BRAINTREE_ENV: "sandbox",
-
     // Add to fullConfig
   REDIS_URL: "redis://localhost:6379",
   REPORT_CACHE_TTL: "600",
   CACHE_DURATION: "3600",
+  CLEAR_REDIS_CACHE: "false",
 
   // Default settings
   DEFAULT_PERSONA: "helpfulAssistant",
@@ -348,9 +371,31 @@ const fullConfig = {
   WS_SIGNALING_PORT: "4000",
   CHROMA_URL: "http://localhost:8000",
   API_URL: "http://localhost:3000",
-  HOST: "localhost",
+  HOST: "0.0.0.0",
   LOCAL_DOMAIN: "",
   ASSETS_URL_PATH: "/assets",
+  SECRET_SALT: generateRandomSecret(16),
+  CORS_CREDENTIALS: "true",
+
+  // Memory & Performance
+  MEMORY_MONITORING_INTERVAL: "60000",
+  MEMORY_THRESHOLD_PERCENT: "80",
+  ENABLE_MEMORY_MONITORING: "false",
+  DBPRECACHE: "false",
+
+  // Module Toggles
+  ENABLE_CMS: "false",
+  MOD_PAGERENDER: "false",
+  MOD_PAGECLONE: "false",
+  MOD_CHATSERVER: "false",
+  MOD_ECOMMTRACKER: "false",
+  MOD_SDUIADMIN: "false",
+  MOD_AGENT_WORKFLOW_ENABLED: "false",
+  MOD_VIDEOCONFERENCE: "false",
+  MOD_STREAMINGSERVER: "false",
+  MOD_REPORTING: "false",
+  MOD_REPORTBUILDER: "false",
+  ML_ANALYTICS: "false",
 
   // Streaming & Media
   STREAMING_DBTYPE: "mysql",
@@ -383,12 +428,13 @@ const fullConfig = {
   ASSETS_DISK_PATH: "./public/assets",
   S3_BUCKET_NAME: "",
 
-  // Miscellaneous
+  // Development & Error Handling
   DEBUG: "false",
   LOG_LEVEL: "info",
   SHUTDOWN_ON_UNCAUGHT: "false",
+  SHUTDOWN_ON_REJECTION: "false",
   ALWAYS_UPDATE_COLLECTION: "false",
-  USE_CONTEXT_SUMMARIZATION: "false",
+  USE_CONTEXT_SUMMARIZATION: "false"
 };
 
 // Generate a secure random string for secrets
