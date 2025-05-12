@@ -5,7 +5,6 @@
  */
 
 const rateLimit = require('express-rate-limit');
-const { getDbConnection } = require('./db');
 const { v4: uuidv4 } = require('uuid');
 const UAParser = require('ua-parser-js');
 const eventLogger  = require('./EventLogger');

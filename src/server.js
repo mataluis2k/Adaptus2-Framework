@@ -2791,77 +2791,97 @@ registerMiddleware() {
             console.error('Failed to setup Ollama module:', error.message);
         }
 
-        try {
-            const ReportingModule = require('./modules/reportingModule');
-            const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
-            this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
-            console.log('Reporting module initialized successfully');
-        } catch(error) {
-            console.error('Failed to initialize Reporting module:', error.message);
-            process.exit(1);
-        }
-        try {
-            const ReportBuilderModule = require('./modules/reportBuilderModule');           
-            // You must have `ruleEngineInstance` and `app` already available
-            this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            
-            console.log('ReportBuilder module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize ReportBuilder module:', error.message);
-        }
-
-        try {                      
-            const RenderPageModule = require('./modules/RenderPageModule');
-            const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            console.log('RenderPageModule module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize RenderPageModule module:', error.message);
-        }
-
-        try {                      
-            const PageCloneModule = require('./modules/pageCloneModule');
-            const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            console.log('PageClone module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize PageClone module:', error.message);
-        }
-        // Initialize Chat Module
-        if(process.env.CHAT_SERVER_PORT){
-            const chat_port = process.env.CHAT_SERVER_PORT;
+        /* MOD_CHATSERVER=false
+CHAT_SERVER_PORT=3007
+MOD_ECOMMTRACKER=false
+MOD_SDUIADMIN=false
+MOD_AGENT_WORKFLOW_ENABLED=false
+MOD_ML_ANALYTICS=false
+MOD_STREAMINGSERVER=false
+MOD_VIDEOCONFERENCE=false
+MOD_REPORTIGN=false
+MOD_REPORTBUILDER=false
+MOD_PAGERENDER=false
+MOD_PAGECLONE=false
+*/
+        if(process.env.MOD_REPORTING) {
             try {
-                const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
-                
-                //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
-                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
-                this.chatModule.start();
-                // Store the instance globally for access from other modules
-                global.chatModule = this.chatModule;
-                
-                // Define the global helper function AFTER setting global.chatModule
-                global.getUserIdFromSessionId = function(sessionId) {
-                    if (!global.chatModule) return sessionId;
-                    
-                    // Access the connected users directly from the global instance
-                    for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
-                        if (username === sessionId) {
-                            const socket = global.chatModule.io.sockets.sockets.get(socketId);
-                            if (socket && socket.user && socket.user.id) {
-                                return socket.user.id;
-                            }
-                        }
-                    }
-                    return sessionId; // Fallback
-                };
-                httpServer.listen(chat_port, () => {
-                    console.log('Chat running on:' + chat_port);
-                });
-                consolelog.log('Chat module initialized.');
-            } catch (error) {
-                console.error('Failed to initialize Chat Module:', error.message);
+                const ReportingModule = require('./modules/reportingModule');
+                const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
+                this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
+                console.log('Reporting module initialized successfully');
+            } catch(error) {
+                console.error('Failed to initialize Reporting module:', error.message);
+                process.exit(1);
             }
         }
-
-        if(process.env.ECOMMTRACKER){
+        if(process.env.MOD_REPORTBUILDER) {
+            try {
+                const ReportBuilderModule = require('./modules/reportBuilderModule');           
+                // You must have `ruleEngineInstance` and `app` already available
+                this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                
+                console.log('ReportBuilder module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize ReportBuilder module:', error.message);
+            }
+        }
+        if(process.env.MOD_PAGERENDER) {
+            try {                      
+                const RenderPageModule = require('./modules/RenderPageModule');
+                const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                console.log('RenderPageModule module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize RenderPageModule module:', error.message);
+            }
+        }
+        if(process.env.MOD_PAGECLONE) {
+            try {                      
+                const PageCloneModule = require('./modules/pageCloneModule');
+                const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                console.log('PageClone module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize PageClone module:', error.message);
+            }
+        }
+        // Initialize Chat Module
+        if(process.env.MOD_CHATSERVER){
+            if(process.env.CHAT_SERVER_PORT){
+                const chat_port = process.env.CHAT_SERVER_PORT;
+                try {
+                    const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
+                    
+                    //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                    this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
+                    this.chatModule.start();
+                    // Store the instance globally for access from other modules
+                    global.chatModule = this.chatModule;
+                    
+                    // Define the global helper function AFTER setting global.chatModule
+                    global.getUserIdFromSessionId = function(sessionId) {
+                        if (!global.chatModule) return sessionId;
+                        
+                        // Access the connected users directly from the global instance
+                        for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
+                            if (username === sessionId) {
+                                const socket = global.chatModule.io.sockets.sockets.get(socketId);
+                                if (socket && socket.user && socket.user.id) {
+                                    return socket.user.id;
+                                }
+                            }
+                        }
+                        return sessionId; // Fallback
+                    };
+                    httpServer.listen(chat_port, () => {
+                        console.log('Chat running on:' + chat_port);
+                    });
+                    consolelog.log('Chat module initialized.');
+                } catch (error) {
+                    console.error('Failed to initialize Chat Module:', error.message);
+                }
+                }
+        }
+        if(process.env.MOD_ECOMMTRACKER){
             const EcommerceTracker = require('./modules/EcommTrackerModule');
             // Initialize the tracker with your global context and DB config
             const tracker = new EcommerceTracker(globalContext, {
@@ -2871,7 +2891,7 @@ registerMiddleware() {
             tracker.setupRoutes(app);
         }
 
-        if(process.env.SDUIADMIN){
+        if(process.env.MOD_SDUIADMIN){
             try {
                 const SDUIModule = require('./modules/sduiModule');
                 // Pass database configuration
@@ -2885,7 +2905,7 @@ registerMiddleware() {
                 console.error('Failed to initialize SDUI Module:', error.message);
             }
         }
-        if (process.env.AGENT_WORKFLOW_ENABLED) {
+        if (process.env.MOD_AGENT_WORKFLOW_ENABLED) {
             try {
                 const AgentWorkflowModule = require('./modules/agentWorkflowModule.js');
                 // Pass database configuration
@@ -2900,7 +2920,7 @@ registerMiddleware() {
             }
         }
 
-        if (process.env.WS_SIGNALING_PORT) {
+        if (process.env.WS_SIGNALING_PORT && process.env.MOD_VIDEOCONFERENCE) {
             const signalingHttpServer = require('http').createServer();
             const SignalingServer = require('./modules/signalingServer');
             this.signalServer = new SignalingServer(signalingHttpServer);
@@ -2913,45 +2933,44 @@ registerMiddleware() {
         }
         
             // Initialize Streaming Server Module
-        try {
-            const s3Config = {
-                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-                region: process.env.AWS_REGION,
-            };
-          
-            this.streamingServer = new StreamingServer(this.app, s3Config, redis);
-            this.streamingServer.registerRoutes();
-            consolelog.log('Streaming server module initialized.');
-        } catch (error) {
-            console.error('Failed to initialize Streaming Server Module:', error.message);
+        if(process.env.MOD_STREAMINGSERVER) {
+            try {
+                const s3Config = {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+                    region: process.env.AWS_REGION,
+                };
+            
+                this.streamingServer = new StreamingServer(this.app, s3Config, redis);
+                this.streamingServer.registerRoutes();
+                consolelog.log('Streaming server module initialized.');
+            } catch (error) {
+                    console.error('Failed to initialize Streaming Server Module:', error.message);
+                }
         }
 
       
-        mlAnalytics.loadConfig();
-        mlAnalytics.trainModels(app);
-        mlAnalytics.scheduleTraining();
+        if(process.env.ML_ANALYTICS) {
+            mlAnalytics.loadConfig();
+            mlAnalytics.trainModels(app);
+            mlAnalytics.scheduleTraining();
+            app.use('/ml', mlAnalytics.middleware());
+            app.post("/api/rag", async (req, res) => {
+                    try {
+                        const { query } = req.body;
+                        if (!query) {
+                        return res.status(400).json({ error: "Query is required." });
+                        }
+                    
+                        const response = await handleRAG(query, this.apiConfig);
 
-        app.use('/ml', mlAnalytics.middleware());
-
-
-
-        app.post("/api/rag", async (req, res) => {
-        try {
-            const { query } = req.body;
-            if (!query) {
-            return res.status(400).json({ error: "Query is required." });
-            }
-           
-            const response = await handleRAG(query, this.apiConfig);
-
-            res.json({ data: response });
-        } catch (error) {
-            console.error("RAG API Error:", error.message);
-            res.status(500).json({ error: "Internal Server Error" });
+                        res.json({ data: response });
+                    } catch (error) {
+                        console.error("RAG API Error:", error.message);
+                        res.status(500).json({ error: "Internal Server Error" });
+                    }
+            });
         }
-        });
-
         const ConfigManager = require('./modules/configManager');
         new ConfigManager({
             app: this.app,

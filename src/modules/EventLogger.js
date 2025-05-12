@@ -54,7 +54,7 @@ class EventLogger {
       // 1. Grab up to batchSize items
       const raws = await this.redis.lrange(this.queueKey, 0, this.config.batchSize - 1);
       if (raws.length === 0) return;
-  
+      console.log('EventLogger flush:', raws.length);
       // 2. Trim them off Redis so we won't re-process
       await this.redis.ltrim(this.queueKey, raws.length, -1);
   
