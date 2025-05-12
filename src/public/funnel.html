@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LandingPage</title>
+    <!-- Enhanced EcommTracker script with auto-init -->
+   
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 50px;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .subtitle {
+            font-size: 1.2rem;
+            color: #666;
+            max-width: 700px;
+            margin: 0 auto 30px;
+        }
+        
+        .button-container {
+            display: flex;
+            justify-content: center;
+            gap: 20px;
+            margin-top: 40px;
+        }
+        
+        .choice-button {
+            padding: 15px 40px;
+            font-size: 1.2rem;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            min-width: 200px;
+        }
+        
+        .male-button {
+            background-color: #4361ee;
+            color: white;
+        }
+        
+        .male-button:hover {
+            background-color: #3a56d4;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(67, 97, 238, 0.3);
+        }
+        
+        .female-button {
+            background-color: #f72585;
+            color: white;
+        }
+        
+        .female-button:hover {
+            background-color: #e91c7d;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(247, 37, 133, 0.3);
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: auto;
+            padding: 20px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        /* Debug panel for tracking events */
+        .debug-panel {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .debug-panel.visible {
+            display: block;
+        }
+        
+        .event-log {
+            margin-bottom: 5px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Welcome to Our Product Experience</h1>
+            <p class="subtitle">To provide you with the most relevant information, please select your gender below.</p>
+        </header>
+        
+        <div class="button-container">
+            <button 
+                class="choice-button male-button"
+                data-track="gender_selection"
+                data-gender="male">
+                Male
+            </button>
+            
+            <button 
+                class="choice-button female-button"
+                data-track="gender_selection"
+                data-gender="female">
+                Female
+            </button>
+        </div>
+        
+        <footer>
+            <p>© 2025 Your Company. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <!-- Debug panel for tracking events -->
+    <div class="debug-panel" id="debug-panel">
+        <h4>Tracking Events</h4>
+        <div id="event-logs"></div>
+    </div>
+    <script 
+     src="EcommTracker.js" 
+     data-auto-init="true" 
+     data-site-id="funnel-test" 
+     data-endpoint="http://localhost:3000/api/track/batch" 
+     data-s2s-endpoint="disabled"
+     data-debug="true">
+    </script>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const maleButton = document.querySelector('.male-button');
+            const femaleButton = document.querySelector('.female-button');
+            const debugPanel = document.getElementById('debug-panel');
+            const eventLogs = document.getElementById('event-logs');
+            
+            // Toggle debug panel on 'T' key press
+            document.addEventListener('keydown', function(e) {
+                if (e.key.toLowerCase() === 't') {
+                    debugPanel.classList.toggle('visible');
+                }
+            });
+            
+            // Helper function to log events to debug panel
+            function logEvent(eventName, data) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'event-log';
+                logEntry.textContent = `${new Date().toLocaleTimeString()} - ${eventName}: ${JSON.stringify(data)}`;
+                eventLogs.appendChild(logEntry);
+                eventLogs.scrollTop = eventLogs.scrollHeight;
+            }
+            
+            // Add click handlers for gender buttons
+            maleButton.addEventListener('click', function() {
+                logEvent('Gender Selection', {gender: 'male'});
+                // Redirect to male page
+                setTimeout(() => {
+                    window.location.href = 'male.html';
+                }, 500);
+            });
+            
+            femaleButton.addEventListener('click', function() {
+                logEvent('Gender Selection', {gender: 'female'});
+                // Redirect to female page
+                setTimeout(() => {
+                    window.location.href = 'female.html';
+                }, 500);
+            });
+            
+            // Show tooltip about debug panel
+            const tooltip = document.createElement('div');
+            tooltip.style.position = 'fixed';
+            tooltip.style.bottom = '60px';
+            tooltip.style.right = '20px';
+            tooltip.style.padding = '10px';
+            tooltip.style.backgroundColor = 'rgba(0,0,0,0.7)';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '5px';
+            tooltip.style.fontSize = '12px';
+            tooltip.textContent = 'Press T to toggle tracking debug panel';
+            document.body.appendChild(tooltip);
+            
+            // Hide tooltip after 5 seconds
+            setTimeout(() => {
+                tooltip.style.opacity = '0';
+                tooltip.style.transition = 'opacity 1s';
+                setTimeout(() => tooltip.remove(), 1000);
+            }, 5000);
+        });
+    </script>
+</body>
+</html>

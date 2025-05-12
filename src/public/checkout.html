@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Checkout</title>
+    <!-- Enhanced EcommTracker script with auto-init -->
+    <script 
+        src="EcommTracker.js" 
+        data-auto-init="true" 
+        data-site-id="funnel-test" 
+        data-endpoint="http://localhost:3000/api/track/batch" 
+        data-debug="true">
+    </script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        h1 {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            color: #333;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            color: #666;
+            max-width: 700px;
+            margin: 0 auto 20px;
+        }
+        
+        .checkout-container {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 30px;
+            margin-bottom: 40px;
+        }
+        
+        .checkout-form {
+            flex: 1;
+            min-width: 300px;
+            background-color: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+        }
+        
+        .order-summary {
+            width: 350px;
+            background-color: white;
+            border-radius: 10px;
+            padding: 30px;
+            box-shadow: 0 3px 10px rgba(0, 0, 0, 0.1);
+            height: fit-content;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 600;
+            color: #333;
+        }
+        
+        input[type="text"],
+        input[type="email"],
+        input[type="tel"],
+        select {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            font-size: 1rem;
+            transition: border-color 0.3s;
+        }
+        
+        input:focus,
+        select:focus {
+            border-color: #4361ee;
+            outline: none;
+            box-shadow: 0 0 0 2px rgba(67, 97, 238, 0.2);
+        }
+        
+        .form-row {
+            display: flex;
+            gap: 15px;
+        }
+        
+        .form-row .form-group {
+            flex: 1;
+        }
+        
+        .section-title {
+            font-size: 1.4rem;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            color: #333;
+        }
+        
+        .product-item {
+            display: flex;
+            margin-bottom: 20px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .product-details {
+            flex: 1;
+        }
+        
+        .product-name {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        
+        .product-meta {
+            font-size: 0.9rem;
+            color: #666;
+        }
+        
+        .product-price {
+            font-weight: 600;
+            color: #333;
+            font-size: 1.1rem;
+        }
+        
+        .totals-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+        }
+        
+        .totals-row.final {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+            font-size: 1.2rem;
+            font-weight: 700;
+        }
+        
+        .submit-button {
+            width: 100%;
+            padding: 15px;
+            background-color: #4361ee;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            margin-top: 20px;
+        }
+        
+        .submit-button:hover {
+            background-color: #3a56d4;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(67, 97, 238, 0.3);
+        }
+        
+        .payment-methods {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+        
+        .payment-method {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 15px;
+            flex: 1;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .payment-method:hover {
+            border-color: #4361ee;
+        }
+        
+        .payment-method.selected {
+            border-color: #4361ee;
+            background-color: rgba(67, 97, 238, 0.05);
+        }
+        
+        .payment-method img {
+            height: 30px;
+            margin-bottom: 10px;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: auto;
+            padding: 20px;
+            color: #666;
+            font-size: 0.9rem;
+        }
+        
+        /* Debug panel for tracking events */
+        .debug-panel {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+        }
+        
+        .debug-panel.visible {
+            display: block;
+        }
+        
+        .event-log {
+            margin-bottom: 5px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        /* Success modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+            display: none;
+            justify-content: center;
+            align-items: center;
+            z-index: 2000;
+        }
+        
+        .modal-content {
+            background-color: white;
+            border-radius: 10px;
+            padding: 40px;
+            text-align: center;
+            max-width: 500px;
+            width: 90%;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.2);
+        }
+        
+        .success-icon {
+            width: 80px;
+            height: 80px;
+            background-color: #4BB543;
+            border-radius: 50%;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            margin: 0 auto 20px;
+        }
+        
+        .success-icon svg {
+            width: 40px;
+            height: 40px;
+            color: white;
+        }
+        
+        .modal-title {
+            font-size: 1.8rem;
+            margin-bottom: 15px;
+            color: #333;
+        }
+        
+        .modal-message {
+            font-size: 1.1rem;
+            margin-bottom: 30px;
+            color: #666;
+        }
+        
+        .modal-button {
+            background-color: #4361ee;
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 5px;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .modal-button:hover {
+            background-color: #3a56d4;
+            transform: translateY(-2px);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Checkout</h1>
+            <p class="subtitle">You're just one step away from starting your transformation</p>
+        </header>
+        
+        <div class="checkout-container">
+            <div class="checkout-form" data-track="checkout_form">
+                <h2 class="section-title">Billing Information</h2>
+                
+                <form id="checkout-form" data-track="purchase-form">
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="first-name">First Name</label>
+                            <input type="text" id="first-name" name="first-name" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="last-name">Last Name</label>
+                            <input type="text" id="last-name" name="last-name" required>
+                        </div>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" name="email" required>
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="phone">Phone Number</label>
+                        <input type="tel" id="phone" name="phone">
+                    </div>
+                    
+                    <h2 class="section-title">Payment Method</h2>
+                    
+                    <div class="payment-methods">
+                        <div class="payment-method selected" data-method="credit-card">
+                            <div>Credit Card</div>
+                        </div>
+                        
+                        <div class="payment-method" data-method="paypal">
+                            <div>PayPal</div>
+                        </div>
+                    </div>
+                    
+                    <div id="credit-card-fields">
+                        <div class="form-group">
+                            <label for="card-number">Card Number</label>
+                            <input type="text" id="card-number" name="card-number" placeholder="1234 5678 9012 3456">
+                        </div>
+                        
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="expiry">Expiry Date</label>
+                                <input type="text" id="expiry" name="expiry" placeholder="MM/YY">
+                            </div>
+                            
+                            <div class="form-group">
+                                <label for="cvv">CVV</label>
+                                <input type="text" id="cvv" name="cvv" placeholder="123">
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <button type="submit" class="submit-button" 
+                        data-track="purchase" 
+                        data-transaction-id="TR-12345" 
+                        data-value="97.00" 
+                        data-currency="USD">
+                        Complete Purchase
+                    </button>
+                </form>
+            </div>
+            
+            <div class="order-summary">
+                <h2 class="section-title">Order Summary</h2>
+                
+                <div class="product-item" id="product-in-cart" data-product-id="" data-product-name="" data-product-price="97.00">
+                    <div class="product-details">
+                        <div class="product-name" id="product-name">Loading...</div>
+                        <div class="product-meta">Category: <span id="product-category">Fitness</span></div>
+                    </div>
+                    <div class="product-price">$97.00</div>
+                </div>
+                
+                <div class="totals-row">
+                    <div>Subtotal</div>
+                    <div>$97.00</div>
+                </div>
+                
+                <div class="totals-row">
+                    <div>Shipping</div>
+                    <div>$0.00</div>
+                </div>
+                
+                <div class="totals-row">
+                    <div>Tax</div>
+                    <div>$0.00</div>
+                </div>
+                
+                <div class="totals-row final">
+                    <div>Total</div>
+                    <div>$97.00</div>
+                </div>
+            </div>
+        </div>
+        
+        <footer>
+            <p>© 2025 Your Company. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <!-- Success Modal -->
+    <div class="modal-overlay" id="success-modal">
+        <div class="modal-content">
+            <div class="success-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+                    <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+            </div>
+            <h2 class="modal-title">Purchase Successful!</h2>
+            <p class="modal-message">Thank you for your purchase. You will receive an email with your access details shortly.</p>
+            <button class="modal-button" id="continue-button">Continue</button>
+        </div>
+    </div>
+    
+    <!-- Debug panel for tracking events -->
+    <div class="debug-panel" id="debug-panel">
+        <h4>Tracking Events</h4>
+        <div id="event-logs"></div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const checkoutForm = document.getElementById('checkout-form');
+            const paymentMethods = document.querySelectorAll('.payment-method');
+            const creditCardFields = document.getElementById('credit-card-fields');
+            const successModal = document.getElementById('success-modal');
+            const continueButton = document.getElementById('continue-button');
+            const debugPanel = document.getElementById('debug-panel');
+            const eventLogs = document.getElementById('event-logs');
+            
+            // Detect product from URL parameter or localStorage
+            function detectProduct() {
+                // Try to get from localStorage first
+                let productFromReferrer = null;
+                
+                // Check the referrer URL
+                const referrer = document.referrer;
+                if (referrer.includes('male.html')) {
+                    productFromReferrer = {
+                        id: 'male-program',
+                        name: 'Elite Performance Program for Men',
+                        price: 97.00,
+                        category: 'Fitness'
+                    };
+                } else if (referrer.includes('female.html')) {
+                    productFromReferrer = {
+                        id: 'female-program',
+                        name: 'Wellness & Fitness Program for Women',
+                        price: 97.00,
+                        category: 'Fitness'
+                    };
+                }
+                
+                // Use a default if we couldn't detect
+                if (!productFromReferrer) {
+                    productFromReferrer = {
+                        id: 'default-program',
+                        name: 'Fitness Program',
+                        price: 97.00,
+                        category: 'Fitness'
+                    };
+                }
+                
+                // Update the UI with the product info
+                const productElement = document.getElementById('product-in-cart');
+                const productNameElement = document.getElementById('product-name');
+                const productCategoryElement = document.getElementById('product-category');
+                
+                productElement.dataset.productId = productFromReferrer.id;
+                productElement.dataset.productName = productFromReferrer.name;
+                productElement.dataset.productPrice = productFromReferrer.price;
+                
+                productNameElement.textContent = productFromReferrer.name;
+                productCategoryElement.textContent = productFromReferrer.category;
+                
+                return productFromReferrer;
+            }
+            
+            const product = detectProduct();
+            
+            // Toggle debug panel on 'T' key press
+            document.addEventListener('keydown', function(e) {
+                if (e.key.toLowerCase() === 't') {
+                    debugPanel.classList.toggle('visible');
+                }
+            });
+            
+            // Helper function to log events to debug panel
+            function logEvent(eventName, data) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'event-log';
+                logEntry.textContent = `${new Date().toLocaleTimeString()} - ${eventName}: ${JSON.stringify(data)}`;
+                eventLogs.appendChild(logEntry);
+                eventLogs.scrollTop = eventLogs.scrollHeight;
+            }
+            
+            // Payment method selection
+            paymentMethods.forEach(method => {
+                method.addEventListener('click', function() {
+                    // Remove selected class from all methods
+                    paymentMethods.forEach(m => m.classList.remove('selected'));
+                    
+                    // Add selected class to clicked method
+                    this.classList.add('selected');
+                    
+                    // Show/hide credit card fields based on selection
+                    if (this.dataset.method === 'credit-card') {
+                        creditCardFields.style.display = 'block';
+                    } else {
+                        creditCardFields.style.display = 'none';
+                    }
+                    
+                    // Log payment method selection
+                    logEvent('Payment Method Selected', {
+                        method: this.dataset.method
+                    });
+                });
+            });
+            
+            // Form submission
+            checkoutForm.addEventListener('submit', function(e) {
+                e.preventDefault();
+                
+                // Get form data
+                const formData = new FormData(this);
+                const formDataObj = {};
+                for (let [key, value] of formData.entries()) {
+                    formDataObj[key] = value;
+                }
+                
+                // Log purchase event
+                const purchaseData = {
+                    transaction_id: 'TR-' + Math.floor(Math.random() * 1000000),
+                    value: product.price,
+                    currency: 'USD',
+                    payment_method: document.querySelector('.payment-method.selected').dataset.method,
+                    items: [
+                        {
+                            id: product.id,
+                            name: product.name,
+                            price: product.price,
+                            category: product.category,
+                            quantity: 1
+                        }
+                    ]
+                };
+                
+                logEvent('Purchase', purchaseData);
+                
+                // Show success modal
+                setTimeout(() => {
+                    successModal.style.display = 'flex';
+                }, 1000);
+            });
+            
+            // Continue button in success modal
+            continueButton.addEventListener('click', function() {
+                successModal.style.display = 'none';
+                // In a real implementation, you might redirect to a thank you page
+                logEvent('Completed Checkout', {
+                    status: 'success'
+                });
+            });
+            
+            // Show tooltip about debug panel
+            const tooltip = document.createElement('div');
+            tooltip.style.position = 'fixed';
+            tooltip.style.bottom = '60px';
+            tooltip.style.right = '20px';
+            tooltip.style.padding = '10px';
+            tooltip.style.backgroundColor = 'rgba(0,0,0,0.7)';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '5px';
+            tooltip.style.fontSize = '12px';
+            tooltip.textContent = 'Press T to toggle tracking debug panel';
+            document.body.appendChild(tooltip);
+            
+            // Hide tooltip after 5 seconds
+            setTimeout(() => {
+                tooltip.style.opacity = '0';
+                tooltip.style.transition = 'opacity 1s';
+                setTimeout(() => tooltip.remove(), 1000);
+            }, 5000);
+            
+            // Track checkout view
+            logEvent('Checkout Page View', {
+                product: product
+            });
+        });
+    </script>
+</body>
+</html>

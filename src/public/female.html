@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Female Program</title>
+    <!-- Enhanced EcommTracker script with auto-init -->
+    <script 
+        src="EcommTracker.js" 
+        data-auto-init="true" 
+        data-site-id="funnel-test" 
+        data-endpoint="http://localhost:3000/api/track/batch" 
+        data-debug="true">
+    </script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #280c37;
+            color: #f9f4f5;
+        }
+        
+        .container {
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        h1 {
+            font-size: 2.2rem;
+            margin-bottom: 10px;
+            color: #f8a4cb;
+        }
+        
+        .subtitle {
+            font-size: 1.1rem;
+            color: #d2bfd8;
+            max-width: 700px;
+            margin: 0 auto 20px;
+        }
+        
+        .video-container {
+            position: relative;
+            width: 100%;
+            padding-bottom: 56.25%; /* 16:9 aspect ratio */
+            margin-bottom: 40px;
+        }
+        
+        .video-container iframe {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border: none;
+            border-radius: 8px;
+        }
+        
+        .cta-container {
+            text-align: center;
+            margin: 40px 0;
+        }
+        
+        .add-to-cart {
+            padding: 18px 45px;
+            font-size: 1.3rem;
+            background-color: #f72585;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            text-transform: uppercase;
+            transition: all 0.3s ease;
+            min-width: 250px;
+            box-shadow: 0 5px 15px rgba(247, 37, 133, 0.4);
+        }
+        
+        .add-to-cart:hover {
+            background-color: #e91c7d;
+            transform: translateY(-3px);
+            box-shadow: 0 10px 20px rgba(247, 37, 133, 0.6);
+        }
+        
+        .product-info {
+            background-color: rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+        
+        .product-features {
+            list-style-type: none;
+            padding: 0;
+        }
+        
+        .product-features li {
+            margin-bottom: 15px;
+            padding-left: 30px;
+            position: relative;
+        }
+        
+        .product-features li:before {
+            content: "✓";
+            position: absolute;
+            left: 0;
+            color: #f8a4cb;
+            font-weight: bold;
+        }
+        
+        .price-info {
+            font-size: 1.4rem;
+            font-weight: bold;
+            margin: 30px 0;
+            color: white;
+        }
+        
+        .original-price {
+            text-decoration: line-through;
+            color: #d2bfd8;
+            margin-right: 15px;
+        }
+        
+        .current-price {
+            color: #f8a4cb;
+            font-size: 1.6rem;
+        }
+        
+        footer {
+            text-align: center;
+            margin-top: auto;
+            padding: 20px;
+            color: #d2bfd8;
+            font-size: 0.9rem;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        /* Debug panel for tracking events */
+        .debug-panel {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-size: 12px;
+            max-width: 300px;
+            max-height: 200px;
+            overflow-y: auto;
+            display: none;
+            z-index: 1000;
+        }
+        
+        .debug-panel.visible {
+            display: block;
+        }
+        
+        .event-log {
+            margin-bottom: 5px;
+            padding-bottom: 5px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Wellness & Fitness Program for Women</h1>
+            <p class="subtitle">Watch the video below to discover how our program can transform your fitness journey</p>
+        </header>
+        
+        <div class="video-container" data-track="video_section" data-section="female_vsl">
+            <!-- YouTube embed - using placeholder ID -->
+            <iframe 
+                src="https://www.youtube.com/embed/dQw4w9WgXcQ" 
+                title="Product Presentation Video" 
+                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" 
+                allowfullscreen
+                data-track="video_player"
+                data-video-id="dQw4w9WgXcQ"
+                data-video-title="Female Program Presentation">
+            </iframe>
+        </div>
+        
+        <div class="product-info" data-product-id="female-program" data-product-name="Wellness & Fitness Program for Women" data-product-price="97.00" data-product-category="Fitness">
+            <h2>Program Benefits</h2>
+            <ul class="product-features">
+                <li>Customized workout routines designed specifically for female physiology</li>
+                <li>Nutrition plans to enhance energy, mood, and healthy weight management</li>
+                <li>Hormone-balancing strategies for optimal wellness</li>
+                <li>24/7 access to our expert coaching community</li>
+                <li>Progress tracking tools designed for women's unique fitness journeys</li>
+            </ul>
+            
+            <div class="price-info">
+                <span class="original-price">$197.00</span>
+                <span class="current-price">$97.00</span>
+            </div>
+        </div>
+        
+        <div class="cta-container">
+            <button 
+                class="add-to-cart" 
+                data-track="add-to-cart"
+                data-product-id="female-program"
+                data-product-name="Wellness & Fitness Program for Women"
+                data-product-price="97.00"
+                data-product-category="Fitness">
+                Add to Cart
+            </button>
+        </div>
+        
+        <footer>
+            <p>© 2025 Your Company. All rights reserved.</p>
+        </footer>
+    </div>
+    
+    <!-- Debug panel for tracking events -->
+    <div class="debug-panel" id="debug-panel">
+        <h4>Tracking Events</h4>
+        <div id="event-logs"></div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const addToCartButton = document.querySelector('.add-to-cart');
+            const debugPanel = document.getElementById('debug-panel');
+            const eventLogs = document.getElementById('event-logs');
+            
+            // Toggle debug panel on 'T' key press
+            document.addEventListener('keydown', function(e) {
+                if (e.key.toLowerCase() === 't') {
+                    debugPanel.classList.toggle('visible');
+                }
+            });
+            
+            // Helper function to log events to debug panel
+            function logEvent(eventName, data) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'event-log';
+                logEntry.textContent = `${new Date().toLocaleTimeString()} - ${eventName}: ${JSON.stringify(data)}`;
+                eventLogs.appendChild(logEntry);
+                eventLogs.scrollTop = eventLogs.scrollHeight;
+            }
+            
+            // Add click handler for add to cart button
+            addToCartButton.addEventListener('click', function() {
+                const productData = {
+                    id: this.dataset.productId,
+                    name: this.dataset.productName,
+                    price: parseFloat(this.dataset.productPrice),
+                    category: this.dataset.productCategory
+                };
+                
+                logEvent('Add to Cart', productData);
+                
+                // Redirect to checkout page
+                setTimeout(() => {
+                    window.location.href = 'checkout.html';
+                }, 500);
+            });
+            
+            // Show tooltip about debug panel
+            const tooltip = document.createElement('div');
+            tooltip.style.position = 'fixed';
+            tooltip.style.bottom = '60px';
+            tooltip.style.right = '20px';
+            tooltip.style.padding = '10px';
+            tooltip.style.backgroundColor = 'rgba(0,0,0,0.7)';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '5px';
+            tooltip.style.fontSize = '12px';
+            tooltip.textContent = 'Press T to toggle tracking debug panel';
+            document.body.appendChild(tooltip);
+            
+            // Hide tooltip after 5 seconds
+            setTimeout(() => {
+                tooltip.style.opacity = '0';
+                tooltip.style.transition = 'opacity 1s';
+                setTimeout(() => tooltip.remove(), 1000);
+            }, 5000);
+            
+            // Track video events
+            const videoIframe = document.querySelector('iframe');
+            
+            // Simple tracking for when the iframe loads
+            videoIframe.addEventListener('load', function() {
+                logEvent('Video Loaded', {
+                    video_id: this.dataset.videoId,
+                    video_title: this.dataset.videoTitle
+                });
+            });
+        });
+    </script>
+</body>
+</html>

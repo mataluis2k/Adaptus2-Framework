@@ -196,92 +196,223 @@ async function initDatabase() {
  * but internally uses adaptus2-orm's connection management. The returned connection
  * object includes a 'release' method that is a no-op for compatibility.
  */
-/**
- * Get database connection using adaptus2-orm
- * 
- * COMPATIBILITY NOTE: This function maintains the same interface as the original,
- * but internally uses adaptus2-orm's connection management. The returned connection
- * object includes a 'release' method that is a no-op for compatibility.
- */
 async function getDbConnection(config) {
     console.log('getDbConnection', config);
-    
     if (!config || !config.dbType || !config.dbConnection) {
         // use env default values 
-        config = {
-            dbType: process.env.DEFAULT_DBTYPE || 'mysql',
-            dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1'
-        };
+        config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
+        config.dbConnection = process.env.DEFAULT_DBCONNECTION || 'MYSQL_1';
     }
 
     const { dbType, dbConnection } = config;
     const normalizedDbConnection = dbConnection.replace(/-/g, '_');
 
-    // Check if we already have a connection
     if (dbConnections[normalizedDbConnection]) {
         return dbConnections[normalizedDbConnection];
     }
 
     try {
-        // Create adaptus2-orm config
+        // Create ORM config using the existing createOrmConfig function
         const ormConfig = await createOrmConfig(config);
         
-        // Get connection from adaptus2-orm
-        const connection = await ORM.getDbConnection(ormConfig);
+        // Use adaptus2-orm's getDbConnection
+        const ormConnection = await ORM.getDbConnection(ormConfig);
         
-        if (!connection) {
-            console.error(`Failed to connect to database (${dbType})`);
-            return null;
+        if (!ormConnection) {
+            throw new Error(`Failed to establish connection for ${normalizedDbConnection}`);
         }
-        
-        // Add compatibility layer
-        const wrappedConnection = {
-            ...connection,
-            // Add release method for compatibility (no-op since adaptus2-orm manages connections)
-            release: () => {},
-            // Add execute method for compatibility - returns MySQL-style results
-            execute: async (query, params = []) => {
-                const result = await ORM.query(ormConfig, query, params);
-                // Return an array with the results, matching MySQL's execute() format
-                // MySQL execute() returns [rows, fields] where rows is an array
-                const data = result.data || [];
-                
-                // For SELECT queries, return [rows, fields] format
-                if (query.trim().toUpperCase().startsWith('SELECT') || 
-                    query.trim().toUpperCase().startsWith('SHOW') ||
-                    query.trim().toUpperCase().startsWith('DESCRIBE')) {
-                    return [data, []]; // [rows, fields] - we don't have fields info, so empty array
+
+        // Create a wrapper that provides the expected interface
+        const connectionWrapper = {
+            // Add execute method that matches the expected interface
+            execute: async function(sql, params) {
+                try {
+                    console.log('Executing SQL:', sql, 'with params:', params);
+                    const result = await ORM.query(ormConfig, sql, params || []);
+                    
+                    // Log the raw result type and structure
+                    console.log('Raw result type:', typeof result);
+                    console.log('Is array?', Array.isArray(result));
+                    console.log('Raw result:', result);
+
+                    // Initialize rows array
+                    let rows = [];
+
+                    // Handle the result based on its type and structure
+                    if (result) {
+                        if (Array.isArray(result)) {
+                            rows = result;
+                        } else if (result.data) {
+                            if (Array.isArray(result.data)) {
+                                rows = result.data;
+                            } else if (result.data.rows) {
+                                rows = result.data.rows;
+                            } else if (typeof result.data === 'object') {
+                                rows = [result.data];
+                            } else {
+                                rows = [result.data];
+                            }
+                        } else if (result.rows) {
+                            rows = result.rows;
+                        } else if (typeof result === 'object') {
+                            rows = [result];
+                        }
+                    }
+
+                    // Ensure rows is an array
+                    if (!Array.isArray(rows)) {
+                        console.warn('Rows is not an array, converting to array:', rows);
+                        rows = [rows];
+                    }
+
+                    // Process each row to ensure it's an object
+                    rows = rows.map(row => {
+                        if (row === null || row === undefined) {
+                            return {};
+                        }
+                        if (typeof row === 'string') {
+                            try {
+                                return JSON.parse(row);
+                            } catch (e) {
+                                return { value: row };
+                            }
+                        }
+                        if (typeof row === 'object') {
+                            // Handle case where row might be a JSON string
+                            if (row.value && typeof row.value === 'string') {
+                                try {
+                                    return JSON.parse(row.value);
+                                } catch (e) {
+                                    return row;
+                                }
+                            }
+                            return row;
+                        }
+                        return { value: row };
+                    });
+
+                    // Ensure we have a valid array of objects
+                    if (!Array.isArray(rows)) {
+                        console.warn('Rows is still not an array after processing, forcing to array');
+                        rows = [rows];
+                    }
+
+                    // Final validation of rows
+                    rows = rows.filter(row => row !== null && row !== undefined);
+
+                    // Log the final processed rows
+                    console.log('Final processed rows type:', typeof rows);
+                    console.log('Final processed rows is array?', Array.isArray(rows));
+                    console.log('Final processed rows length:', rows.length);
+                    console.log('Final processed rows:', JSON.stringify(rows, null, 2));
+
+                    // Return in the expected format [rows, fields]
+                    return [rows, []]; // Return [rows, fields] format
+                } catch (error) {
+                    console.error('Error in execute:', error);
+                    console.error('Error stack:', error.stack);
+                    return [[], []]; // Return empty arrays on error
                 }
-                
-                // For INSERT/UPDATE/DELETE, return [result info, fields] format
-                if (Array.isArray(data)) {
-                    return [data, []];
+            },
+
+            // Add query method for backward compatibility
+            query: async function(sql, params) {
+                try {
+                    console.log('Querying SQL:', sql, 'with params:', params);
+                    const result = await ORM.query(ormConfig, sql, params || []);
+                    
+                    // Log the raw result type and structure
+                    console.log('Raw query result type:', typeof result);
+                    console.log('Is array?', Array.isArray(result));
+                    console.log('Raw query result:', result);
+
+                    // Initialize rows array
+                    let rows = [];
+
+                    // Handle the result based on its type and structure
+                    if (result) {
+                        if (Array.isArray(result)) {
+                            rows = result;
+                        } else if (result.data) {
+                            if (Array.isArray(result.data)) {
+                                rows = result.data;
+                            } else if (result.data.rows) {
+                                rows = result.data.rows;
+                            } else if (typeof result.data === 'object') {
+                                rows = [result.data];
+                            } else {
+                                rows = [result.data];
+                            }
+                        } else if (result.rows) {
+                            rows = result.rows;
+                        } else if (typeof result === 'object') {
+                            rows = [result];
+                        }
+                    }
+
+                    // Ensure rows is an array
+                    if (!Array.isArray(rows)) {
+                        console.warn('Rows is not an array, converting to array:', rows);
+                        rows = [rows];
+                    }
+
+                    // Process each row to ensure it's an object
+                    rows = rows.map(row => {
+                        if (row === null || row === undefined) {
+                            return {};
+                        }
+                        if (typeof row === 'string') {
+                            try {
+                                return JSON.parse(row);
+                            } catch (e) {
+                                return { value: row };
+                            }
+                        }
+                        if (typeof row === 'object') {
+                            // Handle case where row might be a JSON string
+                            if (row.value && typeof row.value === 'string') {
+                                try {
+                                    return JSON.parse(row.value);
+                                } catch (e) {
+                                    return row;
+                                }
+                            }
+                            return row;
+                        }
+                        return { value: row };
+                    });
+
+                    // Ensure we have a valid array of objects
+                    if (!Array.isArray(rows)) {
+                        console.warn('Rows is still not an array after processing, forcing to array');
+                        rows = [rows];
+                    }
+
+                    // Final validation of rows
+                    rows = rows.filter(row => row !== null && row !== undefined);
+
+                    // Log the final processed rows
+                    console.log('Final processed rows type:', typeof rows);
+                    console.log('Final processed rows is array?', Array.isArray(rows));
+                    console.log('Final processed rows length:', rows.length);
+                    console.log('Final processed rows:', JSON.stringify(rows, null, 2));
+
+                    return rows;
+                } catch (error) {
+                    console.error('Error in query:', error);
+                    console.error('Error stack:', error.stack);
+                    return []; // Return empty array on error
                 }
-                
-                // For other queries that return an object (like INSERT)
-                return [data, []];
             },
-            // Add query method for compatibility
-            query: async (queryString, params = []) => {
-                const result = await ORM.query(ormConfig, queryString, params);
-                return result.data || [];
-            },
-            // Add begin/commit/rollback for compatibility
-            beginTransaction: async () => {
-                // NOTE: adaptus2-orm handles transactions internally
-                return true;
-            },
-            commit: async () => {
-                // NOTE: adaptus2-orm handles transactions internally
-                return true;
-            },
-            rollback: async () => {
-                // NOTE: adaptus2-orm handles transactions internally
-                return true;
+
+            // Add release method as a no-op for compatibility
+            release: function() {
+                // No-op since adaptus2-orm handles connection management
             }
         };
-        
-        dbConnections[normalizedDbConnection] = wrappedConnection;
+
+        // Store the wrapped connection for reuse
+        dbConnections[normalizedDbConnection] = connectionWrapper;
         
         // Extend globalContext after the first successful connection
         if (!isContextExtended) {
@@ -289,12 +420,13 @@ async function getDbConnection(config) {
             isContextExtended = true;
         }
         
-        return wrappedConnection;
+        return connectionWrapper;
     } catch (error) {
         console.error(`Failed to connect to database (${dbType}):`, error.message);
         return null;
     }
 }
+
 /**
  * Create adaptus2-orm configuration from legacy config
  * 

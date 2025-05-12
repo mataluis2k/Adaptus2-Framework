@@ -1,0 +1,888 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ModernShop - Test Your eCommerce Tracking</title>
+    <style>
+        :root {
+            --primary: #4F46E5;
+            --primary-dark: #4338CA;
+            --secondary: #10B981;
+            --light: #F3F4F6;
+            --dark: #1F2937;
+            --danger: #EF4444;
+        }
+        
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background-color: #F9FAFB;
+            color: var(--dark);
+        }
+        
+        header {
+            background-color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            padding: 1rem 2rem;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+        
+        .header-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .logo {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        nav ul {
+            display: flex;
+            list-style: none;
+            gap: 2rem;
+        }
+        
+        nav a {
+            text-decoration: none;
+            color: var(--dark);
+            font-weight: 500;
+            transition: color 0.3s;
+        }
+        
+        nav a:hover {
+            color: var(--primary);
+        }
+        
+        .cart-icon {
+            position: relative;
+            cursor: pointer;
+        }
+        
+        .cart-count {
+            position: absolute;
+            top: -8px;
+            right: -8px;
+            background-color: var(--danger);
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.7rem;
+            font-weight: bold;
+        }
+        
+        main {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        .hero {
+            background-image: linear-gradient(rgba(0,0,0,0.5), rgba(0,0,0,0.5)), url('/api/placeholder/1200/400');
+            background-size: cover;
+            background-position: center;
+            height: 400px;
+            border-radius: 10px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            color: white;
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        
+        .hero h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .hero p {
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-bottom: 2rem;
+        }
+        
+        .btn {
+            padding: 0.75rem 1.5rem;
+            border-radius: 5px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background-color: var(--primary);
+            color: white;
+            border: none;
+        }
+        
+        .btn-primary:hover {
+            background-color: var(--primary-dark);
+        }
+        
+        .section-title {
+            font-size: 1.8rem;
+            margin-bottom: 1.5rem;
+            position: relative;
+            padding-bottom: 0.5rem;
+        }
+        
+        .section-title::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 50px;
+            height: 3px;
+            background-color: var(--primary);
+        }
+        
+        .products {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        
+        .product-card {
+            background-color: white;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s, box-shadow 0.3s;
+        }
+        
+        .product-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 10px 15px rgba(0,0,0,0.1);
+        }
+        
+        .product-image {
+            height: 200px;
+            background-color: #f0f0f0;
+            position: relative;
+        }
+        
+        .product-image img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .product-badge {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background-color: var(--secondary);
+            color: white;
+            padding: 0.25rem 0.5rem;
+            border-radius: 5px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        
+        .product-info {
+            padding: 1.5rem;
+        }
+        
+        .product-category {
+            font-size: 0.8rem;
+            color: #6B7280;
+            margin-bottom: 0.5rem;
+        }
+        
+        .product-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+        }
+        
+        .product-price {
+            display: flex;
+            align-items: center;
+            margin-bottom: 1rem;
+        }
+        
+        .current-price {
+            font-size: 1.2rem;
+            font-weight: 700;
+            color: var(--primary);
+        }
+        
+        .old-price {
+            font-size: 0.9rem;
+            text-decoration: line-through;
+            color: #6B7280;
+            margin-left: 0.5rem;
+        }
+        
+        .product-actions {
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        .add-to-cart {
+            flex-grow: 1;
+            margin-right: 0.5rem;
+        }
+        
+        .wishlist {
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border: 1px solid #E5E7EB;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        
+        .wishlist:hover {
+            background-color: #F3F4F6;
+        }
+
+        .wishlist.active {
+            color: var(--danger);
+        }
+        
+        footer {
+            background-color: var(--dark);
+            color: white;
+            padding: 3rem 2rem;
+        }
+        
+        .footer-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 2rem;
+        }
+        
+        .footer-column h3 {
+            font-size: 1.2rem;
+            margin-bottom: 1.5rem;
+            position: relative;
+            padding-bottom: 0.5rem;
+        }
+        
+        .footer-column h3::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 30px;
+            height: 2px;
+            background-color: var(--primary);
+        }
+        
+        .footer-links {
+            list-style: none;
+        }
+        
+        .footer-links li {
+            margin-bottom: 0.75rem;
+        }
+        
+        .footer-links a {
+            color: #D1D5DB;
+            text-decoration: none;
+            transition: color 0.3s;
+        }
+        
+        .footer-links a:hover {
+            color: white;
+        }
+        
+        .copyright {
+            text-align: center;
+            padding-top: 2rem;
+            margin-top: 2rem;
+            border-top: 1px solid #374151;
+            font-size: 0.9rem;
+            color: #9CA3AF;
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.7);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-content {
+            background-color: white;
+            border-radius: 10px;
+            max-width: 500px;
+            width: 100%;
+            padding: 2rem;
+            position: relative;
+        }
+
+        .modal-close {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            font-size: 1.5rem;
+            cursor: pointer;
+        }
+
+        .modal-title {
+            font-size: 1.5rem;
+            margin-bottom: 1rem;
+        }
+
+        .tracking-logs {
+            background-color: #F3F4F6;
+            padding: 1rem;
+            border-radius: 5px;
+            max-height: 300px;
+            overflow-y: auto;
+            margin-bottom: 1rem;
+            font-family: monospace;
+        }
+
+        .log-entry {
+            margin-bottom: 0.5rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #E5E7EB;
+        }
+
+        .log-entry:last-child {
+            margin-bottom: 0;
+            padding-bottom: 0;
+            border-bottom: none;
+        }
+
+        @media (max-width: 768px) {
+            nav ul {
+                gap: 1rem;
+            }
+            
+            .hero h1 {
+                font-size: 2rem;
+            }
+            
+            .products {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="header-container">
+            <div class="logo">ModernShop</div>
+            <nav>
+                <ul>
+                    <li><a href="#" data-nav="home">Home</a></li>
+                    <li><a href="#" data-nav="products">Products</a></li>
+                    <li><a href="#" data-nav="categories">Categories</a></li>
+                    <li><a href="#" data-nav="about">About Us</a></li>
+                    <li><a href="#" data-nav="contact">Contact</a></li>
+                </ul>
+            </nav>
+            <div class="cart-icon" id="cart-button">
+                <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="9" cy="21" r="1"></circle>
+                    <circle cx="20" cy="21" r="1"></circle>
+                    <path d="M1 1h4l2.68 13.39a2 2 0 0 0 2 1.61h9.72a2 2 0 0 0 2-1.61L23 6H6"></path>
+                </svg>
+                <span class="cart-count">0</span>
+            </div>
+        </div>
+    </header>
+    
+    <main>
+        <section class="hero">
+            <h1>Welcome to ModernShop</h1>
+            <p>Discover our latest collection of high-quality products at amazing prices.</p>
+            <a href="#" class="btn btn-primary" id="shop-now">Shop Now</a>
+        </section>
+        
+        <section>
+            <h2 class="section-title">Featured Products</h2>
+            <div class="products">
+                <div class="product-card" data-product-id="1" data-product-name="Premium Leather Backpack" data-product-price="89.99" data-product-category="Accessories">
+                    <div class="product-image">
+                        <img src="/api/placeholder/250/200" alt="Premium Leather Backpack">
+                        <div class="product-badge">New</div>
+                    </div>
+                    <div class="product-info">
+                        <div class="product-category">Accessories</div>
+                        <h3 class="product-title">Premium Leather Backpack</h3>
+                        <div class="product-price">
+                            <span class="current-price">$89.99</span>
+                            <span class="old-price">$119.99</span>
+                        </div>
+                        <div class="product-actions">
+                            <button class="btn btn-primary add-to-cart">Add to Cart</button>
+                            <div class="wishlist" title="Add to Wishlist">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="product-card" data-product-id="2" data-product-name="Wireless Headphones" data-product-price="129.99" data-product-category="Electronics">
+                    <div class="product-image">
+                        <img src="/api/placeholder/250/200" alt="Wireless Headphones">
+                        <div class="product-badge">Popular</div>
+                    </div>
+                    <div class="product-info">
+                        <div class="product-category">Electronics</div>
+                        <h3 class="product-title">Wireless Headphones</h3>
+                        <div class="product-price">
+                            <span class="current-price">$129.99</span>
+                            <span class="old-price">$159.99</span>
+                        </div>
+                        <div class="product-actions">
+                            <button class="btn btn-primary add-to-cart">Add to Cart</button>
+                            <div class="wishlist" title="Add to Wishlist">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="product-card" data-product-id="3" data-product-name="Smart Watch" data-product-price="199.99" data-product-category="Electronics">
+                    <div class="product-image">
+                        <img src="/api/placeholder/250/200" alt="Smart Watch">
+                    </div>
+                    <div class="product-info">
+                        <div class="product-category">Electronics</div>
+                        <h3 class="product-title">Smart Watch</h3>
+                        <div class="product-price">
+                            <span class="current-price">$199.99</span>
+                        </div>
+                        <div class="product-actions">
+                            <button class="btn btn-primary add-to-cart">Add to Cart</button>
+                            <div class="wishlist" title="Add to Wishlist">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="product-card" data-product-id="4" data-product-name="Cotton T-Shirt" data-product-price="24.99" data-product-category="Clothing">
+                    <div class="product-image">
+                        <img src="/api/placeholder/250/200" alt="Cotton T-Shirt">
+                        <div class="product-badge">Sale</div>
+                    </div>
+                    <div class="product-info">
+                        <div class="product-category">Clothing</div>
+                        <h3 class="product-title">Cotton T-Shirt</h3>
+                        <div class="product-price">
+                            <span class="current-price">$24.99</span>
+                            <span class="old-price">$34.99</span>
+                        </div>
+                        <div class="product-actions">
+                            <button class="btn btn-primary add-to-cart">Add to Cart</button>
+                            <div class="wishlist" title="Add to Wishlist">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"></path>
+                                </svg>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+    
+    <footer>
+        <div class="footer-container">
+            <div class="footer-column">
+                <h3>Shop</h3>
+                <ul class="footer-links">
+                    <li><a href="#" data-footer="new-arrivals">New Arrivals</a></li>
+                    <li><a href="#" data-footer="best-sellers">Best Sellers</a></li>
+                    <li><a href="#" data-footer="sale">Sale</a></li>
+                    <li><a href="#" data-footer="collections">Collections</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Help</h3>
+                <ul class="footer-links">
+                    <li><a href="#" data-footer="faq">FAQ</a></li>
+                    <li><a href="#" data-footer="shipping">Shipping & Returns</a></li>
+                    <li><a href="#" data-footer="size-guide">Size Guide</a></li>
+                    <li><a href="#" data-footer="contact-us">Contact Us</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>About</h3>
+                <ul class="footer-links">
+                    <li><a href="#" data-footer="our-story">Our Story</a></li>
+                    <li><a href="#" data-footer="sustainability">Sustainability</a></li>
+                    <li><a href="#" data-footer="careers">Careers</a></li>
+                    <li><a href="#" data-footer="press">Press</a></li>
+                </ul>
+            </div>
+            
+            <div class="footer-column">
+                <h3>Follow Us</h3>
+                <ul class="footer-links">
+                    <li><a href="#" data-footer="instagram">Instagram</a></li>
+                    <li><a href="#" data-footer="facebook">Facebook</a></li>
+                    <li><a href="#" data-footer="twitter">Twitter</a></li>
+                    <li><a href="#" data-footer="pinterest">Pinterest</a></li>
+                </ul>
+            </div>
+        </div>
+        
+        <div class="copyright">
+            © 2025 ModernShop. All rights reserved.
+        </div>
+    </footer>
+
+    <!-- Modal for tracking logs -->
+    <div class="modal" id="tracking-modal">
+        <div class="modal-content">
+            <span class="modal-close" id="modal-close">&times;</span>
+            <h2 class="modal-title">eCommTracker Events</h2>
+            <div class="tracking-logs" id="tracking-logs">
+                <div class="log-entry">Tracking script loaded successfully.</div>
+            </div>
+            <button class="btn btn-primary" id="clear-logs">Clear Logs</button>
+        </div>
+    </div>
+    
+    <!-- Load the ecommTracker.js script -->
+    <script src="//localhost:3000/js/EcommTracker.js"></script>
+    <script>
+        // Initialize the tracker
+        window.EcomTracker.init({
+          endpoint: 'http://localhost:3000/api/track/batch',
+          siteId: 'test-site',
+          debug: true,
+          s2sEndpoint: null  // This disables the S2S relay
+        });
+        
+        // Create alias for compatibility with your landing page
+        window.ecommTracker = {
+          trackEvent: function(eventName, eventData) {
+            EcomTracker.track(eventName, eventData);
+          },
+          version: '1.0.0'
+        };
+      </script>
+    
+    <!-- Optional: Add a fallback script in case the tracking script fails to load -->
+    <script>
+        window.addEventListener('error', function(e) {
+            // Check if the error is related to loading the tracking script
+            if (e.target && e.target.src && e.target.src.indexOf('ecommTracker.js') !== -1) {
+                console.error('Failed to load the ecommTracker.js script:', e);
+                
+                // Create fallback tracker to prevent errors
+                window.ecommTracker = {
+                    trackEvent: function(eventName, eventData) {
+                        console.log('Fallback tracker:', eventName, eventData);
+                    },
+                    version: 'fallback'
+                };
+                
+                // Add a notice to the tracking logs
+                const trackingLogs = document.getElementById('tracking-logs');
+                if (trackingLogs) {
+                    const logEntry = document.createElement('div');
+                    logEntry.className = 'log-entry';
+                    logEntry.innerHTML = '<strong style="color: red;">Error: Failed to load tracking script from localhost:3000/js/ecommTracker.js</strong><br>Using fallback tracker.';
+                    trackingLogs.appendChild(logEntry);
+                }
+            }
+        }, true);
+    </script>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const cartCount = document.querySelector('.cart-count');
+            const addToCartButtons = document.querySelectorAll('.add-to-cart');
+            const wishlistButtons = document.querySelectorAll('.wishlist');
+            const navLinks = document.querySelectorAll('nav a');
+            const footerLinks = document.querySelectorAll('.footer-links a');
+            const shopNowButton = document.getElementById('shop-now');
+            const cartButton = document.getElementById('cart-button');
+            const modal = document.getElementById('tracking-modal');
+            const modalClose = document.getElementById('modal-close');
+            const trackingLogs = document.getElementById('tracking-logs');
+            const clearLogsButton = document.getElementById('clear-logs');
+            
+            let cart = [];
+            let wishlist = [];
+            
+            // Add event to show tracking modal (press 'T' key)
+            document.addEventListener('keydown', function(e) {
+                if (e.key.toLowerCase() === 't') {
+                    modal.style.display = 'flex';
+                }
+            });
+            
+            // Close modal
+            modalClose.addEventListener('click', function() {
+                modal.style.display = 'none';
+            });
+            
+            // Clear logs
+            clearLogsButton.addEventListener('click', function() {
+                trackingLogs.innerHTML = '<div class="log-entry">Logs cleared.</div>';
+            });
+            
+            // Close modal when clicking outside
+            window.addEventListener('click', function(e) {
+                if (e.target === modal) {
+                    modal.style.display = 'none';
+                }
+            });
+            
+            // Custom logging function to display tracking events
+            function logTrackingEvent(message) {
+                const logEntry = document.createElement('div');
+                logEntry.className = 'log-entry';
+                logEntry.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+                trackingLogs.appendChild(logEntry);
+                trackingLogs.scrollTop = trackingLogs.scrollHeight;
+            }
+            
+            // Add to cart functionality
+            addToCartButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const productCard = this.closest('.product-card');
+                    const productId = productCard.dataset.productId;
+                    const productName = productCard.dataset.productName;
+                    const productPrice = parseFloat(productCard.dataset.productPrice);
+                    const productCategory = productCard.dataset.productCategory;
+                    
+                    // Check if product is already in cart
+                    const existingItem = cart.find(item => item.id === productId);
+                    if (existingItem) {
+                        existingItem.quantity += 1;
+                    } else {
+                        cart.push({
+                            id: productId,
+                            name: productName,
+                            price: productPrice,
+                            category: productCategory,
+                            quantity: 1
+                        });
+                    }
+                    
+                    // Update cart count
+                    const totalItems = cart.reduce((sum, item) => sum + item.quantity, 0);
+                    cartCount.textContent = totalItems;
+                    
+                    // Log the event
+                    logTrackingEvent(`Added product to cart: ${productName} ($${productPrice})`);
+                    
+                    // Trigger tracking event if ecommTracker exists
+                    if (window.ecommTracker) {
+                        window.ecommTracker.trackEvent('add_to_cart', {
+                            product_id: productId,
+                            product_name: productName,
+                            product_price: productPrice,
+                            product_category: productCategory,
+                            quantity: 1
+                        });
+                    }
+                });
+            });
+            
+            // Wishlist functionality
+            wishlistButtons.forEach(button => {
+                button.addEventListener('click', function() {
+                    const productCard = this.closest('.product-card');
+                    const productId = productCard.dataset.productId;
+                    const productName = productCard.dataset.productName;
+                    const productPrice = parseFloat(productCard.dataset.productPrice);
+                    const productCategory = productCard.dataset.productCategory;
+                    
+                    // Toggle wishlist status
+                    const wishlistIndex = wishlist.findIndex(item => item.id === productId);
+                    let action;
+                    
+                    if (wishlistIndex >= 0) {
+                        // Remove from wishlist
+                        wishlist.splice(wishlistIndex, 1);
+                        this.classList.remove('active');
+                        action = 'removed_from_wishlist';
+                    } else {
+                        // Add to wishlist
+                        wishlist.push({
+                            id: productId,
+                            name: productName,
+                            price: productPrice,
+                            category: productCategory
+                        });
+                        this.classList.add('active');
+                        action = 'add_to_wishlist';
+                    }
+                    
+                    // Log the event
+                    logTrackingEvent(`${action === 'add_to_wishlist' ? 'Added' : 'Removed'} product ${action === 'add_to_wishlist' ? 'to' : 'from'} wishlist: ${productName}`);
+                    
+                    // Trigger tracking event if ecommTracker exists
+                    if (window.ecommTracker) {
+                        window.ecommTracker.trackEvent(action, {
+                            product_id: productId,
+                            product_name: productName,
+                            product_price: productPrice,
+                            product_category: productCategory
+                        });
+                    }
+                });
+            });
+            
+            // Navigation tracking
+            navLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const section = this.dataset.nav;
+                    
+                    // Log the event
+                    logTrackingEvent(`Navigated to: ${section}`);
+                    
+                    // Trigger tracking event if ecommTracker exists
+                    if (window.ecommTracker) {
+                        window.ecommTracker.trackEvent('navigation', {
+                            section: section
+                        });
+                    }
+                });
+            });
+            
+            // Footer link tracking
+            footerLinks.forEach(link => {
+                link.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    const section = this.dataset.footer;
+                    
+                    // Log the event
+                    logTrackingEvent(`Clicked footer link: ${section}`);
+                    
+                    // Trigger tracking event if ecommTracker exists
+                    if (window.ecommTracker) {
+                        window.ecommTracker.trackEvent('footer_click', {
+                            section: section
+                        });
+                    }
+                });
+            });
+            
+            // Shop now button
+            shopNowButton.addEventListener('click', function(e) {
+                e.preventDefault();
+                
+                // Log the event
+                logTrackingEvent('Clicked "Shop Now" button');
+                
+                // Trigger tracking event if ecommTracker exists
+                if (window.ecommTracker) {
+                    window.ecommTracker.trackEvent('promotion_click', {
+                        promotion_name: 'hero_banner',
+                        promotion_action: 'shop_now'
+                    });
+                }
+            });
+            
+            // Cart view
+            cartButton.addEventListener('click', function() {
+                // Log the event
+                logTrackingEvent('Viewed cart');
+                
+                // Trigger tracking event if ecommTracker exists
+                if (window.ecommTracker) {
+                    window.ecommTracker.trackEvent('view_cart', {
+                        cart_total: cart.reduce((sum, item) => sum + (item.price * item.quantity), 0).toFixed(2),
+                        cart_items: cart.length,
+                        cart_quantity: cart.reduce((sum, item) => sum + item.quantity, 0)
+                    });
+                }
+                
+                // In a real app, this would open the cart page or modal
+                alert('Cart contains ' + cart.length + ' products');
+            });
+            
+            // Page view tracking (on load)
+            window.addEventListener('load', function() {
+                // Log the event
+                logTrackingEvent('Page viewed: Home Page');
+                
+                // Trigger tracking event if ecommTracker exists
+                if (window.ecommTracker) {
+                    window.ecommTracker.trackEvent('page_view', {
+                        page_title: document.title,
+                        page_location: window.location.href,
+                        page_path: window.location.pathname
+                    });
+                    
+                    // Check if the tracker script is successfully loaded
+                    if (typeof window.ecommTracker.version !== 'undefined') {
+                        logTrackingEvent(`ecommTracker initialized (version: ${window.ecommTracker.version})`);
+                    }
+                } else {
+                    logTrackingEvent('WARNING: ecommTracker script not found or not loaded properly');
+                }
+            });
+            
+            // Add tooltip about tracker modal
+            const tooltip = document.createElement('div');
+            tooltip.style.position = 'fixed';
+            tooltip.style.bottom = '20px';
+            tooltip.style.right = '20px';
+            tooltip.style.padding = '10px 15px';
+            tooltip.style.backgroundColor = 'rgba(0,0,0,0.7)';
+            tooltip.style.color = 'white';
+            tooltip.style.borderRadius = '5px';
+            tooltip.style.fontSize = '14px';
+            tooltip.style.zIndex = '1000';
+            tooltip.innerHTML = 'Press <strong>T</strong> to view tracking events';
+            document.body.appendChild(tooltip);
+            
+            // Hide tooltip after 5 seconds
+            setTimeout(() => {
+                tooltip.style.opacity = '0';
+                tooltip.style.transition = 'opacity 1s';
+                setTimeout(() => {
+                    tooltip.remove();
+                }, 1000);
+            }, 5000);
+        });
+    </script>
+</body>
+</html>
