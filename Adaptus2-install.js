@@ -171,6 +171,83 @@ const groups = {
     "GA4_API_BASE_URL",
     "GA4_MEASUREMENT_ID",
     "GA4_API_SECRET"
+  ],
+  "REDIS CONFIGURATION": [
+    "REDIS_URL",
+    "REPORT_CACHE_TTL",
+    "CACHE_DURATION"
+  ],
+  
+  "STREAMING & MEDIA": [
+    "STREAMING_DBTYPE",
+    "DBSTREAMING_DBCONNECTION",
+    "VIDEO_TABLE",
+    "VIDEO_ID_COLUMN",
+    "VIDEO_PATH_COLUMN",
+    "VIDEO_HLS_COLUMN",
+    "VIDEO_SOURCE_COLUMN",
+    "VIDEO_FILENAME_COLUMN",
+    "VIDEO_PARAM_NAME",
+    "FFMPEG_PROFILE"
+  ],
+  
+  "OLLAMA CONFIGURATION": [
+    "OLLAMA_BASE_URL",
+    "OLLAMA_INFERENCE",
+    "OLLAMA_EMBEDDING_MODEL",
+    "EMBEDDING_PROVIDER",
+    "QUALITY_CONTROL_ENABLED",
+    "QUALITY_CONTROL_MAX_RETRIES"
+  ],
+  
+  "VECTOR DATABASE": [
+    "CHROMA_URL",
+    "CHROMA_TENANT",
+    "CHROMA_DATABASE",
+    "CHROMA_COLLECTION_NAME",
+    "ALWAYS_UPDATE_COLLECTION",
+    "USE_CONTEXT_SUMMARIZATION"
+  ],
+  
+  "DEFAULT SETTINGS": [
+    "DEFAULT_PERSONA",
+    "DEFAULT_ADMIN",
+    "DEFAULT_DB_CONNECTION"
+  ],
+  
+  "CUSTOMER SUPPORT QUERIES": [
+    "USER_PROFILE_QUERY",
+    "ORDER_HISTORY_QUERY",
+    "ORDER_HISTORY_TABLE",
+    "ORDER_HISTORY_CONDITION",
+    "ORDER_HISTORY_FIELDS",
+    "ORDER_HISTORY_LIMIT",
+    "ORDER_HISTORY_SORT",
+    "CUSTOMER_NOTES_QUERY",
+    "LOYALTY_POINTS_QUERY",
+    "REFUND_POLICY_DAYS",
+    "REFUND_UPDATE_QUERY",
+    "REFUND_ELIGIBILITY_QUERY",
+    "ORDER_NOTES_UPDATE_QUERY",
+    "ORDER_DETAIL_QUERY",
+    "ADD_CUSTOMER_NOTE_QUERY",
+    "ADD_LOYALTY_POINTS_QUERY",
+    "TRACKING_INFO_QUERY",
+    "RETURN_STATUS_QUERY",
+    "CREATE_RETURN_QUERY"
+  ],
+  
+  "ADDITIONAL SECURITY": [
+    "ENCRYPTION_KEY",
+    "CLI_USERNAME",
+    "CLI_PASSWORD"
+  ],
+  
+  "DEVELOPMENT TOOLS": [
+    "NODE_ENV",
+    "DEBUG",
+    "LOG_LEVEL",
+    "SHUTDOWN_ON_UNCAUGHT"
   ]
 };
 
@@ -254,6 +331,64 @@ const fullConfig = {
   // Payments
   PAYMENT_MODULE: "FALSE",
   BRAINTREE_ENV: "sandbox",
+
+    // Add to fullConfig
+  REDIS_URL: "redis://localhost:6379",
+  REPORT_CACHE_TTL: "600",
+  CACHE_DURATION: "3600",
+
+  // Default settings
+  DEFAULT_PERSONA: "helpfulAssistant",
+  DEFAULT_ADMIN: "admin",
+  DEFAULT_DB_CONNECTION: "DEFAULT_DBCONNECTION",
+
+  // Server Configuration
+  OLLAMA_BASE_URL: "http://localhost:11434",
+  NODE_ENV: "production",
+  WS_SIGNALING_PORT: "4000",
+  CHROMA_URL: "http://localhost:8000",
+  API_URL: "http://localhost:3000",
+  HOST: "localhost",
+  LOCAL_DOMAIN: "",
+  ASSETS_URL_PATH: "/assets",
+
+  // Streaming & Media
+  STREAMING_DBTYPE: "mysql",
+  DBSTREAMING_DBCONNECTION: "MYSQL_1",
+  VIDEO_TABLE: "video_catalog",
+  VIDEO_ID_COLUMN: "videoID",
+  VIDEO_PATH_COLUMN: "videoPath",
+  VIDEO_HLS_COLUMN: "hls",
+  VIDEO_SOURCE_COLUMN: "source",
+  VIDEO_FILENAME_COLUMN: "filename",
+  VIDEO_PARAM_NAME: "videoID",
+  FFMPEG_PROFILE: "mediumBandwidth",
+
+  // Ollama & LLM
+  OLLAMA_INFERENCE: "llama3",
+  QUALITY_CONTROL_MAX_RETRIES: "2",
+  QUALITY_CONTROL_ENABLED: "false",
+  OLLAMA_EMBEDDING_MODEL: "mxbai-embed-large",
+  CHROMA_TENANT: "default_tenant",
+  CHROMA_DATABASE: "default_database",
+  CHROMA_COLLECTION_NAME: "default_collection",
+  EMBEDDING_PROVIDER: "",
+
+  // Security
+  ENCRYPTION_KEY: generateRandomSecret(32),
+  CLI_USERNAME: "",
+  CLI_PASSWORD: "",
+
+  // Storage
+  ASSETS_DISK_PATH: "./public/assets",
+  S3_BUCKET_NAME: "",
+
+  // Miscellaneous
+  DEBUG: "false",
+  LOG_LEVEL: "info",
+  SHUTDOWN_ON_UNCAUGHT: "false",
+  ALWAYS_UPDATE_COLLECTION: "false",
+  USE_CONTEXT_SUMMARIZATION: "false",
 };
 
 // Generate a secure random string for secrets
