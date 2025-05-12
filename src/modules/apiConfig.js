@@ -193,8 +193,11 @@ const loadConfig = async (configFile = configPath) => {
             apiConfig.push(CMS_TABLE_SCHEMA);
         }
         // Add ECOMMTRACKER_TABLE_SCHEMAS to apiConfig
-        if (!apiConfig.find(config => config.dbTable === ECOMMTRACKER_TABLE_SCHEMAS.dbTable)) {
-            apiConfig.push(ECOMMTRACKER_TABLE_SCHEMAS);
+        // ECOMMTRACKER_TABLE_SCHEMAS contains multiple table definitions
+        for (const [tableName, tableSchema] of Object.entries(ECOMMTRACKER_TABLE_SCHEMAS)) {
+            if (!apiConfig.find(config => config.dbTable === tableSchema.dbTable)) {
+                apiConfig.push(tableSchema);
+            }
         }
         categorizedConfig = categorizeApiConfig(apiConfig);
 
