@@ -94,10 +94,16 @@ const FirebaseService = require('./services/firebaseService'); // Firebase Servi
 const CMSManager = require('./modules/cmsManager'); // CMS Module
 
 // Changes to enable clustering and plugin management
-const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
+const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local';
 const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
 const PLUGIN_UPDATE_CHANNEL = `${CLUSTER_NAME}:plugins:update`;
 const PLUGIN_FILE_PREFIX = `${CLUSTER_NAME}:plugin:file:`;
+
+// Import the context module
+const contextModule = require('./modules/context');
+
+// Ensure the globalContext is available globally
+global.globalContext = contextModule.globalContext;
 const PLUGIN_EVENT_CHANNEL = `${process.env.CLUSTER_NAME || 'default'}:plugin:events`;
 const PLUGIN_CODE_KEY = `${process.env.CLUSTER_NAME || 'default'}:plugin:code:`;   
 // Plugn manager for cluster end here
@@ -1989,7 +1995,7 @@ class DependencyManager {
     }
 
     loadModule(moduleName) {
-        // Maybe do some logic to point to your server’s node_modules
+        // Maybe do some logic to point to your server's node_modules
         return require(moduleName);
     }
 
@@ -2921,6 +2927,43 @@ MOD_PAGECLONE=false
         }
     }
 
+    subscribeToPluginUpdates() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
+    
+        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
+        
+        // Store the subscription reference so we can clean it up later
+        // This is the key change - track the Redis client used for subscription
+        this.pluginUpdateSubscriber = this.redis;
+        
+        this.pluginUpdateSubscriber.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+            if (err) {
+                console.error(`Failed to subscribe to plugin updates: ${err.message}`);
+            } else {
+                console.log(`Subscribed to plugin updates for cluster "${process.env.CLUSTER_NAME}".`);
+            }
+        });
+    
+        this.pluginUpdateSubscriber.on('message', async (channel, message) => {
+            if (channel !== `${process.env.CLUSTER_NAME}:plugins:update`) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { name: pluginName } = JSON.parse(message);
+                console.log(`Plugin update for "${pluginName}" received — loading from Redis if different.`);
+                await this.pluginManager.loadPluginFromRedisIfDifferent(pluginName);
+            } catch (err) {
+                console.error('Error in handlePluginUpdate:', err);
+            }
+        });
+        
+        
+    }
     async start(callback) {
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught Exception:', error);
@@ -3004,22 +3047,28 @@ MOD_PAGECLONE=false
            
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
-                this.socketCLI = new SocketCLI({
+                const socketCLI = new SocketCLI({
                     server: this,
-                    redisClient: this.redisClient,
-                    jwtSecret: JWT_SECRET,
-                    jwtExpiry: JWT_EXPIRY,
-                    ruleEngine: globalContext.ruleEngine,
+                    app: this.app,
+                    redisClient: this.redis,
+                    jwtSecret: process.env.JWT_SECRET || 'IhaveaVeryStrongSecret',
+                    jwtExpiry: process.env.JWT_EXPIRY || '1h',
+                    ruleEngine: ruleEngine,  // Make sure this is accessible
                     pluginManager: this.pluginManager,
-                    clearRedisCache: clearRedisCache,
-                    loadConfig: loadConfig,
-                    getContext: getContext,
-                    updateValidationRules: updateValidationRules,
-                    requestLogger: requestLogger,
-                    packageJson: packageJson,
-                    initializeRules: initializeRules
+                    clearRedisCache: clearRedisCache,  // Make sure this function is accessible
+                    loadConfig: loadConfig,  // Make sure this function is accessible
+                    getContext: getContext,  // Make sure this function is accessible
+                    updateValidationRules: updateValidationRules,  // Make sure this function is accessible
+                    requestLogger: requestLogger,  // Make sure this is accessible
+                    packageJson: packageJson,  // Make sure this is accessible
+                    initializeRules: initializeRules,  // Make sure this function is accessible
+                    // Pass globalContext directly from contextModule
+                    globalContext: contextModule.globalContext  // Use the imported context module
                 });
-                this.socketCLI.start(this.host, process.env.SOCKET_CLI_PORT);
+                const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
+                this.socketCLI = socketCLI;
+                this.socketCLI.start(this.host, SOCKET_CLI_PORT);
+                console.log(`Socket CLI server initialized on ${this.host}:${SOCKET_CLI_PORT}`);
             }
   
             // Synchronize plugins and subscribe to updates
@@ -3103,6 +3152,19 @@ MOD_PAGECLONE=false
                     consolelog.error(`Failed to close connection ${index}:`, result.reason);
                 }
             });
+            // Make sure to also modify the shutdown method to clean up this subscription
+        // Add the following to the shutdown method:
+        
+        if (this.pluginUpdateSubscriber) {
+            try {
+                this.pluginUpdateSubscriber.unsubscribe();
+                this.pluginUpdateSubscriber.quit();
+                consolelog.log('Plugin update subscriber closed');
+            } catch (error) {
+                consolelog.error('Error closing plugin update subscriber:', error);
+            }
+        }
+       
 
             if (this.socketCLI) {
                 await this.socketCLI.stop();

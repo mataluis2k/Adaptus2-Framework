@@ -231,11 +231,14 @@ class RequestLogger {
                 values: [requestId]
             };
 
-            const [log] = await query(this.dbConfig, selectQuery.text, selectQuery.values);
+            const results = await query(this.dbConfig, selectQuery.text, selectQuery.values);
 
-            if (!log) {
+            // Handle empty results or non-array results safely
+            if (!results || !Array.isArray(results) || results.length === 0) {
                 return null;
             }
+
+            const log = results[0];
 
             // Decrypt data if encrypted
             if (log.encrypted) {
