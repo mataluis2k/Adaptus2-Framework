@@ -408,13 +408,13 @@ async function getDbConnection(config) {
             // Add release method as a no-op for compatibility
             release: function() {
                 // No-op since adaptus2-orm handles connection management
-                console.log('=======================================>release', 'no-op');
+       
             }
         };
 
         // Store the wrapped connection for reuse
         dbConnections[normalizedDbConnection] = connectionWrapper;
-        console.log('=======================================>IM here');
+       
         // Extend globalContext after the first successful connection
         if (!isContextExtended) {
             extendContext();

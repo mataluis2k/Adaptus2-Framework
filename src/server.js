@@ -94,10 +94,16 @@ const FirebaseService = require('./services/firebaseService'); // Firebase Servi
 const CMSManager = require('./modules/cmsManager'); // CMS Module
 
 // Changes to enable clustering and plugin management
-const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
+const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local';
 const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
 const PLUGIN_UPDATE_CHANNEL = `${CLUSTER_NAME}:plugins:update`;
 const PLUGIN_FILE_PREFIX = `${CLUSTER_NAME}:plugin:file:`;
+
+// Import the context module
+const contextModule = require('./modules/context');
+
+// Ensure the globalContext is available globally
+global.globalContext = contextModule.globalContext;
 const PLUGIN_EVENT_CHANNEL = `${process.env.CLUSTER_NAME || 'default'}:plugin:events`;
 const PLUGIN_CODE_KEY = `${process.env.CLUSTER_NAME || 'default'}:plugin:code:`;   
 // Plugn manager for cluster end here
@@ -2515,6 +2521,43 @@ MOD_PAGECLONE=false
         }
     }
 
+    subscribeToPluginUpdates() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
+    
+        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
+        
+        // Store the subscription reference so we can clean it up later
+        // This is the key change - track the Redis client used for subscription
+        this.pluginUpdateSubscriber = this.redis;
+        
+        this.pluginUpdateSubscriber.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+            if (err) {
+                console.error(`Failed to subscribe to plugin updates: ${err.message}`);
+            } else {
+                console.log(`Subscribed to plugin updates for cluster "${process.env.CLUSTER_NAME}".`);
+            }
+        });
+    
+        this.pluginUpdateSubscriber.on('message', async (channel, message) => {
+            if (channel !== `${process.env.CLUSTER_NAME}:plugins:update`) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { name: pluginName } = JSON.parse(message);
+                console.log(`Plugin update for "${pluginName}" received — loading from Redis if different.`);
+                await this.pluginManager.loadPluginFromRedisIfDifferent(pluginName);
+            } catch (err) {
+                console.error('Error in handlePluginUpdate:', err);
+            }
+        });
+        
+        
+    }
     async start(callback) {
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught Exception:', error);
@@ -2598,22 +2641,28 @@ MOD_PAGECLONE=false
            
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
-                this.socketCLI = new SocketCLI({
+                const socketCLI = new SocketCLI({
                     server: this,
-                    redisClient: this.redisClient,
-                    jwtSecret: JWT_SECRET,
-                    jwtExpiry: JWT_EXPIRY,
-                    ruleEngine: globalContext.ruleEngine,
+                    app: this.app,
+                    redisClient: this.redis,
+                    jwtSecret: process.env.JWT_SECRET || 'IhaveaVeryStrongSecret',
+                    jwtExpiry: process.env.JWT_EXPIRY || '1h',
+                    ruleEngine: ruleEngine,  // Make sure this is accessible
                     pluginManager: this.pluginManager,
-                    clearRedisCache: clearRedisCache,
-                    loadConfig: loadConfig,
-                    getContext: getContext,
-                    updateValidationRules: updateValidationRules,
-                    requestLogger: requestLogger,
-                    packageJson: packageJson,
-                    initializeRules: initializeRules
+                    clearRedisCache: clearRedisCache,  // Make sure this function is accessible
+                    loadConfig: loadConfig,  // Make sure this function is accessible
+                    getContext: getContext,  // Make sure this function is accessible
+                    updateValidationRules: updateValidationRules,  // Make sure this function is accessible
+                    requestLogger: requestLogger,  // Make sure this is accessible
+                    packageJson: packageJson,  // Make sure this is accessible
+                    initializeRules: initializeRules,  // Make sure this function is accessible
+                    // Pass globalContext directly from contextModule
+                    globalContext: contextModule.globalContext  // Use the imported context module
                 });
-                this.socketCLI.start(this.host, process.env.SOCKET_CLI_PORT);
+                const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
+                this.socketCLI = socketCLI;
+                this.socketCLI.start(this.host, SOCKET_CLI_PORT);
+                console.log(`Socket CLI server initialized on ${this.host}:${SOCKET_CLI_PORT}`);
             }
   
             // Synchronize plugins and subscribe to updates
@@ -2642,22 +2691,17 @@ MOD_PAGECLONE=false
         const consolelog = require('./modules/logger');
         try {
             consolelog.log('Initiating graceful shutdown...');
-            // Clean up plugin manager resources
-            if (this.pluginManager) {
-                consolelog.log('Cleaning up plugin manager resources...');
-                this.pluginManager.close();
+
+            // First, close HTTP server to stop accepting new connections
+            if (this.httpServer) {
+                await new Promise((resolve) => {
+                    this.httpServer.close(() => {
+                        consolelog.log('HTTP server closed');
+                        resolve();
+                    });
+                });
             }
-        
-            // Cleanup CMS if initialized
-            if (this.cmsManager) {
-                try {
-                    // await this.cmsManager.cleanup(); To be implemented.
-                    consolelog.log('CMS module cleaned up successfully');
-                } catch (error) {
-                    consolelog.error('Error cleaning up CMS module:', error);
-                }
-            }
-    
+
             // Close WebSocket server
             if (this.wss) {
                 await new Promise((resolve) => {
@@ -2667,12 +2711,37 @@ MOD_PAGECLONE=false
                     });
                 });
             }
+
+            // Close signaling server if it exists
             if (this.signalServer) {
-                this.signalServer.wss.close(() => {
-                    console.log('WebRTC Signaling Server closed');
+                await new Promise((resolve) => {
+                    this.signalServer.wss.close(() => {
+                        consolelog.log('WebRTC Signaling Server closed');
+                        resolve();
+                    });
                 });
             }
             
+            // Close the socket server if it exists (before Redis connections)
+            if (this.socketServer) {
+                await new Promise((resolve) => {
+                    this.socketServer.close(() => {
+                        consolelog.log('Socket CLI server closed');
+                        resolve();
+                    });
+                });
+            }
+            
+            // Clean up plugin manager (which might have Redis connections)
+            if (this.pluginManager) {
+                try {
+                    this.pluginManager.close();
+                    consolelog.log('Plugin manager closed');
+                } catch (error) {
+                    consolelog.error('Error closing plugin manager:', error);
+                }
+            }
+
             // Close the rate limiter's Redis connection if it exists
             if (this.rateLimit) {
                 try {
@@ -2683,44 +2752,54 @@ MOD_PAGECLONE=false
                 }
             }
             
-            // Close all connections
-            const connections = await Promise.allSettled([
-                this.redis.quit(),
-                this.publisherRedis?.quit(),
-                this.subscriberRedis?.quit(),
-                redisPublisher.quit(),
-                redisSubscriber.quit()
-            ]);
-    
-            connections.forEach((result, index) => {
-                if (result.status === 'rejected') {
-                    consolelog.error(`Failed to close connection ${index}:`, result.reason);
+            // Cleanup CMS if initialized
+            if (this.cmsManager) {
+                try {
+                    // await this.cmsManager.cleanup(); // To be implemented.
+                    consolelog.log('CMS module cleaned up successfully');
+                } catch (error) {
+                    consolelog.error('Error cleaning up CMS module:', error);
                 }
-            });
+            }
 
-            if (this.socketCLI) {
-                await this.socketCLI.stop();
+            // Create an array of all Redis connections to close
+            const redisConnections = [
+                { name: 'Main Redis', connection: this.redis },
+                { name: 'Redis Publisher', connection: redisPublisher },
+                { name: 'Redis Subscriber', connection: redisSubscriber }
+            ];
+
+            // Add optional Redis connections if they exist
+            if (this.publisherRedis) redisConnections.push({ name: 'Plugin Publisher Redis', connection: this.publisherRedis });
+            if (this.subscriberRedis) redisConnections.push({ name: 'Plugin Subscriber Redis', connection: this.subscriberRedis });
+
+            // Close all Redis connections gracefully and sequentially
+            for (const { name, connection } of redisConnections) {
+                if (connection && typeof connection.quit === 'function') {
+                    try {
+                        consolelog.log(`Closing ${name} connection...`);
+                        await connection.quit();
+                        consolelog.log(`${name} connection closed successfully`);
+                        
+                        // Small delay to ensure full disconnection
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                    } catch (error) {
+                        consolelog.error(`Error closing ${name} connection:`, error);
+                    }
+                }
             }
-    
-            // Close the server
-            if (this.server) {
-                await new Promise((resolve) => {
-                    this.server.close(resolve);
-                });
-            }
-    
-              
+
             consolelog.log('All connections closed successfully');
             consolelog.log('Graceful shutdown completed');
-    
+
             // Ensure all logs are written before cleanup
             await new Promise(resolve => setTimeout(resolve, 500));
-    
+
             // Cleanup logger as the final step
             if (consolelog.cleanup) {
                 await consolelog.cleanup();
             }
-    
+
             // Small delay to ensure logger cleanup is complete
             await new Promise(resolve => setTimeout(resolve, 100));
             

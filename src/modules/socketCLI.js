@@ -26,6 +26,13 @@ class SocketCLI {
         this.server = options.server;
         this.app = options.server.app;
         this.redisClient = options.redisClient;
+        // Create a separate Redis client for commands (not in subscriber mode)
+        this.redisCommandClient = null;
+        if (options.redisClient) {
+            const { createRedisClient } = require('./redisClient');
+            // Create a new Redis client with the same connection settings
+            this.redisCommandClient = createRedisClient();
+        }
         this.JWT_SECRET = options.jwtSecret || process.env.JWT_SECRET || 'IhaveaVeryStrongSecret';
         this.JWT_EXPIRY = options.jwtExpiry || process.env.JWT_EXPIRY || '1h';
         this.ruleEngine = options.ruleEngine;
@@ -38,7 +45,8 @@ class SocketCLI {
         this.packageJson = options.packageJson;
         this.initializeRules = options.initializeRules;
         this.socketServer = null;
-        
+        this.globalContext = options.globalContext || global.globalContext || this.server.globalContext;
+
         // Access these from server instance
         this.apiConfig = this.server.apiConfig;
         this.categorizedConfig = this.server.categorizedConfig;
@@ -63,9 +71,15 @@ class SocketCLI {
                     switch (command) {
                         case "unlock":
                             if (args.length === 1) {
+                                // Use the dedicated command client instead of the subscriber client
+                                if (!this.redisCommandClient) {
+                                    socket.write("Redis command client not available. Creating one now.\n");
+                                    const { createRedisClient } = require('./redisClient');
+                                    this.redisCommandClient = createRedisClient();
+                                }
                                 const fileName = args[0];
                                 const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.del(lockKey);
+                                await this.redisCommandClient.del(lockKey);
                                 socket.write(`Lock removed for ${fileName}\n`);
                             } else {
                                 socket.write("Usage: unlock <fileName>\n");
@@ -74,9 +88,15 @@ class SocketCLI {
 
                         case "permalock":
                             if (args.length === 2) {
+                                // Use the dedicated command client instead of the subscriber client
+                                if (!this.redisCommandClient) {
+                                    socket.write("Redis command client not available. Creating one now.\n");
+                                    const { createRedisClient } = require('./redisClient');
+                                    this.redisCommandClient = createRedisClient();
+                                }
                                 const [fileName, userId] = args;
                                 const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.set(lockKey, userId);
+                                await this.redisCommandClient.set(lockKey, userId);
                                 socket.write(`Permanent lock set on ${fileName} by user ${userId}\n`);
                             } else {
                                 socket.write("Usage: permalock <fileName> <userId>\n");
@@ -84,26 +104,34 @@ class SocketCLI {
                             break;
                         case "listlocks":
                             try {
-                                const keys = await this.redisClient.keys("config-lock:*");
-                        
+                                // Use the dedicated command client instead of the subscriber client
+                                if (!this.redisCommandClient) {
+                                    socket.write("Redis command client not available. Creating one now.\n");
+                                    const { createRedisClient } = require('./redisClient');
+                                    this.redisCommandClient = createRedisClient();
+                                }
+
+                                const keys = await this.redisCommandClient.keys("config-lock:*");
+
                                 if (keys.length === 0) {
                                     socket.write("No locked config files found.\n");
                                     break;
                                 }
-                        
+
                                 const results = [];
                                 for (const key of keys) {
-                                    const userId = await this.redisClient.get(key);
-                                    const ttl = await this.redisClient.ttl(key);
+                                    const userId = await this.redisCommandClient.get(key);
+                                    const ttl = await this.redisCommandClient.ttl(key);
                                     const fileName = key.replace("config-lock:", "");
                                     const expiresIn = ttl === -1 ? 'permanent' : `${ttl}s`;
-                        
+
                                     results.push(`${fileName} → userId: ${userId}, expires in: ${expiresIn}`);
                                 }
-                        
+
                                 socket.write(`Locked Config Files:\n${results.join("\n")}\n`);
                             } catch (err) {
                                 socket.write(`Error listing locks: ${err.message}\n`);
+                                console.error("Error in listlocks command:", err);
                             }
                             break;                            
                         case "version":
@@ -112,9 +140,21 @@ class SocketCLI {
                             break;
                         case "requestLog":
                             const requestId = args[0];
-                            // Look up complete log
-                            const log = await this.requestLogger.getRequestLog(requestId);
-                            socket.write(JSON.stringify(log));
+                            if (!requestId) {
+                                socket.write("Usage: requestLog <requestId>\n");
+                                break;
+                            }
+                            try {
+                                // Look up complete log
+                                const log = await this.requestLogger.getRequestLog(requestId);
+                                if (log) {
+                                    socket.write(JSON.stringify(log, null, 2));
+                                } else {
+                                    socket.write(`No log found with request ID: ${requestId}\n`);
+                                }
+                            } catch (error) {
+                                socket.write(`Failed to retrieve request log: ${error.message}\n`);
+                            }
                             break;
                         case "shutdown":
                             console.log("Shutting down server...");
@@ -191,75 +231,199 @@ class SocketCLI {
                                 }  
                             }
                             break;
-                        case "configReload":
-                            try {                               
-                                console.log('Reloading configuration...');
-                                this.clearRedisCache();
-                                this.initializeRules(this.app);
-                                this.server.apiConfig = await this.loadConfig();
-                                console.log(this.server.apiConfig);
-                                this.server.categorizedConfig = this.server.categorizeApiConfig(this.server.apiConfig);  
-                                this.updateValidationRules();
-                                
-                                // Create new RuleEngineMiddleware instance with reloaded ruleEngine
-                                const ruleEngineMiddleware = new this.server.RuleEngineMiddleware(this.ruleEngine, this.server.dependencyManager);
-                                this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
-                        
-                                // CLEAR ALL ROUTES
-                                this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
-                                
-                                // RE-REGISTER ROUTES
-                                this.server.registerRoutes(this.app, this.server.categorizedConfig.databaseRoutes);
-                                this.server.registerProxyEndpoints(this.app, this.server.categorizedConfig.proxyRoutes);
-                                this.server.categorizedConfig.dynamicRoutes.forEach((route) => 
-                                    this.server.DynamicRouteHandler.registerDynamicRoute(this.app, route));
-                                this.server.categorizedConfig.fileUploadRoutes.forEach((route) => 
-                                    this.server.registerFileUploadEndpoint(this.app, route));
-                                this.server.categorizedConfig.staticRoutes.forEach((route) => 
-                                    this.server.registerStaticRoute(this.app, route));
-                                
-                                if (process.env.PLUGIN_MANAGER === 'network') {
-                                    const removeRuleEngine = (key, value) => {
-                                        if (key === 'ruleEngine') {
-                                            return undefined;
-                                        }
-                                        return value;
-                                    };
+                            case "configReload":
+                                try {
+                                    console.log('Reloading configuration...');
+                                    this.clearRedisCache();
+                                    this.initializeRules(this.app);
                                     
-                                    const safeGlobalContext = JSON.parse(JSON.stringify(global.globalContext, removeRuleEngine));
-                        
-                                    // Only broadcast if this is NOT a self-originating request
-                                    if (!process.env.SERVER_ID || process.env.SERVER_ID !== this.server.serverId) {
-                                        await this.server.broadcastConfigUpdate(this.server.apiConfig, this.server.categorizedConfig, safeGlobalContext);
-                                    }
-                        
-                                    this.server.subscribeToConfigUpdates((updatedConfig, sourceServerId) => {
-                                        if (sourceServerId === process.env.SERVER_ID) {
-                                            console.log(`Ignoring config update from self (Server ID: ${sourceServerId})`);
+                                    // Debug information
+                                    console.log(`Current directory: ${__dirname}`);
+                                    console.log('Attempting to load apiConfig from the same directory as socketCLI.js');
+                                    
+                                    try {
+                                        // First, let's check if the module exists
+                                        const fs = require('fs');
+                                        if (!fs.existsSync(`${__dirname}/apiConfig.js`)) {
+                                            console.error(`File not found: ${__dirname}/apiConfig.js`);
+                                            socket.write(`Error: apiConfig.js not found in ${__dirname}\n`);
                                             return;
                                         }
-                                        this.server.apiConfig = updatedConfig.apiConfig;
-                                        this.server.categorizedConfig = updatedConfig.categorizedConfig;
-                                        global.globalContext.resources = updatedConfig.globalContext.resources || {};
-                                        global.globalContext.actions = updatedConfig.globalContext.actions || {};
-                                        if (updatedConfig.globalContext.dslText) {
-                                            global.globalContext.dslText = updatedConfig.globalContext.dslText;
-                                            const newRuleEngine = this.server.RuleEngine.fromDSL(updatedConfig.globalContext.dslText, global.globalContext);
-                                            if (newRuleEngine) {
-                                                global.globalContext.ruleEngine = newRuleEngine;
-                                                this.app.locals.ruleEngineMiddleware = new this.server.RuleEngineMiddleware(newRuleEngine);
-                                            }
+                                        
+                                        console.log(`apiConfig.js exists at ${__dirname}/apiConfig.js`);
+                                        
+                                        // Now try to require the module with detailed error trapping
+                                        let apiConfigModule;
+                                        try {
+                                            apiConfigModule = require('./apiConfig');
+                                            console.log('apiConfig module loaded successfully');
+                                            console.log('Available methods:', Object.keys(apiConfigModule));
+                                        } catch (importError) {
+                                            console.error(`Error importing apiConfig module: ${importError.message}`);
+                                            socket.write(`Error importing apiConfig module: ${importError.message}\n`);
+                                            return;
                                         }
-                                        console.log('Configuration updated from cluster.');
-                                    });
-                                }                                                              
-                                console.log("API config reloaded successfully.");
-                                socket.write("API config reloaded successfully.");
-                            } catch (error) {
-                                console.error(`Error reloading API config: ${error.message}`);
-                                socket.write(`Error reloading API config: ${error.message}`);
-                            }
-                            break;
+                                        
+                                        // Check if the module has the required functions
+                                        if (!apiConfigModule || !apiConfigModule.loadConfig) {
+                                            console.error('apiConfig module is missing loadConfig function');
+                                            socket.write('Error: apiConfig module is missing loadConfig function\n');
+                                            return;
+                                        }
+                                        
+                                        if (!apiConfigModule.categorizeApiConfig) {
+                                            console.error('apiConfig module is missing categorizeApiConfig function');
+                                            socket.write('Error: apiConfig module is missing categorizeApiConfig function\n');
+                                            return;
+                                        }
+                                        
+                                        // Load the new configuration with detailed error handling
+                                        let newConfig;
+                                        try {
+                                            console.log('Calling loadConfig()...');
+                                            newConfig = await apiConfigModule.loadConfig();
+                                            console.log('loadConfig() completed');
+                                        } catch (loadError) {
+                                            console.error(`Error in loadConfig: ${loadError.message}`);
+                                            socket.write(`Error in loadConfig: ${loadError.message}\n`);
+                                            return;
+                                        }
+                                        
+                                        // Check if loadConfig returned a valid value
+                                        if (newConfig === undefined) {
+                                            console.error('loadConfig() returned undefined');
+                                            socket.write('Error: loadConfig() returned undefined\n');
+                                            return;
+                                        }
+                                        
+                                        if (newConfig === null) {
+                                            console.error('loadConfig() returned null');
+                                            socket.write('Error: loadConfig() returned null\n');
+                                            return;
+                                        }
+                                        
+                                        // Try to stringify the config to check if it's valid JSON
+                                        try {
+                                            JSON.stringify(newConfig);
+                                            console.log('Configuration is valid JSON');
+                                        } catch (jsonError) {
+                                            console.error(`Configuration is not valid JSON: ${jsonError.message}`);
+                                            console.error('Config type:', typeof newConfig);
+                                            console.error('Config preview:', newConfig && typeof newConfig === 'object' ? Object.keys(newConfig) : newConfig);
+                                            socket.write(`Error: Configuration is not valid JSON: ${jsonError.message}\n`);
+                                            return;
+                                        }
+                                        
+                                        // Update server configuration
+                                        this.server.apiConfig = newConfig;
+                                        console.log('API config assigned to server successfully');
+                                        
+                                        // Categorize the config
+                                        try {
+                                            console.log('Categorizing API config...');
+                                            this.server.categorizedConfig = apiConfigModule.categorizeApiConfig(this.server.apiConfig);
+                                            console.log('API config categorized successfully');
+                                        } catch (categorizeError) {
+                                            console.error(`Error categorizing config: ${categorizeError.message}`);
+                                            socket.write(`Error categorizing config: ${categorizeError.message}\n`);
+                                            return;
+                                        }
+                                        
+                                        // Update validation rules
+                                        try {
+                                            console.log('Updating validation rules...');
+                                            this.updateValidationRules();
+                                            console.log('Validation rules updated successfully');
+                                        } catch (validationError) {
+                                            console.error(`Error updating validation rules: ${validationError.message}`);
+                                            socket.write(`Error updating validation rules: ${validationError.message}\n`);
+                                            // Continue execution, this might not be critical
+                                        }
+
+                                        // Create new RuleEngineMiddleware
+                                        try {
+                                            console.log('Creating new RuleEngineMiddleware...');
+                                            const RuleEngineMiddleware = require('../middleware/RuleEngineMiddleware');
+                                            const ruleEngineMiddleware = new RuleEngineMiddleware(this.ruleEngine, this.server.dependencyManager);
+                                            this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
+                                            console.log('RuleEngineMiddleware created successfully');
+                                        } catch (middlewareError) {
+                                            console.error(`Error creating RuleEngineMiddleware: ${middlewareError.message}`);
+                                            socket.write(`Error creating RuleEngineMiddleware: ${middlewareError.message}\n`);
+                                            // Continue execution, this might not be critical
+                                        }
+                                        
+                                        // CLEAR ALL ROUTES
+                                        console.log('Clearing existing routes...');
+                                        this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
+                                        console.log('Routes cleared successfully');
+                                        
+                                        // RE-REGISTER ROUTES
+                                        console.log('Re-registering routes...');
+                                        
+                                        try {
+                                            if (typeof this.server.registerRoutes === 'function') {
+                                                console.log('Calling registerRoutes()...');
+                                                this.server.registerRoutes();
+                                                console.log('registerRoutes() completed successfully');
+                                            } else {
+                                                console.error('server.registerRoutes is not a function');
+                                                socket.write('Error: server.registerRoutes is not a function\n');
+                                            }
+                                            
+                                            if (typeof this.server.registerProxyEndpoints === 'function') {
+                                                console.log('Calling registerProxyEndpoints()...');
+                                                this.server.registerProxyEndpoints();
+                                                console.log('registerProxyEndpoints() completed successfully');
+                                            } else {
+                                                console.error('server.registerProxyEndpoints is not a function');
+                                                socket.write('Error: server.registerProxyEndpoints is not a function\n');
+                                            }
+                                            
+                                            if (typeof this.server.registerDynamicEndpoints === 'function') {
+                                                console.log('Calling registerDynamicEndpoints()...');
+                                                this.server.registerDynamicEndpoints();
+                                                console.log('registerDynamicEndpoints() completed successfully');
+                                            } else {
+                                                console.error('server.registerDynamicEndpoints is not a function');
+                                                socket.write('Error: server.registerDynamicEndpoints is not a function\n');
+                                            }
+                                            
+                                            if (typeof this.server.registerFileUploadEndpoints === 'function') {
+                                                console.log('Calling registerFileUploadEndpoints()...');
+                                                this.server.registerFileUploadEndpoints();
+                                                console.log('registerFileUploadEndpoints() completed successfully');
+                                            } else {
+                                                console.error('server.registerFileUploadEndpoints is not a function');
+                                                socket.write('Error: server.registerFileUploadEndpoints is not a function\n');
+                                            }
+                                            
+                                            if (typeof this.server.registerStaticEndpoints === 'function') {
+                                                console.log('Calling registerStaticEndpoints()...');
+                                                this.server.registerStaticEndpoints();
+                                                console.log('registerStaticEndpoints() completed successfully');
+                                            } else {
+                                                console.error('server.registerStaticEndpoints is not a function');
+                                                socket.write('Error: server.registerStaticEndpoints is not a function\n');
+                                            }
+                                        } catch (routeError) {
+                                            console.error(`Error registering routes: ${routeError.message}`);
+                                            socket.write(`Error registering routes: ${routeError.message}\n`);
+                                            // Continue, some routes may have been registered
+                                        }
+                                        
+                                        console.log("API config reloaded successfully.");
+                                        socket.write("API config reloaded successfully.\n");
+                                    } catch (configError) {
+                                        console.error(`Error loading API config: ${configError.stack || configError.message}`);
+                                        socket.write(`Error loading API config: ${configError.message}\n`);
+                                        return; // Exit the configReload command early
+                                    }
+                                } catch (error) {
+                                    console.error(`Error reloading API config: ${error.stack || error.message}`);
+                                    socket.write(`Error reloading API config: ${error.message}\n`);
+                                }
+                                break;
                             
                         case "listPlugins":
                             try {
@@ -275,15 +439,71 @@ class SocketCLI {
                                 socket.write(`Error reading plugins folder: ${err.message}\n`);
                             }
                             break;
-                        case "listActions":
-                            // Fetch and display all actions from globalContext.actions
-                            const actions = Object.keys(global.globalContext.actions);
-                            if (actions.length === 0) {
-                                socket.write("No actions available.\n");
-                            } else {
-                                socket.write(`Available actions:\n${actions.join("\n")}\n`);
-                            }
-                            break;
+                            case "listActions":
+                                try {
+                                    // First check if we have a valid globalContext reference
+                                    if (!this.globalContext) {
+                                        socket.write("Error: GlobalContext not found. Trying alternative methods...\n");
+
+                                        // Import context module directly
+                                        try {
+                                            const contextModule = require('./context');
+                                            if (contextModule && contextModule.globalContext) {
+                                                this.globalContext = contextModule.globalContext;
+                                                socket.write("Found globalContext in context module.\n");
+                                            }
+                                        } catch (importError) {
+                                            console.error("Error importing context module:", importError);
+                                        }
+
+                                        // Try to get it directly from global
+                                        if (!this.globalContext && global.globalContext && global.globalContext.actions) {
+                                            this.globalContext = global.globalContext;
+                                            socket.write("Found globalContext in global scope.\n");
+                                        } else if (!this.globalContext && this.server.globalContext && this.server.globalContext.actions) {
+                                            this.globalContext = this.server.globalContext;
+                                            socket.write("Found globalContext in server instance.\n");
+                                        } else if (!this.globalContext && this.getContext && typeof this.getContext === 'function') {
+                                            try {
+                                                const context = this.getContext();
+                                                if (context && context.actions) {
+                                                    this.globalContext = context;
+                                                    socket.write("Found context using getContext() function.\n");
+                                                }
+                                            } catch (ctxError) {
+                                                socket.write(`Error using getContext(): ${ctxError.message}\n`);
+                                            }
+                                        }
+
+                                        // If we still don't have it, create a minimal context
+                                        if (!this.globalContext) {
+                                            console.log("Creating minimal globalContext for actions");
+                                            this.globalContext = {
+                                                resources: {},
+                                                actions: {}
+                                            };
+                                            socket.write("Created minimal globalContext.\n");
+                                        }
+                                    }
+
+                                    // Now check if we have actions
+                                    if (!this.globalContext.actions) {
+                                        this.globalContext.actions = {};
+                                        socket.write("No actions property found. Created empty actions object.\n");
+                                    }
+
+                                    // List the actions
+                                    const actions = Object.keys(this.globalContext.actions);
+                                    if (actions.length === 0) {
+                                        socket.write("No actions available. The actions object is empty.\n");
+                                    } else {
+                                        socket.write(`Available actions (${actions.length}):\n${actions.join("\n")}\n`);
+                                    }
+                                } catch (error) {
+                                    socket.write(`Error in listActions: ${error.message}\n`);
+                                    console.error("Error in listActions:", error);
+                                }
+                                break;
                         case "load":
                             if (args.length) {
                                 const response = await this.pluginManager.loadPlugin(args[0]);
@@ -496,6 +716,17 @@ class SocketCLI {
      */
     async stop() {
         return new Promise((resolve) => {
+            // Clean up Redis command client if it exists
+            if (this.redisCommandClient) {
+                try {
+                    this.redisCommandClient.quit().catch(err => {
+                        console.error('Error closing Redis command client:', err);
+                    });
+                } catch (err) {
+                    console.error('Error closing Redis command client:', err);
+                }
+            }
+
             if (this.socketServer) {
                 this.socketServer.close(() => {
                     console.log('Socket CLI server stopped');
