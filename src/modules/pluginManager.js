@@ -82,6 +82,11 @@ class PluginManager {
         }
     
         try {
+            // IF file does not exist log a console warning and return silently 
+            if (!fs.existsSync(pluginPath)) {
+                console.warn(`Plugin file ${pluginPath} does not exist.`);
+                return;
+            }
             // Read and load the plugin
             const pluginCode = fs.readFileSync(pluginPath, 'utf-8');
             

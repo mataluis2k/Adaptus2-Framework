@@ -101,8 +101,8 @@ class EcommerceTracker {
             const userId = eventData.userId || eventData.user_id || uuidv4();
 
             // Check if event has a name/type - required field
-            if (!eventData.name && !eventData.event_type && !eventData.eventType) {
-                throw new Error("Event type is required (name, event_type, or eventType must be provided)");
+            if (!eventData.name ) {
+                throw new Error("Event type is required in the form of name",eventData);
             }
 
             // 2. Store the main event - we don't need session tracking in this version
@@ -253,12 +253,13 @@ class EcommerceTracker {
      * @private
      */
     async _storeEvent(dbConfig, data) {
+        // Because we using eventLogger for speed we need to generate the eventId
+        // and then pass it to the eventLogger
+        const eventId = data.eventId || uuidv4();
         const {
           userId,
           sessionId,
           name,
-          event_type,
-          eventType,
           timestamp,
           url: pageUrl,
           data: eventData,
@@ -266,7 +267,8 @@ class EcommerceTracker {
         } = data;
 
         const payload = {
-          event_type: eventType || event_type || name,
+          event_id:   eventId,
+          event_type: name,
           user_id:    userId,
           page_url:   pageUrl,
           user_agent: data.userAgent || null,
@@ -277,7 +279,7 @@ class EcommerceTracker {
 
         // now enqueue `payload` instead of writing directly to the DB
         await eventLogger.log(dbConfig, 'events', payload);
-        return payload;
+        return eventId;
       }
 
     /**
@@ -287,8 +289,12 @@ class EcommerceTracker {
     async _processEventSpecificData(dbConfig, data) {
         const { eventId, name: eventName, data: eventData } = data;
 
+        if(eventName.contains('_click')) {
+            eventName = "click";
+        }
         switch (eventName) {
             case 'pageview':
+            case 'page_view':
                 await this._processPageview(dbConfig, data);
                 break;
 
@@ -545,10 +551,11 @@ class EcommerceTracker {
         app.post('/api/track', eventLimiter, async (req, res) => {
             try {
                 // Validate required fields
-                if (!req.body.name && !req.body.event_type && !req.body.eventType) {
+                if (!req.body.name ) {
+                    console.log(JSON.stringify(req.body));
                     return res.status(400).json({ 
                         success: false, 
-                        error: "Event type is required (name, event_type, or eventType must be provided)" 
+                        error: "Event name is required" 
                     });
                 }
                 
@@ -586,10 +593,10 @@ class EcommerceTracker {
                     res.status(200).json(result);
                 }
                 // Validate required fields
-                if (!req.body.name && !req.body.event_type && !req.body.eventType) {
+                if (!req.body.name ) {
                     return res.status(400).json({ 
                         success: false, 
-                        error: "Event type is required (name, event_type, or eventType must be provided)" 
+                        error: "Event type is required (name be provided)" 
                     });
                 }
                 
@@ -643,7 +650,7 @@ class EcommerceTracker {
         app.post('/api/track/s2s', eventLimiter, async (req, res) => {
             try {
                 // Validate event has a type before transforming
-                if (!req.body.event && !req.body.eventName && !req.body.event_type && !req.body.eventType) {
+                if (!req.body.name ) {
                     return res.status(400).json({ 
                         success: false, 
                         error: "Event type is required in S2S payload" 
@@ -684,7 +691,7 @@ class EcommerceTracker {
         
         const { 
             source, 
-            event, 
+            name, 
             eventName,
             event_type,
             eventType,
@@ -698,7 +705,7 @@ class EcommerceTracker {
         } = payload;
         
         // Use the first available event type field
-        const eventTypeName = event || eventName || event_type || eventType;
+        const eventTypeName = name;
         
         if (!eventTypeName) {
             throw new Error("Event type is required - cannot be null");
