@@ -21,7 +21,7 @@
   
   // Configuration (customize these values)
   const config = {
-    endpoint: 'http://localhost:3000/api/track',
+    endpoint: 'http://localhost:3000/api/track/batch',
     siteId: '100',
     cookieName: '_ecom_visitor',
     cookieExpiry: 365, // days

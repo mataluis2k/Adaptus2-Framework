@@ -4,10 +4,8 @@
 
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
-const mysql = require("mysql2/promise");
-const { getDbConnection } = require("./db");
+const { query } = require("./db"); // Import both getDbConnection and query functions
 const llmModule = require("./llmModule");
-const { handleRAG } = require("./ragHandler1");
 const { preloadCustomerContext } = require("./customerSupportModule.js");
 const MessageRouter = require("./MessageRouter");
 const ResponseStrategy = require("./ResponseStrategy");
@@ -25,21 +23,12 @@ class IntelligentChatModule {
         this.connectedUsers = new Map();
         this.rooms = new Map();
         
-        // Initialize database connection
-        if (!dbConfig) {
-            console.warn('[IntelligentChatModule] Missing dbConfig, using defaults');
-            dbConfig = {
-                host: process.env.DB_HOST || 'localhost',
-                user: process.env.DB_USER || 'root',
-                password: process.env.DB_PASSWORD || '',
-                database: process.env.DB_NAME || 'chat_db',
-                waitForConnections: true,
-                connectionLimit: 10,
-                queueLimit: 0
-            };
-        }
+        // Store database configuration
+        this.dbConfig = dbConfig || {
+            dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+            dbConnection: process.env.DEFAULT_DBCONNECTION || 'MYSQL_1'
+        };
         
-        this.dbPool = mysql.createPool(dbConfig);
         this.app = app;
         
         // Initialize response components
@@ -181,11 +170,15 @@ class IntelligentChatModule {
         }
         
         try {
-            const config = { dbType: process.env.STREAMING_DBTYPE || "mysql", dbConnection: process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1" };
-            const connection = await getDbConnection(config);
+            const config = { 
+                dbType: process.env.STREAMING_DBTYPE || "mysql", 
+                dbConnection: process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1" 
+            };
+            
+            // Use query function from db.js instead of direct connection
             const sql = `INSERT INTO messages (sender_id, recipient_id, group_name, message, status, timestamp) VALUES (?, ?, ?, ?, ?, NOW())`;
-            const result = await connection.execute(sql, [senderId, recipientId, groupName, message, status]);
-            console.log(`AI response saved successfully: ${JSON.stringify(result[0])}`);
+            const result = await query(config, sql, [senderId, recipientId, groupName, message, status]);
+            console.log(`AI response saved successfully: ${JSON.stringify(result)}`);
         } catch (error) {
             console.error("[ChatModule] Error saving message:", error.message);
         }
@@ -838,9 +831,14 @@ class IntelligentChatModule {
                             return;
                         }
                         
-                        const connection = await this.dbPool.getConnection();
-                        await connection.execute("UPDATE messages SET status = ? WHERE id = ?", ["read", messageId]);
-                        connection.release();
+                        // Update message status using db.js query function
+                        const config = { 
+                            dbType: process.env.STREAMING_DBTYPE || "mysql", 
+                            dbConnection: process.env.DBSTREAMING_DBCONNECTION || "MYSQL_1" 
+                        };
+                        
+                        await query(config, "UPDATE messages SET status = ? WHERE id = ?", ["read", messageId]);
+                        console.log(`[IntelligentChatModule] Message ${messageId} marked as read`);
                     } catch (error) {
                         console.error("[ChatModule] messageReceived error:", error.message);
                         socket.emit("error", "Failed to update message status");

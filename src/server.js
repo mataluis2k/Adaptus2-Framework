@@ -94,10 +94,16 @@ const FirebaseService = require('./services/firebaseService'); // Firebase Servi
 const CMSManager = require('./modules/cmsManager'); // CMS Module
 
 // Changes to enable clustering and plugin management
-const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local'; 
+const PLUGIN_MANAGER = process.env.PLUGIN_MANAGER || 'local';
 const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
 const PLUGIN_UPDATE_CHANNEL = `${CLUSTER_NAME}:plugins:update`;
 const PLUGIN_FILE_PREFIX = `${CLUSTER_NAME}:plugin:file:`;
+
+// Import the context module
+const contextModule = require('./modules/context');
+
+// Ensure the globalContext is available globally
+global.globalContext = contextModule.globalContext;
 const PLUGIN_EVENT_CHANNEL = `${process.env.CLUSTER_NAME || 'default'}:plugin:events`;
 const PLUGIN_CODE_KEY = `${process.env.CLUSTER_NAME || 'default'}:plugin:code:`;   
 // Plugn manager for cluster end here
@@ -115,6 +121,13 @@ const Handlebars = require('handlebars');
 const bcrypt = require("bcryptjs");
 const response = require('./modules/response'); // Import the shared response object
 const defaultUnauthorized = { httpCode: 403, message: 'Access Denied', code: null };
+
+// New socket server
+const SocketCLI = require('./modules/socketCLI');
+
+// New plugin Manager and Dependency Manager
+const DependencyManager = require('./modules/dependencyManager');
+const { PluginManager, autoloadPlugins } = require('./modules/pluginManager');
 
 const SECRET_SALT = process.env.SECRET_SALT || ''; 
 
@@ -418,30 +431,6 @@ function findArrayWithKeys(data, requiredKeys) {
     return null;
 }
 
-// Plugin broadcaster for cluster
-async function loadAndBroadcastPluginNetwork(pluginName, pluginPath, pluginConfig) {
-    console.log(`Using network plugin manager to load and broadcast plugin: ${pluginName} in cluster: ${CLUSTER_NAME}`);
-    try {
-        const fs = require('fs');
-        const { promisify } = require('util');
-        const readFile = promisify(fs.readFile);
-
-        const pluginCode = await readFile(pluginPath, 'utf-8');
-
-        // Store plugin code and config in Redis with cluster isolation
-        await redis.hset(`${PLUGIN_FILE_PREFIX}${pluginName}`, {
-            code: Buffer.from(pluginCode).toString('base64'), // Encode the plugin code
-            config: JSON.stringify(pluginConfig),
-        });
-
-        // Publish an update message to the cluster-specific Redis Pub/Sub channel
-        await redis.publish(PLUGIN_UPDATE_CHANNEL, JSON.stringify({ name: pluginName }));
-
-        console.log(`Plugin "${pluginName}" broadcasted successfully in cluster "${CLUSTER_NAME}".`);
-    } catch (err) {
-        console.error(`Error broadcasting plugin "${pluginName}" in cluster "${CLUSTER_NAME}":`, err);
-    }
-}
 
 function registerProxyEndpoints(app, apiConfig) {
     apiConfig.forEach((config, index) => {
@@ -584,36 +573,6 @@ function registerProxyEndpoints(app, apiConfig) {
         }
     });
 }
-
-function autoloadPlugins(pluginManager) {
-    const configFilePath = path.join(configDir, 'plugins.json'); // File containing plugins to load
-
-    try {
-        if (!fs.existsSync(configFilePath)) {
-            console.warn(`Plugin configuration file not found at ${configFilePath}. No plugins will be loaded.`);
-            return;
-        }
-
-        const pluginList = JSON.parse(fs.readFileSync(configFilePath, 'utf-8'));
-
-        if (!Array.isArray(pluginList)) {
-            console.error(`Invalid plugin configuration format. Expected an array of plugin names.`);
-            return;
-        }
-
-        pluginList.forEach((pluginName) => {
-            try {
-                pluginManager.loadPlugin(pluginName);
-                console.log(`Plugin ${pluginName} loaded successfully.`);
-            } catch (error) {
-                console.error(`Failed to load plugin ${pluginName}: ${error.message}`);
-            }
-        });
-    } catch (error) {
-        console.error(`Error reading or parsing plugin configuration file: ${error.message}`);
-    }
-}
-
 
 // Dynamic multer storage based on the config
 function getMulterStorage(storagePath) {
@@ -1647,253 +1606,6 @@ function setupRag(apiConfig) {
     });
 }
 
-class PluginManager {
-    constructor(pluginDir, server, dependencyManager) {
-        this.pluginDir = path.resolve(pluginDir);
-        this.server = server;
-        this.plugins = new Map(); // Track plugins by name
-        this.dependencyManager = dependencyManager;
-        
-        this.publisherRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-        this.subscriberRedis = new Redis(process.env.REDIS_URL || 'redis://localhost:6379');
-        if(process.env.PLUGIN_MANAGER === 'network') {
-            this.serverId = process.env.SERVER_ID;
-            if (!this.serverId) {
-                throw new Error('SERVER_ID environment variable is required.');
-            }
-
-            console.log(`Server ID: ${this.serverId}`);
-        }
-        this.subscribeToPluginEvents();
-    }
-
-    loadModule(moduleName) {
-        // Add the server path to the module name        
-        return require(moduleName);
-      }
-      
-    /**
-     * Load a plugin and broadcast it (if in network mode).
-     */
-    async loadPlugin(pluginName, broadcast = true) {
-        
-        if (process.env.PLUGIN_MANAGER === 'network' && process.env.SERVER_ROLE !== 'master') {
-            // In network mode, pull code from Redis if it differs
-            await this.loadPluginFromRedisIfDifferent(pluginName);
-            return;
-        }
-        const pluginPath = path.join(this.pluginDir, `${pluginName}.js`);
-    
-        if (this.plugins.has(pluginName)) {
-            console.warn(`Plugin ${pluginName} is already loaded.`);
-            return;
-        }
-    
-        try {
-            const pluginCode = fs.readFileSync(pluginPath, 'utf-8');
-            const plugin = require(pluginPath);
-    
-            if (!this.validatePlugin(plugin)) {
-                throw new Error(`Plugin ${pluginName} failed validation.`);
-            }
-    
-            const dependencies = this.dependencyManager.getDependencies();
-            if (typeof plugin.initialize === 'function') {
-                plugin.initialize(dependencies);
-            }
-    
-            let registeredRoutes = [];
-            if (typeof plugin.registerRoutes === 'function') {
-                registeredRoutes = plugin.registerRoutes({ app: this.server.app });
-            }
-    
-            const pluginHash = this.getHash(pluginCode);
-    
-            this.plugins.set(pluginName, { instance: plugin, routes: registeredRoutes, hash: pluginHash });
-            console.log(`Plugin ${pluginName} loaded successfully.`);
-    
-            if (process.env.PLUGIN_MANAGER === 'network' && broadcast) {
-                await this.publisherRedis.hset(`${PLUGIN_CODE_KEY}${pluginName}`, {
-                    code: Buffer.from(pluginCode).toString('base64'),
-                });
-    
-                await this.publisherRedis.publish(
-                    PLUGIN_EVENT_CHANNEL,
-                    JSON.stringify({ action: 'load', pluginName, serverId: this.serverId })
-                );
-                console.log(`Broadcasted load event for plugin: ${pluginName}`);
-            }
-    
-            return `Plugin ${pluginName} loaded successfully.`;
-        } catch (error) {
-            console.error(`Failed to load plugin ${pluginName}:`, error.message);
-            delete require.cache[require.resolve(pluginPath)];
-            this.plugins.delete(pluginName);
-            return `Failed to load plugin ${pluginName}: ${error.message}`;
-        }
-    }
-    
-
-    /**
-     * Unload a plugin and broadcast it (if in network mode).
-     */
-    async unloadPlugin(pluginName, broadcast = true) {
-        if (!this.plugins.has(pluginName)) {
-            console.warn(`Plugin ${pluginName} is not loaded.`);
-            return;
-        }
-    
-        const { instance: plugin, routes } = this.plugins.get(pluginName);
-        try {
-            if (plugin.cleanup) {
-                console.log(`Cleaning up ${pluginName}...`);
-                plugin.cleanup();
-            }
-    
-            routes.forEach(({ method, path }) => {
-                const stack = this.server.app._router.stack;
-                for (let i = 0; i < stack.length; i++) {
-                    const layer = stack[i];
-                    if (layer.route && layer.route.path === path && layer.route.methods[method]) {
-                        stack.splice(i, 1);
-                        console.log(`Unregistered route ${method.toUpperCase()} ${path}`);
-                    }
-                }
-            });
-    
-            delete require.cache[require.resolve(path.join(this.pluginDir, `${pluginName}.js`))];
-            this.plugins.delete(pluginName);
-    
-            console.log(`Plugin ${pluginName} unloaded successfully.`);
-    
-            if (process.env.PLUGIN_MANAGER === 'network' && broadcast) {
-                await this.publisherRedis.publish(
-                    PLUGIN_EVENT_CHANNEL,
-                    JSON.stringify({ action: 'unload', pluginName, serverId: this.serverId })
-                );
-                console.log(`Broadcasted unload event for plugin: ${pluginName}`);
-            }
-        } catch (error) {
-            console.error(`Error unloading plugin ${pluginName}:`, error.message);
-        }
-    }
-
-    subscribeToPluginEvents() {
-        if (process.env.PLUGIN_MANAGER !== 'network') {
-            console.log('Plugin manager is in local mode. No subscription to Redis events.');
-            return;
-        }
-    
-        this.subscriberRedis.subscribe(PLUGIN_EVENT_CHANNEL, (err) => {
-            if (err) {
-                console.error(`Failed to subscribe to plugin events: ${err.message}`);
-            } else {
-                console.log(`Subscribed to plugin events on channel ${PLUGIN_EVENT_CHANNEL}.`);
-            }
-        });
-    
-        this.subscriberRedis.on('message', async (channel, message) => {
-            if (channel !== PLUGIN_EVENT_CHANNEL) return;
-        
-            console.log(`Received message on channel: ${channel}`);
-            console.log(`Message content: ${message}`);
-        
-            try {
-                const { action, pluginName, serverId } = JSON.parse(message);
-        
-                // Ignore messages originating from the current server
-                if (serverId === this.serverId) {
-                    console.log(`Ignoring message from self (Server ID: ${serverId}).`);
-                    return;
-                }
-        
-                if (action === 'load') {
-                    console.log(`Processing load event for plugin: ${pluginName}`);
-                    await this.loadPlugin(pluginName, false); // Do not rebroadcast
-                } else if (action === 'unload') {
-                    console.log(`Processing unload event for plugin: ${pluginName}`);
-                    await this.unloadPlugin(pluginName, false); // Do not rebroadcast
-                } else {
-                    console.warn(`Unknown action: ${action}`);
-                }
-            } catch (error) {
-                console.error(`Failed to process message: ${error.message}`);
-            }
-        });
-    }
-    
-
-    async loadPluginFromRedisIfDifferent(pluginName) {
-        try {
-            const pluginData = await this.publisherRedis.hgetall(`${PLUGIN_CODE_KEY}${pluginName}`);
-            if (!pluginData.code) {
-                throw new Error(`No code found for plugin ${pluginName} in Redis.`);
-            }
-
-            const pluginCode = Buffer.from(pluginData.code, 'base64').toString('utf-8');
-            const pluginHash = this.getHash(pluginCode);
-
-            if (this.plugins.has(pluginName)) {
-                const currentPluginHash = this.plugins.get(pluginName).hash;
-                if (currentPluginHash === pluginHash) {
-                    console.log(`Plugin ${pluginName} is already loaded with the same code. Skipping load.`);
-                    return;
-                } else {
-                    console.log(`Plugin ${pluginName} code has changed. Reloading.`);
-                    this.unloadPlugin(pluginName);
-                }
-            }
-
-            const tempPath = path.join(this.pluginDir, `${pluginName}.js`);
-            fs.writeFileSync(tempPath, pluginCode, 'utf-8');
-
-            await this.loadPlugin(pluginName);
-
-            this.plugins.get(pluginName).hash = pluginHash;
-        } catch (error) {
-            console.error(`Failed to load plugin ${pluginName} from Redis:`, error.message);
-        }
-    }
-
-    validatePlugin(plugin) {
-        const requiredMethods = ['initialize'];
-        return requiredMethods.every((method) => typeof plugin[method] === 'function');
-    }
-
-    getHash(code) {
-        return crypto.createHash('sha256').update(code, 'utf8').digest('hex');
-    }
-
-    close() {
-        this.publisherRedis.disconnect();
-        this.subscriberRedis.disconnect();
-    }
-}
-
-class DependencyManager {
-    constructor() {
-        this.dependencies = {};
-        this.context = globalContext; 
-    }
-
-    loadModule(moduleName) {
-        // Maybe do some logic to point to your server’s node_modules
-        return require(moduleName);
-    }
-
-    addDependency(name, instance) {
-        this.dependencies[name] = instance;
-    }
-
-    getDependencies() {
-        return { ...this.dependencies, context: this.context , customRequire: this.loadModule, process: process };
-    }
-
-    extendContext(key, value) {
-        this.context[key] = value;
-    }
-}
-
 function removeRuleEngine(key, value) {
     if (key === 'ruleEngine') {
       return undefined;
@@ -2004,416 +1716,6 @@ class Adaptus2Server {
   }
       
 
-    setupSocketServer(host) {
-        this.socketServer = net.createServer((socket) => {
-            console.log("CLI client connected.");
-
-            socket.on("data", async (data) => {
-                const input = data.toString().trim();
-                const [command, ...args] = input.split(" ");
-
-                try {
-                    switch (command) {
-                        case "unlock":
-                            if (args.length === 1) {
-                                const fileName = args[0];
-                                const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.del(lockKey);
-                                socket.write(`Lock removed for ${fileName}\n`);
-                            } else {
-                                socket.write("Usage: unlock <fileName>\n");
-                            }
-                            break;
-
-                        case "permalock":
-                            if (args.length === 2) {
-                                const [fileName, userId] = args;
-                                const lockKey = `config-lock:${fileName}`;
-                                await this.redisClient.set(lockKey, userId);
-                                socket.write(`Permanent lock set on ${fileName} by user ${userId}\n`);
-                            } else {
-                                socket.write("Usage: permalock <fileName> <userId>\n");
-                            }
-                            break;
-                        case "listlocks":
-                                try {
-                                    const keys = await this.redisClient.keys("config-lock:*");
-                            
-                                    if (keys.length === 0) {
-                                        socket.write("No locked config files found.\n");
-                                        break;
-                                    }
-                            
-                                    const results = [];
-                                    for (const key of keys) {
-                                        const userId = await this.redisClient.get(key);
-                                        const ttl = await this.redisClient.ttl(key);
-                                        const fileName = key.replace("config-lock:", "");
-                                        const expiresIn = ttl === -1 ? 'permanent' : `${ttl}s`;
-                            
-                                        results.push(`${fileName} → userId: ${userId}, expires in: ${expiresIn}`);
-                                    }
-                            
-                                    socket.write(`Locked Config Files:\n${results.join("\n")}\n`);
-                                } catch (err) {
-                                    socket.write(`Error listing locks: ${err.message}\n`);
-                                }
-                                break;                            
-                        case "version":
-                            console.log(`Adaptus2-Framework Version: ${packageJson.version}`);
-                            socket.write(`Adaptus2-Framework Version: ${packageJson.version}\n`);
-                            break;
-                        case "requestLog":
-                            const requestId = args[0];
-                            // Look up complete log
-                            const log = await requestLogger.getRequestLog(requestId);
-                            socket.write(JSON.stringify(log));
-                            break;
-                        case "shutdown":
-                            console.log("Shutting down server...");
-                            socket.write(command);
-                            await this.shutdown();                            
-                            break;
-                        case "userGenToken":
-                            if (args.length < 2) {
-                                socket.write("Usage: userGenToken <username> <acl>\n");
-                            } else {
-                                const [username, acl] = args;
-                                try {
-                                    // Generate the JWT
-                                    const payload = { username, acl };
-                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    
-                                    socket.write(`Generated user token:\n${token}\n`);
-                                } catch (error) {
-                                    console.error("Error generating user token:", error.message);
-                                    socket.write(`Error generating user token: ${error.message}\n`);
-                                }
-                            }
-                            break;
-    
-                        case "appGenToken":
-                            if (args.length < 2) {
-                                socket.write("Usage: appGenToken <table> <acl>\n");
-                            } else {
-                                const [table, acl] = args;
-                                try {
-                                    // Generate the JWT
-                                    const payload = { table, acl, username: table };
-                                    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRY });
-    
-                                    socket.write(`Generated app token:\n${token}\n`);
-                                } catch (error) {
-                                    console.error("Error generating app token:", error.message);
-                                    socket.write(`Error generating app token: ${error.message}\n`);
-                                }
-                            }
-                            break;  
-                        case "showConfig":
-                            socket.write(JSON.stringify(this.apiConfig, null, 2));
-                            break;   
-                        case "showRules":
-                            if (ruleEngine) {
-                                socket.write(JSON.stringify(ruleEngine.getRules(), null, 2));
-                            } else {
-                                socket.write("No rules currently loaded.\n");
-                            }
-                            break;
-                        case "nodeInfo":
-                            if (args.length < 2) {
-                                socket.write("Usage: nodeInfo <route|table> <routeType>\n");
-                            } else {
-                                let configObject;
-                                console.log(args[0], args[1]);
-                                // need to show based on object name
-                                if (args[1] === 'def') {
-                                configObject = this.apiConfig.find(item => 
-                                    item.routeType === args[1] &&
-                                    item.dbTable === args[0]
-                                  );                   
-                                } else {
-                                configObject = this.apiConfig.find(item => 
-                                    item.route === args[0] &&
-                                    item.routeType === args[1]
-                                  );
-                                }            
-                                if (configObject) {
-                                    socket.write(JSON.stringify(configObject, null, 2));
-                                } else {
-                                    socket.write(`Config object ${args[0]} not found.\n`);
-                                }  
-                            }
-                            break;
-                            case "configReload":
-                                try {                               
-                                    consolelog.log('Reloading configuration...');
-                                    clearRedisCache();
-                                    initializeRules(this.app);
-                                    this.apiConfig = await loadConfig();
-                                    consolelog.log(this.apiConfig);
-                                    this.categorizedConfig = categorizeApiConfig(this.apiConfig);  
-                                    updateValidationRules();
-                                    
-                                    // Create new RuleEngineMiddleware instance with reloaded ruleEngine
-                                    const ruleEngineMiddleware = new RuleEngineMiddleware(ruleEngine, this.dependencyManager);
-                                    this.app.locals.ruleEngineMiddleware = ruleEngineMiddleware;
-                            
-                                    // CLEAR ALL ROUTES
-                                    this.app._router.stack = this.app._router.stack.filter((layer) => !layer.route);
-                                    
-                                    // RE-REGISTER ROUTES
-                                    registerRoutes(this.app, this.categorizedConfig.databaseRoutes);
-                                    registerProxyEndpoints(this.app, this.categorizedConfig.proxyRoutes);
-                                    this.categorizedConfig.dynamicRoutes.forEach((route) => DynamicRouteHandler.registerDynamicRoute(this.app, route));
-                                    this.categorizedConfig.fileUploadRoutes.forEach((route) => registerFileUploadEndpoint(this.app, route));
-                                    this.categorizedConfig.staticRoutes.forEach((route) => registerStaticRoute(this.app, route));
-                                    
-                            
-                                    if (PLUGIN_MANAGER === 'network') {
-                                        const safeGlobalContext = JSON.parse(JSON.stringify(globalContext, removeRuleEngine));
-                            
-                                        // Only broadcast if this is NOT a self-originating request
-                                        if (!process.env.SERVER_ID || process.env.SERVER_ID !== this.serverId) {
-                                            await broadcastConfigUpdate(this.apiConfig, this.categorizedConfig, safeGlobalContext);
-                                        }
-                            
-                                        subscribeToConfigUpdates((updatedConfig, sourceServerId) => {
-                                            if (sourceServerId === process.env.SERVER_ID) {
-                                                consolelog.log(`Ignoring config update from self (Server ID: ${sourceServerId})`);
-                                                return;
-                                            }
-                                            this.apiConfig = updatedConfig.apiConfig;
-                                            this.categorizedConfig = updatedConfig.categorizedConfig;
-                                            globalContext.resources = updatedConfig.globalContext.resources || {};
-                                            globalContext.actions = updatedConfig.globalContext.actions || {};
-                                            if (updatedConfig.globalContext.dslText) {
-                                                globalContext.dslText = updatedConfig.globalContext.dslText;
-                                                const newRuleEngine = RuleEngine.fromDSL(updatedConfig.globalContext.dslText, globalContext);
-                                                if (newRuleEngine) {
-                                                    globalContext.ruleEngine = newRuleEngine;
-                                                    app.locals.ruleEngineMiddleware = new RuleEngineMiddleware(newRuleEngine);
-                                                }
-                                            }
-                                            console.log('Configuration updated from cluster.');
-                                        });
-                                    }                                                              
-                                    consolelog.log("API config reloaded successfully.");
-                                    socket.write("API config reloaded successfully.");
-                                } catch (error) {
-                                    consolelog.error(`Error reloading API config: ${error.message}`);
-                                    socket.write(`Error reloading API config: ${error.message}`);
-                                }
-                                break;
-                            
-                        case "listPlugins":
-                            try {
-                                const plugins = fs.readdirSync(this.pluginDir)
-                                    .filter(file => file.endsWith('.js')) // Only include JavaScript files
-                                    .map(file => path.basename(file, '.js')); // Remove file extension
-                                if (plugins.length === 0) {
-                                    socket.write("No plugins found in the plugins folder.\n");
-                                } else {
-                                    socket.write(`Available plugins:\n${plugins.join("\n")}\n`);
-                                }
-                            } catch (err) {
-                                socket.write(`Error reading plugins folder: ${err.message}\n`);
-                            }
-                            break;
-                        case "listActions":
-                            // Fetch and display all actions from globalContext.actions
-                            const actions = Object.keys(globalContext.actions);
-                            if (actions.length === 0) {
-                                socket.write("No actions available.\n");
-                            } else {
-                                socket.write(`Available actions:\n${actions.join("\n")}\n`);
-                            }
-                            break;
-                        case "load":
-                            if (args.length) {
-                                const response = await this.pluginManager.loadPlugin(args[0]);
-                                socket.write(`We got: ${response}\n`);
-                            } else {
-                                socket.write("Usage: load <pluginName>\n");
-                            }
-                            break;
-                        case "unload":
-                            if (args.length) {
-                                this.pluginManager.unloadPlugin(args[0]);
-                                socket.write(`Plugin ${args[0]} unloaded successfully.\n`);
-                            } else {
-                                socket.write("Usage: unload <pluginName>\n");
-                            }
-                            break;
-                        case "reload":
-                            if (args.length) {
-                                this.pluginManager.unloadPlugin(args[0]);
-                                this.pluginManager.loadPlugin(args[0]);
-                                socket.write(`Plugin ${args[0]} reloaded successfully.\n`);
-                            } else {
-                                socket.write("Usage: reload <pluginName>\n");
-                            }
-                            break;
-                        case "reloadall":
-                            this.pluginManager.plugins.forEach((_, pluginName) => {
-                                this.pluginManager.unloadPlugin(pluginName);
-                                this.pluginManager.loadPlugin(pluginName);
-                            });
-                            socket.write("All plugins reloaded successfully.\n");
-                            break;
-                        case "list":
-                            const plugins = Array.from(this.pluginManager.plugins.keys());
-                            socket.write(`Loaded plugins: ${plugins.join(", ")}\n`);
-                            break;
-                        case "routes":
-                            const routes = this.getRoutes(this.app);
-                            socket.write(`Registered routes: ${JSON.stringify(routes, null, 2)}\n`);
-                            break;
-                        case "exit":
-                            socket.write("Goodbye!\n");
-                            socket.end();
-                            break;
-                        case "validate-config":
-                            try {
-                                if (!this.devTools) {
-                                    this.devTools = new DevTools();
-                                }
-                                const schema = {
-                                    type: "array",
-                                    items: {
-                                        type: "object",
-                                        required: ["routeType"],
-                                        allOf: [
-                                            {
-                                                if: {
-                                                    properties: { routeType: { const: "def" } }
-                                                },
-                                                then: {
-                                                    required: []
-                                                }
-                                            },
-                                            {
-                                                if: {
-                                                    properties: { routeType: { not: { const: "def" } } }
-                                                },
-                                                then: {
-                                                    required: ["route"]
-                                                }
-                                            }
-                                        ],
-                                        properties: {
-                                            routeType: {
-                                                type: "string",
-                                                enum: ["dynamic", "static", "database", "proxy", "def", "fileUpload"]
-                                            },
-                                            dbType: {
-                                                type: "string",
-                                                enum: ["mysql"]
-                                            },
-                                            dbConnection: {
-                                                type: "string"
-                                            },
-                                            route: {
-                                                type: "string",
-                                                pattern: "^/"
-                                            },
-                                            auth: {
-                                                type: "string"
-                                            },
-                                            acl: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            allowMethods: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string",
-                                                    enum: ["GET", "POST", "PUT", "DELETE", "PATCH"]
-                                                }
-                                            },
-                                            allowRead: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            allowWrite: {
-                                                type: "array",
-                                                items: {
-                                                    type: "string"
-                                                }
-                                            },
-                                            columnDefinitions: {
-                                                type: "object",
-                                                additionalProperties: {
-                                                    type: "string"
-                                                }
-                                            }
-                                        }
-                                    }
-                                };
-
-                                const configPath = path.join(process.cwd(), 'config', 'apiConfig.json');
-                                const result = await this.devTools.validateConfig(configPath, schema);
-                                
-                                // Filter and format the results to only show objects with errors
-                                if (!result.valid && result.errors) {
-                                    const errorsByObject = {};
-                                    
-                                    result.errors.forEach(error => {
-                                        // Handle both array indices and property paths
-                                        const matches = error.instancePath.match(/\/(\d+)/);
-                                        if (matches) {
-                                            const index = matches[1];
-                                            if (!errorsByObject[index]) {
-                                                errorsByObject[index] = {
-                                                    object: result.config[index],
-                                                    errors: []
-                                                };
-                                            }
-                                            // Format the error message to be more descriptive
-                                            const property = error.instancePath.split('/').slice(2).join('/') || 'object';
-                                            const message = `${property}: ${error.message}`;
-                                            errorsByObject[index].errors.push(message);
-                                        }
-                                    });
-
-                                    const formattedResult = Object.entries(errorsByObject).map(([index, data]) => ({
-                                        index: parseInt(index),
-                                        object: data.object,
-                                        errors: data.errors
-                                    }));
-
-                                    socket.write(JSON.stringify(formattedResult, null, 2) + '\n');
-                                } else {
-                                    socket.write("Configuration is valid. No errors found.\n");
-                                }
-                            } catch (error) {
-                                socket.write(`Error validating config: ${error.message}\n`);
-                            }
-                            break;
-
-                        case "help":                   
-                        default:
-                            socket.write("Available commands: version, showRules, nodeInfo, showConfig, userGenToken, appGenToken, load, unload, reload, reloadall, list, routes, configReload, listActions, validate-config, requestLog, exit.\n");               
-                    }
-                } catch (error) {
-                    socket.write(`Error: ${error.message}\n`);
-                }
-            });
-
-            socket.on("end", () => {
-                console.log("CLI client disconnected.");
-            });
-        });
-
-        const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
-        this.socketServer.listen(SOCKET_CLI_PORT, host, () => {
-            console.log("Socket CLI server running on localhost"+SOCKET_CLI_PORT);
-        });
-    }
-
     setupPluginLoader() {
         consolelog.log('pluginManager loaded...');
        // Signal to dynamically load a plugin
@@ -2448,7 +1750,30 @@ class Adaptus2Server {
         });
     }
         
-    
+    setupMemoryMonitoring() {
+        const memoryMonitoringInterval = parseInt(process.env.MEMORY_MONITORING_INTERVAL, 10) || 60000; // Default: 1 minute
+        const memoryThresholdPercent = parseInt(process.env.MEMORY_THRESHOLD_PERCENT, 10) || 80; // Default: 80%
+        
+        console.log(`Setting up memory monitoring: interval=${memoryMonitoringInterval}ms, threshold=${memoryThresholdPercent}%`);
+        
+        setInterval(() => {
+            const memUsage = process.memoryUsage();
+            const heapUsed = Math.round(memUsage.heapUsed / 1024 / 1024);
+            const heapTotal = Math.round(memUsage.heapTotal / 1024 / 1024);
+            const percentUsed = Math.round((heapUsed / heapTotal) * 100);
+            
+            console.log(`Memory usage: ${heapUsed}MB / ${heapTotal}MB (${percentUsed}%)`);
+            
+            if (percentUsed > memoryThresholdPercent) {
+                console.warn(`MEMORY WARNING: Usage at ${percentUsed}%, exceeding threshold of ${memoryThresholdPercent}%`);
+                // Optional: Force garbage collection if --expose-gc flag is used
+                if (global.gc) {
+                    console.log('Forcing garbage collection...');
+                    global.gc();
+                }
+            }
+        }, memoryMonitoringInterval);
+    }
 
     async initializeTables() {
         console.log('Initializing tables...');
@@ -2791,77 +2116,97 @@ registerMiddleware() {
             console.error('Failed to setup Ollama module:', error.message);
         }
 
-        try {
-            const ReportingModule = require('./modules/reportingModule');
-            const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
-            this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
-            console.log('Reporting module initialized successfully');
-        } catch(error) {
-            console.error('Failed to initialize Reporting module:', error.message);
-            process.exit(1);
-        }
-        try {
-            const ReportBuilderModule = require('./modules/reportBuilderModule');           
-            // You must have `ruleEngineInstance` and `app` already available
-            this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            
-            console.log('ReportBuilder module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize ReportBuilder module:', error.message);
-        }
-
-        try {                      
-            const RenderPageModule = require('./modules/RenderPageModule');
-            const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            console.log('RenderPageModule module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize RenderPageModule module:', error.message);
-        }
-
-        try {                      
-            const PageCloneModule = require('./modules/pageCloneModule');
-            const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
-            console.log('PageClone module initialized successfully');
-        } catch (error) {
-            console.error('Failed to initialize PageClone module:', error.message);
-        }
-        // Initialize Chat Module
-        if(process.env.CHAT_SERVER_PORT){
-            const chat_port = process.env.CHAT_SERVER_PORT;
+        /* MOD_CHATSERVER=false
+CHAT_SERVER_PORT=3007
+MOD_ECOMMTRACKER=false
+MOD_SDUIADMIN=false
+MOD_AGENT_WORKFLOW_ENABLED=false
+MOD_ML_ANALYTICS=false
+MOD_STREAMINGSERVER=false
+MOD_VIDEOCONFERENCE=false
+MOD_REPORTIGN=false
+MOD_REPORTBUILDER=false
+MOD_PAGERENDER=false
+MOD_PAGECLONE=false
+*/
+        if(process.env.MOD_REPORTING) {
             try {
-                const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
-                
-                //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
-                this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
-                this.chatModule.start();
-                // Store the instance globally for access from other modules
-                global.chatModule = this.chatModule;
-                
-                // Define the global helper function AFTER setting global.chatModule
-                global.getUserIdFromSessionId = function(sessionId) {
-                    if (!global.chatModule) return sessionId;
-                    
-                    // Access the connected users directly from the global instance
-                    for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
-                        if (username === sessionId) {
-                            const socket = global.chatModule.io.sockets.sockets.get(socketId);
-                            if (socket && socket.user && socket.user.id) {
-                                return socket.user.id;
-                            }
-                        }
-                    }
-                    return sessionId; // Fallback
-                };
-                httpServer.listen(chat_port, () => {
-                    console.log('Chat running on:' + chat_port);
-                });
-                consolelog.log('Chat module initialized.');
-            } catch (error) {
-                console.error('Failed to initialize Chat Module:', error.message);
+                const ReportingModule = require('./modules/reportingModule');
+                const dbConnection = async () => { return await getDbConnection({ dbType: "mysql", dbConnection: "MYSQL_1" }) };
+                this.reportingModule = new ReportingModule(globalContext, dbConnection, redis, app);
+                console.log('Reporting module initialized successfully');
+            } catch(error) {
+                console.error('Failed to initialize Reporting module:', error.message);
+                process.exit(1);
             }
         }
-
-        if(process.env.ECOMMTRACKER){
+        if(process.env.MOD_REPORTBUILDER) {
+            try {
+                const ReportBuilderModule = require('./modules/reportBuilderModule');           
+                // You must have `ruleEngineInstance` and `app` already available
+                this.reportBuilderModule = new ReportBuilderModule(globalContext, { dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                
+                console.log('ReportBuilder module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize ReportBuilder module:', error.message);
+            }
+        }
+        if(process.env.MOD_PAGERENDER) {
+            try {                      
+                const RenderPageModule = require('./modules/RenderPageModule');
+                const renderPageModule = new RenderPageModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                console.log('RenderPageModule module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize RenderPageModule module:', error.message);
+            }
+        }
+        if(process.env.MOD_PAGECLONE) {
+            try {                      
+                const PageCloneModule = require('./modules/pageCloneModule');
+                const pageCloneModule = new PageCloneModule(globalContext,{ dbType: "mysql", dbConnection: "MYSQL_1" }, app);
+                console.log('PageClone module initialized successfully');
+            } catch (error) {
+                console.error('Failed to initialize PageClone module:', error.message);
+            }
+        }
+        // Initialize Chat Module
+        if(process.env.MOD_CHATSERVER){
+            if(process.env.CHAT_SERVER_PORT){
+                const chat_port = process.env.CHAT_SERVER_PORT;
+                try {
+                    const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
+                    
+                    //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
+                    this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
+                    this.chatModule.start();
+                    // Store the instance globally for access from other modules
+                    global.chatModule = this.chatModule;
+                    
+                    // Define the global helper function AFTER setting global.chatModule
+                    global.getUserIdFromSessionId = function(sessionId) {
+                        if (!global.chatModule) return sessionId;
+                        
+                        // Access the connected users directly from the global instance
+                        for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
+                            if (username === sessionId) {
+                                const socket = global.chatModule.io.sockets.sockets.get(socketId);
+                                if (socket && socket.user && socket.user.id) {
+                                    return socket.user.id;
+                                }
+                            }
+                        }
+                        return sessionId; // Fallback
+                    };
+                    httpServer.listen(chat_port, () => {
+                        console.log('Chat running on:' + chat_port);
+                    });
+                    consolelog.log('Chat module initialized.');
+                } catch (error) {
+                    console.error('Failed to initialize Chat Module:', error.message);
+                }
+                }
+        }
+        if(process.env.MOD_ECOMMTRACKER){
             const EcommerceTracker = require('./modules/EcommTrackerModule');
             // Initialize the tracker with your global context and DB config
             const tracker = new EcommerceTracker(globalContext, {
@@ -2871,7 +2216,7 @@ registerMiddleware() {
             tracker.setupRoutes(app);
         }
 
-        if(process.env.SDUIADMIN){
+        if(process.env.MOD_SDUIADMIN){
             try {
                 const SDUIModule = require('./modules/sduiModule');
                 // Pass database configuration
@@ -2885,7 +2230,7 @@ registerMiddleware() {
                 console.error('Failed to initialize SDUI Module:', error.message);
             }
         }
-        if (process.env.AGENT_WORKFLOW_ENABLED) {
+        if (process.env.MOD_AGENT_WORKFLOW_ENABLED) {
             try {
                 const AgentWorkflowModule = require('./modules/agentWorkflowModule.js');
                 // Pass database configuration
@@ -2900,7 +2245,7 @@ registerMiddleware() {
             }
         }
 
-        if (process.env.WS_SIGNALING_PORT) {
+        if (process.env.WS_SIGNALING_PORT && process.env.MOD_VIDEOCONFERENCE) {
             const signalingHttpServer = require('http').createServer();
             const SignalingServer = require('./modules/signalingServer');
             this.signalServer = new SignalingServer(signalingHttpServer);
@@ -2913,45 +2258,44 @@ registerMiddleware() {
         }
         
             // Initialize Streaming Server Module
-        try {
-            const s3Config = {
-                accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-                secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-                region: process.env.AWS_REGION,
-            };
-          
-            this.streamingServer = new StreamingServer(this.app, s3Config, redis);
-            this.streamingServer.registerRoutes();
-            consolelog.log('Streaming server module initialized.');
-        } catch (error) {
-            console.error('Failed to initialize Streaming Server Module:', error.message);
+        if(process.env.MOD_STREAMINGSERVER) {
+            try {
+                const s3Config = {
+                    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+                    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+                    region: process.env.AWS_REGION,
+                };
+            
+                this.streamingServer = new StreamingServer(this.app, s3Config, redis);
+                this.streamingServer.registerRoutes();
+                consolelog.log('Streaming server module initialized.');
+            } catch (error) {
+                    console.error('Failed to initialize Streaming Server Module:', error.message);
+                }
         }
 
       
-        mlAnalytics.loadConfig();
-        mlAnalytics.trainModels(app);
-        mlAnalytics.scheduleTraining();
+        if(process.env.ML_ANALYTICS) {
+            mlAnalytics.loadConfig();
+            mlAnalytics.trainModels(app);
+            mlAnalytics.scheduleTraining();
+            app.use('/ml', mlAnalytics.middleware());
+            app.post("/api/rag", async (req, res) => {
+                    try {
+                        const { query } = req.body;
+                        if (!query) {
+                        return res.status(400).json({ error: "Query is required." });
+                        }
+                    
+                        const response = await handleRAG(query, this.apiConfig);
 
-        app.use('/ml', mlAnalytics.middleware());
-
-
-
-        app.post("/api/rag", async (req, res) => {
-        try {
-            const { query } = req.body;
-            if (!query) {
-            return res.status(400).json({ error: "Query is required." });
-            }
-           
-            const response = await handleRAG(query, this.apiConfig);
-
-            res.json({ data: response });
-        } catch (error) {
-            console.error("RAG API Error:", error.message);
-            res.status(500).json({ error: "Internal Server Error" });
+                        res.json({ data: response });
+                    } catch (error) {
+                        console.error("RAG API Error:", error.message);
+                        res.status(500).json({ error: "Internal Server Error" });
+                    }
+            });
         }
-        });
-
         const ConfigManager = require('./modules/configManager');
         new ConfigManager({
             app: this.app,
@@ -2991,11 +2335,16 @@ registerMiddleware() {
             }
         }
     }
-    subscribeToPluginUpdates() {
-        if (process.env.PLUGIN_MANAGER !== 'network') return;
+    subscribeToPluginEvents() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
     
-        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
-        this.redis.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+        // Store subscription in class instance to track it
+        this.pluginSubscription = this.subscriberRedis;
+        
+        this.pluginSubscription.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
             if (err) {
                 console.error(`Failed to subscribe to plugin updates: ${err.message}`);
             } else {
@@ -3003,9 +2352,32 @@ registerMiddleware() {
             }
         });
     
-        this.redis.on('message', async (channel, message) => {
-            if (channel === `${process.env.CLUSTER_NAME}:plugins:update`) {
-                await this.handlePluginUpdate(message);
+        this.pluginSubscription.on('message', async (channel, message) => {
+            if (channel !== `${process.env.CLUSTER_NAME}:plugins:update`) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { action, pluginName, serverId } = JSON.parse(message);
+        
+                // Ignore messages originating from the current server
+                if (serverId === this.serverId) {
+                    console.log(`Ignoring message from self (Server ID: ${serverId}).`);
+                    return;
+                }
+        
+                if (action === 'load') {
+                    console.log(`Processing load event for plugin: ${pluginName}`);
+                    await this.loadPlugin(pluginName, false); // Do not rebroadcast
+                } else if (action === 'unload') {
+                    console.log(`Processing unload event for plugin: ${pluginName}`);
+                    await this.unloadPlugin(pluginName, false); // Do not rebroadcast
+                } else {
+                    console.warn(`Unknown action: ${action}`);
+                }
+            } catch (error) {
+                console.error(`Failed to process message: ${error.message}`);
             }
         });
     }
@@ -3149,6 +2521,43 @@ registerMiddleware() {
         }
     }
 
+    subscribeToPluginUpdates() {
+        if (process.env.PLUGIN_MANAGER !== 'network') {
+            console.log('Plugin manager is in local mode. No subscription to Redis events.');
+            return;
+        }
+    
+        console.log(`Subscribing to plugin updates for cluster "${process.env.CLUSTER_NAME}"...`);
+        
+        // Store the subscription reference so we can clean it up later
+        // This is the key change - track the Redis client used for subscription
+        this.pluginUpdateSubscriber = this.redis;
+        
+        this.pluginUpdateSubscriber.subscribe(`${process.env.CLUSTER_NAME}:plugins:update`, (err) => {
+            if (err) {
+                console.error(`Failed to subscribe to plugin updates: ${err.message}`);
+            } else {
+                console.log(`Subscribed to plugin updates for cluster "${process.env.CLUSTER_NAME}".`);
+            }
+        });
+    
+        this.pluginUpdateSubscriber.on('message', async (channel, message) => {
+            if (channel !== `${process.env.CLUSTER_NAME}:plugins:update`) return;
+        
+            console.log(`Received message on channel: ${channel}`);
+            console.log(`Message content: ${message}`);
+        
+            try {
+                const { name: pluginName } = JSON.parse(message);
+                console.log(`Plugin update for "${pluginName}" received — loading from Redis if different.`);
+                await this.pluginManager.loadPluginFromRedisIfDifferent(pluginName);
+            } catch (err) {
+                console.error('Error in handlePluginUpdate:', err);
+            }
+        });
+        
+        
+    }
     async start(callback) {
         process.on('uncaughtException', (error) => {
             logger.error('Uncaught Exception:', error);
@@ -3192,6 +2601,10 @@ registerMiddleware() {
                     console.log('Configuration updated from cluster.');
                 });
             }
+
+            if (process.env.ENABLE_MEMORY_MONITORING === 'true') {
+                this.setupMemoryMonitoring();
+            }
     
             // Set up other parts of the server
             this.setupDependencies();
@@ -3228,7 +2641,28 @@ registerMiddleware() {
            
             this.setupReloadHandler(this.configPath);
             if(process.env.SOCKET_CLI) {
-                this.setupSocketServer(this.host); // Start the socket server
+                const socketCLI = new SocketCLI({
+                    server: this,
+                    app: this.app,
+                    redisClient: this.redis,
+                    jwtSecret: process.env.JWT_SECRET || 'IhaveaVeryStrongSecret',
+                    jwtExpiry: process.env.JWT_EXPIRY || '1h',
+                    ruleEngine: ruleEngine,  // Make sure this is accessible
+                    pluginManager: this.pluginManager,
+                    clearRedisCache: clearRedisCache,  // Make sure this function is accessible
+                    loadConfig: loadConfig,  // Make sure this function is accessible
+                    getContext: getContext,  // Make sure this function is accessible
+                    updateValidationRules: updateValidationRules,  // Make sure this function is accessible
+                    requestLogger: requestLogger,  // Make sure this is accessible
+                    packageJson: packageJson,  // Make sure this is accessible
+                    initializeRules: initializeRules,  // Make sure this function is accessible
+                    // Pass globalContext directly from contextModule
+                    globalContext: contextModule.globalContext  // Use the imported context module
+                });
+                const SOCKET_CLI_PORT = process.env.SOCKET_CLI_PORT || 5000;
+                this.socketCLI = socketCLI;
+                this.socketCLI.start(this.host, SOCKET_CLI_PORT);
+                console.log(`Socket CLI server initialized on ${this.host}:${SOCKET_CLI_PORT}`);
             }
   
             // Synchronize plugins and subscribe to updates
@@ -3257,17 +2691,17 @@ registerMiddleware() {
         const consolelog = require('./modules/logger');
         try {
             consolelog.log('Initiating graceful shutdown...');
-    
-            // Cleanup CMS if initialized
-            if (this.cmsManager) {
-                try {
-                    // await this.cmsManager.cleanup(); To be implemented.
-                    consolelog.log('CMS module cleaned up successfully');
-                } catch (error) {
-                    consolelog.error('Error cleaning up CMS module:', error);
-                }
+
+            // First, close HTTP server to stop accepting new connections
+            if (this.httpServer) {
+                await new Promise((resolve) => {
+                    this.httpServer.close(() => {
+                        consolelog.log('HTTP server closed');
+                        resolve();
+                    });
+                });
             }
-    
+
             // Close WebSocket server
             if (this.wss) {
                 await new Promise((resolve) => {
@@ -3277,12 +2711,37 @@ registerMiddleware() {
                     });
                 });
             }
+
+            // Close signaling server if it exists
             if (this.signalServer) {
-                this.signalServer.wss.close(() => {
-                    console.log('WebRTC Signaling Server closed');
+                await new Promise((resolve) => {
+                    this.signalServer.wss.close(() => {
+                        consolelog.log('WebRTC Signaling Server closed');
+                        resolve();
+                    });
                 });
             }
             
+            // Close the socket server if it exists (before Redis connections)
+            if (this.socketServer) {
+                await new Promise((resolve) => {
+                    this.socketServer.close(() => {
+                        consolelog.log('Socket CLI server closed');
+                        resolve();
+                    });
+                });
+            }
+            
+            // Clean up plugin manager (which might have Redis connections)
+            if (this.pluginManager) {
+                try {
+                    this.pluginManager.close();
+                    consolelog.log('Plugin manager closed');
+                } catch (error) {
+                    consolelog.error('Error closing plugin manager:', error);
+                }
+            }
+
             // Close the rate limiter's Redis connection if it exists
             if (this.rateLimit) {
                 try {
@@ -3293,46 +2752,54 @@ registerMiddleware() {
                 }
             }
             
-            // Close all connections
-            const connections = await Promise.allSettled([
-                this.redis.quit(),
-                this.publisherRedis?.quit(),
-                this.subscriberRedis?.quit(),
-                redisPublisher.quit(),
-                redisSubscriber.quit()
-            ]);
-    
-            connections.forEach((result, index) => {
-                if (result.status === 'rejected') {
-                    consolelog.error(`Failed to close connection ${index}:`, result.reason);
+            // Cleanup CMS if initialized
+            if (this.cmsManager) {
+                try {
+                    // await this.cmsManager.cleanup(); // To be implemented.
+                    consolelog.log('CMS module cleaned up successfully');
+                } catch (error) {
+                    consolelog.error('Error cleaning up CMS module:', error);
                 }
-            });
-    
-            // Close the server
-            if (this.server) {
-                await new Promise((resolve) => {
-                    this.server.close(resolve);
-                });
             }
-    
-            // Close socket server if it exists
-            if (this.socketServer) {
-                await new Promise((resolve) => {
-                    this.socketServer.close(resolve);
-                });
+
+            // Create an array of all Redis connections to close
+            const redisConnections = [
+                { name: 'Main Redis', connection: this.redis },
+                { name: 'Redis Publisher', connection: redisPublisher },
+                { name: 'Redis Subscriber', connection: redisSubscriber }
+            ];
+
+            // Add optional Redis connections if they exist
+            if (this.publisherRedis) redisConnections.push({ name: 'Plugin Publisher Redis', connection: this.publisherRedis });
+            if (this.subscriberRedis) redisConnections.push({ name: 'Plugin Subscriber Redis', connection: this.subscriberRedis });
+
+            // Close all Redis connections gracefully and sequentially
+            for (const { name, connection } of redisConnections) {
+                if (connection && typeof connection.quit === 'function') {
+                    try {
+                        consolelog.log(`Closing ${name} connection...`);
+                        await connection.quit();
+                        consolelog.log(`${name} connection closed successfully`);
+                        
+                        // Small delay to ensure full disconnection
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                    } catch (error) {
+                        consolelog.error(`Error closing ${name} connection:`, error);
+                    }
+                }
             }
-    
+
             consolelog.log('All connections closed successfully');
             consolelog.log('Graceful shutdown completed');
-    
+
             // Ensure all logs are written before cleanup
             await new Promise(resolve => setTimeout(resolve, 500));
-    
+
             // Cleanup logger as the final step
             if (consolelog.cleanup) {
                 await consolelog.cleanup();
             }
-    
+
             // Small delay to ensure logger cleanup is complete
             await new Promise(resolve => setTimeout(resolve, 100));
             

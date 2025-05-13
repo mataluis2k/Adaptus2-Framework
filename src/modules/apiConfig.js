@@ -189,13 +189,18 @@ const loadConfig = async (configFile = configPath) => {
         apiConfig = JSON.parse(configData);
         
         // Add CMS_TABLE_SCHEMA to apiConfig
-        if (!apiConfig.find(config => config.dbTable === CMS_TABLE_SCHEMA.dbTable)) {
+        if (!apiConfig.find(config => config.dbTable === CMS_TABLE_SCHEMA.dbTable && config.routeType === CMS_TABLE_SCHEMA.routeType)) {
             apiConfig.push(CMS_TABLE_SCHEMA);
         }
         // Add ECOMMTRACKER_TABLE_SCHEMAS to apiConfig
-        if (!apiConfig.find(config => config.dbTable === ECOMMTRACKER_TABLE_SCHEMAS.dbTable)) {
-            apiConfig.push(ECOMMTRACKER_TABLE_SCHEMAS);
-        }
+        // ECOMMTRACKER_TABLE_SCHEMAS contains multiple table definitions
+        Object.keys(ECOMMTRACKER_TABLE_SCHEMAS).forEach(table => {
+                const schema = ECOMMTRACKER_TABLE_SCHEMAS[table];
+            if (!apiConfig.find(config => config.dbTable === schema.dbTable && config.routeType === CMS_TABLE_SCHEMA.routeType)) {
+                    apiConfig.push(schema);
+                }
+        });
+       
         categorizedConfig = categorizeApiConfig(apiConfig);
 
         // Update global context resources
