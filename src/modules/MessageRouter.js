@@ -69,7 +69,7 @@ class MessageRouter {
             const personaResult = await llmModule.selectPersona(
                 message, 
                 personas, 
-                { userContext, sessionId }
+                { userContext: userContext, sessionId: sessionId }
             );
             if (personaResult.directAnswer) {
                 console.log(`[MessageRouter] Providing direct answer from context information`);

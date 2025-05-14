@@ -1136,6 +1136,33 @@ async detectRequestedPersona(message) {
         return message;
     }
 
+    jsonToMarkdown(jsonObj) {
+        let markdown = '';
+
+        function convertToMarkdown(obj, level = 0) {
+            for (const key in obj) {
+                if (obj.hasOwnProperty(key)) {
+                    const indent = '  '.repeat(level);
+                    if (typeof obj[key] === 'object' && !Array.isArray(obj[key]) && obj[key] !== null) {
+                        markdown += `${indent}### ${key}:\n`;
+                        convertToMarkdown(obj[key], level + 1);
+                    } else if (Array.isArray(obj[key])) {
+                        markdown += `${indent}### ${key}:\n`;
+                        obj[key].forEach(item => {
+                            markdown += `${indent}- ${JSON.stringify(item)}\n`;
+                        });
+                    } else {
+                        markdown += `${indent}- **${key}:** ${obj[key]}\n`;
+                    }
+                }
+            }
+        }
+
+        convertToMarkdown(jsonObj);
+
+        return markdown;
+    }
+
 /**
  * Enhanced version of selectPersona that can also provide direct answers
  * Takes in the user's context (account info, orders, etc.) and determines if it can
@@ -1165,26 +1192,14 @@ async selectPersona(message, personaList, options = {}) {
         return { persona: null };
     }
 
-
-
+    const userInformation = this.jsonToMarkdown(userContext);
+    console.log('User Context:', userInformation);
     // Format the context information if available
     let contextInfo = '';
     if (userContext) {
         try {
-            // Format user context to be easily readable by the LLM
-            if (userContext.customerInfo) {
-                contextInfo += `\n\nCustomer Information:\n${JSON.stringify(userContext.customerInfo, null, 2)}`;
-            }
-            
-            if (userContext.orders && userContext.orders.length > 0) {
-                contextInfo += `\n\nRecent Orders:\n${JSON.stringify(userContext.orders, null, 2)}`;
-            }
-            
-            if (userContext.profile) {
-                contextInfo += `\n\nUser Profile:\n${JSON.stringify(userContext.profile, null, 2)}`;
-            }
-            
-            // Add any other context types that might be relevant
+            contextInfo += `\n\nCustomer Information:\n${userInformation}`;
+         
         } catch (error) {
             logger.warn('Error formatting user context:', error);
             // Continue without context if there's an error
@@ -1214,7 +1229,7 @@ async selectPersona(message, personaList, options = {}) {
     
     Instructions:
     1. First, determine if you can answer the user's question DIRECTLY using the provided context information.
-    2. If you CAN answer directly with high confidence, respond with a JSON object in this format:
+    2. If you CAN answer directly with high confidence, respond with a JSON object in this format, Important your ANSWER should be in markdown format:
        {"decision": "direct_answer", "answer": "Your complete answer here"}
     3. If you CANNOT answer directly or the query would benefit from specialized handling, select the most suitable persona from the list and respond with a JSON object in this format:
        {"decision": "use_persona", "persona": "exact_persona_name_from_list"}
@@ -1230,6 +1245,8 @@ async selectPersona(message, personaList, options = {}) {
     `;
 
     messageDataCopy.message = llmPrompt;
+
+    console.log('Persona selection prompt:', llmPrompt);
     
     try {
         // Use a simpler LLM call that doesn't add to the main conversation history
@@ -1322,7 +1339,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
     
     User's question: "${message}"
     
-    User Context Information:
+    User's Information:
     ${JSON.stringify(userContext, null, 2)}
     
     Instructions:
@@ -1334,6 +1351,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
     Your response should either be a direct answer to the user's question OR exactly "NEED_SPECIALIZED_PERSONA" if you cannot answer confidently.
     `;
     
+    console.log('Direct answer prompt:', directAnswerPrompt);
     const messageData = { 
         senderId: sessionId || 'direct_answer_agent', 
         recipientId: 'system',
