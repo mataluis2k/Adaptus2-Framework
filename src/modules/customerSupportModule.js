@@ -1,10 +1,13 @@
 // customerSupportModule.js (CommonJS Version)
 
-const { DynamicTool } = require("langchain/tools");
+//const { DynamicTool } = require("langchain/tools");
 const { getDbConnection } = require("./db");
 const { redisClient } = require('./redisClient');
 const crypto = require('crypto');
 const { createDatabaseIntentTool } = require('./database-intent-tool');
+// New GlogalToolRegistry
+const toolRegistry = require('./GlobalToolRegistry');
+const { DynamicTool } = require('./DynamicTool');
 
 // Database configuration
 const SUPPORT_DB_CONFIG = { dbType: "mysql", dbConnection: "MYSQL_1" };
@@ -20,7 +23,22 @@ const ORDER_HISTORY_LIMIT = process.env.ORDER_HISTORY_LIMIT || 5;
 const ORDER_HISTORY_SORT = process.env.ORDER_HISTORY_SORT || "created_at DESC";
 const CACHE_DURATION = process.env.CACHE_DURATION || 3600; // Default: 1 hour
 const REFUND_POLICY_DAYS = process.env.REFUND_POLICY_DAYS || 30;
-
+const customerSupportTools = [
+    issueRefundTool,
+    fetchTrackingInfoTool,
+    checkRefundEligibilityTool,
+    summarizeLastOrdersTool,
+    updateOrderNotesTool,
+    fetchOrderDetailsTool,
+    addCustomerNoteTool,
+    checkReturnStatusTool,
+    createReturnRequestTool,
+    checkLoyaltyPointsTool,
+    addLoyaltyPointsTool,
+    clearCustomerCacheTool,
+    fetchCustomerLastOrdersTool
+  ];
+  
 // Additional SQL queries for new tools
 const REFUND_UPDATE_QUERY = process.env.REFUND_UPDATE_QUERY || 
   `UPDATE ${ORDER_HISTORY_TABLE} SET status = 'Refunded', refunded_at = NOW() WHERE external_order_id = ?`;
@@ -207,7 +225,15 @@ async function  buildCustomerProfile(userId) {
 const issueRefundTool = new DynamicTool({
   name: "issue_refund",
   description: "Issue a refund for an order if eligible. Provide orderId.",
-  func: async ({ orderId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to refund'
+    }
+  },
+  execute: async ({ orderId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     await db.execute(REFUND_UPDATE_QUERY, [orderId]);
     return `Refund successfully issued for order ${orderId}.`;
@@ -217,7 +243,15 @@ const issueRefundTool = new DynamicTool({
 const fetchCustomerLastOrdersTool = new DynamicTool({
   name: "fetch_customer_last_orders",
   description: "Fetch the last orders of a customer. Provide userId.",
-  func: async ({ userId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to fetch orders for Customer'
+    }
+  },
+  execute: async ({ userId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(FIND_CUSTOMER_LAST_ORDERS, [userId]);
     if (!result || result.length === 0) return `No orders found for user ${userId}.`;
@@ -238,7 +272,15 @@ const fetchCustomerLastOrdersTool = new DynamicTool({
 const fetchTrackingInfoTool = new DynamicTool({
   name: "fetch_tracking_info",
   description: "Get tracking link for a shipment. Provide orderId.",
-  func: async ({ orderId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to lookup tracking info'
+    }
+  },
+  execute: async ({ orderId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(TRACKING_INFO_QUERY, [orderId]);
     const tracking = result[0]?.tracking_number;
@@ -250,7 +292,15 @@ const fetchTrackingInfoTool = new DynamicTool({
 const checkRefundEligibilityTool = new DynamicTool({
   name: "check_refund_eligibility",
   description: "Check if an order is eligible for refund based on purchase date.",
-  func: async ({ orderId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to find eligibility'
+    }
+  },
+  execute: async ({ orderId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(REFUND_ELIGIBILITY_QUERY, [orderId]);
     const orderDate = result[0]?.created_at;
@@ -301,7 +351,15 @@ const checkRefundEligibilityTool = new DynamicTool({
 const summarizeLastOrdersTool = new DynamicTool({
   name: "summarize_last_orders",
   description: "Summarize a customer's last orders into readable text.",
-  func: async ({ userId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to fetch orders for Customer'
+    }
+  },
+  execute: async ({ userId }) => {
     const profile = await buildCustomerProfile(userId);
     return profile.lastOrders.map(order =>
       `Order ${order.orderId}: ${order.status} for ${order.amount} on ${order.createdAt}`
@@ -312,7 +370,19 @@ const summarizeLastOrdersTool = new DynamicTool({
 const updateOrderNotesTool = new DynamicTool({
   name: "update_order_notes",
   description: "Add a customer service note to an order.",
-  func: async ({ orderId, note }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to refund'
+    },
+    note: {
+      type: 'string',
+      description: 'Note to add to the order'
+    }
+  },
+  execute: async ({ orderId, note }) => {
     console.log(`[TOOL_DEBUG] Starting update_order_notes for orderId: ${orderId}, note: ${note}`);
     
     try {
@@ -370,7 +440,15 @@ const updateOrderNotesTool = new DynamicTool({
 const fetchOrderDetailsTool = new DynamicTool({
   name: "fetch_order_details",
   description: "Get detailed information about a specific order. Provide orderId.",
-  func: async ({ orderId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to fetch details for'
+    }
+  },
+  execute: async ({ orderId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(ORDER_DETAIL_QUERY, [orderId]);
     if (!result || result.length === 0) return `Order ${orderId} not found.`;
@@ -392,7 +470,23 @@ const fetchOrderDetailsTool = new DynamicTool({
 const addCustomerNoteTool = new DynamicTool({
   name: "add_customer_note",
   description: "Add a note to a customer's profile. Provide userId and note.",
-  func: async ({ userId, note, agentId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to add note for'
+    },
+    note: {
+      type: 'string',
+      description: 'Note to add'
+    },
+    agentId: {
+      type: 'string',
+      description: 'Agent ID adding the note (optional)'
+    }
+  },
+  execute: async ({ userId, note, agentId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     await db.execute(ADD_CUSTOMER_NOTE_QUERY, [userId, note, agentId || "system"]);
     await redisClient.del("customerProfile:" + userId); // Invalidate cache
@@ -403,7 +497,15 @@ const addCustomerNoteTool = new DynamicTool({
 const checkReturnStatusTool = new DynamicTool({
   name: "check_return_status",
   description: "Check the status of a return request for an order. Provide orderId.",
-  func: async ({ orderId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to check return status for'
+    }
+  },
+  execute: async ({ orderId }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(RETURN_STATUS_QUERY, [orderId]);
     if (!result || result.length === 0) return `No return requests found for order ${orderId}.`;
@@ -416,7 +518,19 @@ const checkReturnStatusTool = new DynamicTool({
 const createReturnRequestTool = new DynamicTool({
   name: "create_return_request",
   description: "Create a new return request for an order. Provide orderId and reason.",
-  func: async ({ orderId, reason }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    orderId: {
+      type: 'string',
+      description: 'Order ID to create return request for'
+    },
+    reason: {
+      type: 'string',
+      description: 'Reason for the return request'
+    }
+  },
+  execute: async ({ orderId, reason }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     await db.execute(CREATE_RETURN_QUERY, [orderId, reason]);
     return `Return request created successfully for order ${orderId}.`;
@@ -426,7 +540,15 @@ const createReturnRequestTool = new DynamicTool({
 const checkLoyaltyPointsTool = new DynamicTool({
   name: "check_loyalty_points",
   description: "Check a customer's loyalty points balance. Provide userId.",
-  func: async ({ userId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to check loyalty points for'
+    }
+  },
+  execute: async ({ userId }) => {
     const profile = await buildCustomerProfile(userId);
     return `Customer ${profile.name} has ${profile.loyaltyPoints} loyalty points.`;
   }
@@ -435,7 +557,15 @@ const checkLoyaltyPointsTool = new DynamicTool({
 const addLoyaltyPointsTool = new DynamicTool({
   name: "add_loyalty_points",
   description: "Add loyalty points to a customer's account. Provide userId and points.",
-  func: async ({ userId, points }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to add points for'
+    }
+  },
+  execute: async ({ userId, points }) => {
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     await db.execute(ADD_LOYALTY_POINTS_QUERY, [userId, points, points]);
     await redisClient.del("customerProfile:" + userId); // Invalidate cache
@@ -446,7 +576,15 @@ const addLoyaltyPointsTool = new DynamicTool({
 const clearCustomerCacheTool = new DynamicTool({
   name: "clear_customer_cache",
   description: "Clear the cached customer profile to fetch fresh data. Provide userId.",
-  func: async ({ userId }) => {
+  category: "customer_support",
+  requiresAuth: true,
+  schema: {
+    userId: {
+      type: 'string',
+      description: 'User ID to clear cache for'
+    }
+  },
+  execute: async ({ userId }) => {
     await redisClient.del("customerProfile:" + userId);
     return `Cache cleared for customer ${userId}. Next profile request will fetch fresh data.`;
   }
@@ -473,22 +611,16 @@ ${profile.customerNotes || "No notes available"}
   // await llmModule.addToHistory(sessionId, context, 'system');
 }
 
+try {
+  toolRegistry.registerModuleTools(customerSupportTools, 'customer_support', 'customerSupportModule');
+}
+catch (error) {
+  console.error(`[customerSupportModule] Error registering tools: ${error.message}`);
+}
+
 module.exports = {
   buildCustomerProfile,
   preloadCustomerContext,
-  customerSupportTools: [
-    issueRefundTool,
-    fetchTrackingInfoTool,
-    checkRefundEligibilityTool,
-    summarizeLastOrdersTool,
-    updateOrderNotesTool,
-    fetchOrderDetailsTool,
-    addCustomerNoteTool,
-    checkReturnStatusTool,
-    createReturnRequestTool,
-    checkLoyaltyPointsTool,
-    addLoyaltyPointsTool,
-    clearCustomerCacheTool,
-    fetchCustomerLastOrdersTool
-  ]
+  customerSupportTools,
+  
 };
