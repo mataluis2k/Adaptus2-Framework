@@ -759,7 +759,7 @@ async loadPersonas() {
             try {
                 const cachedPersonas = await redisClient.get(cacheKey);
                 if (cachedPersonas) {
-                    console.log('✅ [LLMModule] Loaded personasConfig from Redis cache');
+                    console.log(`✅ [LLMModule] Loaded personasConfig from Redis cache :  ${cachedPersonas.length}`);
                     const parsedPersonas = JSON.parse(cachedPersonas);
                     
                     // Check if we already have a keyword map in memory
@@ -815,12 +815,12 @@ async loadPersonas() {
 
         // Since the file was modified or newly loaded, we need to update the keyword map
         console.log('Personas modified, will update keyword map');
-        // setTimeout(() => {
-        //     this.initializeKeywordMap().catch(error => {
-        //         console.error('Async keyword map initialization failed:', error);
-        //     });
-        // }, 0);
-
+        setTimeout(() => {
+            this.initializeKeywordMap().catch(error => {
+                console.error('Async keyword map initialization failed:', error);
+            });
+        }, 0);
+          
         return personasConfig;
     } catch (error) {
         logger.error('Failed to load personas:', error);
@@ -1623,7 +1623,8 @@ async generateDirectAnswer(message, userContext, sessionId) {
             message: messageData.message || '',
             groupName: messageData.groupName || null,
             timestamp: messageData.timestamp || new Date().toISOString(),
-            status: messageData.status || 'processing'
+            status: messageData.status || 'processing',
+            format: messageData.format || 'text'
         };
         
         try {

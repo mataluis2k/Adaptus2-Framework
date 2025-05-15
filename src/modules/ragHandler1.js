@@ -496,6 +496,7 @@ async function handleRAG(query, userId = 'default', personaName = null, model = 
   console.log(`[RAG Debug] handleRAG called with query: "${query.substring(0, 50)}..."`, 
   `userId: ${userId}, personaName: ${personaName}`);
   try {
+
     // Initialize persona handling
     let enhancedPersona = personaName;
     
@@ -516,6 +517,9 @@ async function handleRAG(query, userId = 'default', personaName = null, model = 
         console.error('Error selecting persona:', personaError);
         enhancedPersona = 'default'; // Fallback to default persona
       }
+    }
+    if(!model){
+      model = process.env.OLLAMA_INFERENCE || 'llama3.3';
     }
 
     const llm = await llmModule.getLLMInstance(model);

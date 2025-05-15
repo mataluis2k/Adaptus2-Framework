@@ -9,7 +9,7 @@ const response = {
     data: {},
     module: '',
     setResponse: function(status, message, error, data, module, success=true, code=null){
-        console.log('Updating response:', { status, message, error, data, module, success, code});
+       // console.log('Updating response:', { status, message, error, data, module, success, code});
         this.success = success;
         this.code = code;
         this.status = status;

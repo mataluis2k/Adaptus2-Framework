@@ -8,6 +8,7 @@ const process = require('process');
 const dbConnections = {};
 let isContextExtended = false;
 
+const logEnabled = process.env.ENABLE_LOGGING || false;
 /**
  * IMPORTANT NOTES AND EXCEPTIONS:
  * 
@@ -42,7 +43,7 @@ let isContextExtended = false;
  * due to ORM abstractions.
  */
 async function initDatabase() {
-    console.log('Initializing database tables...');
+    // console.log('Initializing database tables...');
     
     try {
         // Load the API configuration
@@ -54,7 +55,7 @@ async function initDatabase() {
         try {
             for (const endpoint of apiConfig) {
                 const { dbType, dbTable, columnDefinitions, dbConnection: connString } = endpoint;
-                console.log("Working on endpoint", endpoint);
+                // console.log("Working on endpoint", endpoint);
     
                 // Input validation
                 if (!dbType || !dbTable || !columnDefinitions) {
@@ -124,7 +125,7 @@ async function initDatabase() {
                     const tableExists = await ORM.tableExists(config, dbTable);
                     
                     if (tableExists.data) {
-                        console.log(`Table ${dbTable} already exists. Skipping creation.`);
+                        // console.log(`Table ${dbTable} already exists. Skipping creation.`);
                         continue;
                     }
     
@@ -157,11 +158,11 @@ async function initDatabase() {
                         });
                     }
     
-                    console.log(`Creating table ${dbTable} with schema:`, schema);
+                    // console.log(`Creating table ${dbTable} with schema:`, schema);
                     
                     try {
                         await ORM.createTable(config, dbTable, schema);
-                        console.log(`Table ${dbTable} initialized successfully.`);
+                        // console.log(`Table ${dbTable} initialized successfully.`);
                     } catch (error) {
                         console.error(`Error creating table ${dbTable}:`, error);
                         
@@ -181,7 +182,7 @@ async function initDatabase() {
             await ORM.cleanup();
         }
         
-        console.log('Database tables initialized successfully.');
+        // console.log('Database tables initialized successfully.');
         return true;
     } catch (error) {
         console.error('Failed to initialize database tables:', error);
@@ -197,7 +198,7 @@ async function initDatabase() {
  * object includes a 'release' method that is a no-op for compatibility.
  */
 async function getDbConnection(config) {
-    console.log('getDbConnection', config);
+    // console.log('getDbConnection', config);
     if (!config || !config.dbType || !config.dbConnection) {
         // use env default values 
         config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
@@ -227,13 +228,13 @@ async function getDbConnection(config) {
             // Add execute method that matches the expected interface
             execute: async function(sql, params) {
                 try {
-                    console.log('Executing SQL:', sql, 'with params:', params);
+                    // console.log('Executing SQL:', sql, 'with params:', params);
                     const result = await ORM.query(ormConfig, sql, params || []);
                     
                     // Log the raw result type and structure
-                    console.log('Raw result type:', typeof result);
-                    console.log('Is array?', Array.isArray(result));
-                    console.log('Raw result:', result);
+                    // console.log('Raw result type:', typeof result);
+                    // console.log('Is array?', Array.isArray(result));
+                    // console.log('Raw result:', result);
 
                     // Initialize rows array
                     let rows = [];
@@ -301,10 +302,10 @@ async function getDbConnection(config) {
                     rows = rows.filter(row => row !== null && row !== undefined);
 
                     // Log the final processed rows
-                    console.log('Final processed rows type:', typeof rows);
-                    console.log('Final processed rows is array?', Array.isArray(rows));
-                    console.log('Final processed rows length:', rows.length);
-                    console.log('Final processed rows:', JSON.stringify(rows, null, 2));
+                    // console.log('Final processed rows type:', typeof rows);
+                    // console.log('Final processed rows is array?', Array.isArray(rows));
+                    // console.log('Final processed rows length:', rows.length);
+                    // console.log('Final processed rows:', JSON.stringify(rows, null, 2));
 
                     // Return in the expected format [rows, fields]
                     return [rows, []]; // Return [rows, fields] format
@@ -318,13 +319,13 @@ async function getDbConnection(config) {
             // Add query method for backward compatibility
             query: async function(sql, params) {
                 try {
-                    console.log('Querying SQL:', sql, 'with params:', params);
+                    // console.log('Querying SQL:', sql, 'with params:', params);
                     const result = await ORM.query(ormConfig, sql, params || []);
                     
                     // Log the raw result type and structure
-                    console.log('Raw query result type:', typeof result);
-                    console.log('Is array?', Array.isArray(result));
-                    console.log('Raw query result:', result);
+                    // console.log('Raw query result type:', typeof result);
+                    // console.log('Is array?', Array.isArray(result));
+                    // console.log('Raw query result:', result);
 
                     // Initialize rows array
                     let rows = [];
@@ -392,10 +393,10 @@ async function getDbConnection(config) {
                     rows = rows.filter(row => row !== null && row !== undefined);
 
                     // Log the final processed rows
-                    console.log('Final processed rows type:', typeof rows);
-                    console.log('Final processed rows is array?', Array.isArray(rows));
-                    console.log('Final processed rows length:', rows.length);
-                    console.log('Final processed rows:', JSON.stringify(rows, null, 2));
+                    // console.log('Final processed rows type:', typeof rows);
+                    // console.log('Final processed rows is array?', Array.isArray(rows));
+                    // console.log('Final processed rows length:', rows.length);
+                    // console.log('Final processed rows:', JSON.stringify(rows, null, 2));
 
                     return rows;
                 } catch (error) {
@@ -556,7 +557,7 @@ function findDefUsersRoute(table) {
  * is preserved for compatibility but is a no-op.
  */
 async function create(config, entity, data) {
-    console.log('create', config, entity, data);
+    // console.log('create', config, entity, data);
     
     if (config.dbConnection === 'default') {
         config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
@@ -573,7 +574,7 @@ async function create(config, entity, data) {
     }
     
     // Parse data if needed
-    console.log("Incoming data:", data);
+    
     if (typeof data !== "object" || data === null) {
         try {
             data = JSON.parse(JSON.parse(data));
@@ -593,7 +594,7 @@ async function create(config, entity, data) {
         }
     }
     
-    console.log('validData', validData);
+    // console.log('validData', validData);
     if (Object.keys(validData).length === 0) {
         throw new Error(`No valid fields to create for ${entity}.`);
     }
@@ -745,7 +746,7 @@ async function read(config, entity, query) {
  * INTERFACE NOTE: Maintains same interface, uses adaptus2-orm's query method
  */
 async function query(config, queryString, params = []) {
-    console.log(config, queryString, params);
+    // console.log(config, queryString, params);
     const db = await getDbConnection(config);
 
     if (!db) {
@@ -907,7 +908,7 @@ async function createTable(config, tableName, columnDefinitions) {
             
             // Create table using raw SQL for MySQL/PostgreSQL compatibility
             const createTableSql = `CREATE TABLE IF NOT EXISTS ${tableName} (${columns.join(', ')})`;
-            console.log(`[createTable] Executing raw SQL: ${createTableSql}`);
+            // console.log(`[createTable] Executing raw SQL: ${createTableSql}`);
             
             await ORM.query(ormConfig, createTableSql);
             
@@ -1019,7 +1020,7 @@ function extendContext() {
     globalContext.actions.rawQuery = async (ctx, params) => {
         let myQuery;
         const { values } = params;
-        console.log("In Action", params, ctx.config);
+        // console.log("In Action", params, ctx.config);
         
         if (params.data) {
             const { query } = params.data;
@@ -1039,7 +1040,7 @@ function extendContext() {
             ctx.data['response'] = result;
         }
         
-        console.log("Here is my Response", ctx.data['response']);
+        // console.log("Here is my Response", ctx.data['response']);
         return { success: true, result, key: 'response' };
     };
 }
@@ -1054,7 +1055,7 @@ async function closeAllMysqlPools() {
     try {
         // Close all connections managed by adaptus2-orm
         await ORM.cleanup();
-        console.log('Closed all database connections via adaptus2-orm');
+        // console.log('Closed all database connections via adaptus2-orm');
     } catch (err) {
         console.error('Error closing database connections:', err);
     }

@@ -160,7 +160,7 @@ determineQueryType(persona, context = null) {
 
         // queryType = this.determineQueryType(persona, context);
         // Fix logging to ensure the correct persona is shown
-        console.log(`[ResponseStrategy1] Generating ${queryType} response for ${sessionId} using persona ${persona}`);
+        console.log(`[ResponseStrategy1] Generating ${queryType} response for ${sessionId} using persona ${JSON.stringify(persona)}`);
         
         if (!message || typeof message !== 'string') {
             console.error(`[ResponseStrategy] Invalid message: ${typeof message}`);
@@ -284,7 +284,7 @@ determineQueryType(persona, context = null) {
 // Improved handleActionQuery method that maintains flexibility
 // Enhanced handleActionQuery method with better LangChain agent configuration
 async handleActionQuery({ sessionId, message, persona }) {
-    console.log(`[ResponseStrategy3] Processing action query for ${persona}`);
+    console.log(`[ResponseStrategy_tools] Processing action query for ${persona}`);
     let llm = null; 
     try {
         // Check if persona has tools capability
@@ -310,7 +310,7 @@ async handleActionQuery({ sessionId, message, persona }) {
             allowedToolNames = allowedToolNames.map(tool => tool.name);
         }
         
-        console.log(`[ResponseStrategy] Allowed tools for ${persona}: ${JSON.stringify(allowedToolNames)}`);
+        console.log(`[ResponseStrategy_tools] Allowed tools for ${persona}: ${JSON.stringify(allowedToolNames)}`);
         
         // Filter available tools based on persona permissions
         const toolsToAttach = customerSupportTools.filter((tool) => 
@@ -320,7 +320,7 @@ async handleActionQuery({ sessionId, message, persona }) {
         
         // Check if persona has model capability
         if (personaConfig.model) {
-            console.log(`[ResponseStrategy] Using custom model for ${persona}: ${personaConfig.model}`);
+            console.log(`[ResponseStrategy_tools] Using custom model for ${persona}: ${personaConfig.model}`);
             // Here's the key change - enhance the LLM configuration for better tool calling
             llm = await llmModule.getLLMInstance(personaConfig.model, {
                 // Add model-specific parameters that encourage tool usage
@@ -339,7 +339,7 @@ async handleActionQuery({ sessionId, message, persona }) {
 
         // If no tools available after filtering, fall back to simple query
         if (!toolsToAttach || toolsToAttach.length === 0) {
-            console.log(`[ResponseStrategy] No tools available for ${persona} after filtering, falling back to simple query`);
+            console.log(`[ResponseStrategy_tools] No tools available for ${persona} after filtering, falling back to simple query`);
             return this.handleSimpleQuery({ sessionId, message, persona });
         }
         

@@ -9,6 +9,9 @@ const llmModule = require("./llmModule");
 const { preloadCustomerContext } = require("./customerSupportModule.js");
 const MessageRouter = require("./MessageRouter");
 const ResponseStrategy = require("./ResponseStrategy");
+const buildPersonaPrompt = require('./buildPersonaPrompt');
+const toolRegistry = require('./GlobalToolRegistry');
+const { handleRAG } = require("./ragHandler1");
 
 // Keep original triggers for backward compatibility
 const AI_TRIGGER = "/ai";
@@ -203,182 +206,141 @@ class IntelligentChatModule {
     }
 
     // Process message through the enhanced pipeline
-    async processMessage(sessionId, message, recipientId, groupName = null) {
-        console.log(`[IntelligentChatModule] Processing message from ${sessionId}`);
-        
-        if (!sessionId || !message) {
-            console.error('[IntelligentChatModule] Missing sessionId or message');
-            return {
-                response: "I apologize, but I couldn't process your message. Please try again.",
-                senderId: "AI_Assistant"
-            };
-        }
-    
-        try {
-            // Step 1: Get session context for potential follow-up handling
-            const sessionContext = this.getSessionContext(sessionId);
-            const context = sessionContext ? sessionContext.lastResponse : null;
-            
-            // Handle explicit triggers for backward compatibility
-            if (message.startsWith(AI_TRIGGER)) {
-                const processedMessage = message.slice(AI_TRIGGER.length).trim();
-                // Use direct LLM for /ai trigger
-                const response = await this.responseStrategy.generateResponse({
-                    sessionId,
-                    message: processedMessage,
-                    queryType: 'direct_llm',
-                    persona: persona,
-                    recipientId,
-                    groupName
-                });
-                
-                // Apply quality control if enabled
-                const initialResponse = {
-                    message: response,
-                    senderId: "AI_Assistant"
-                };
-                
-                // Apply quality control to the response if enabled
-                if (this.qualityControlEnabled && this.qualityControl) {
-                    console.log('[IntelligentChatModule] Applying quality control to AI response');
-                    
-                    // Create a response object from the initial response
-                    const result = await this.processMessageWithQualityControl(
-                        sessionId,
-                        processedMessage,
-                        recipientId,
-                        groupName,
-                        'direct_llm',  // Important: Keep the queryType consistent
-                        context,
-                        "AI_Assistant", // senderId
-                        null, // classification
-                        { persona: persona } // routing result with persona
-                    );
-                    
-                    return result;
-                } else {
-                    return {
-                        response: initialResponse.message,
-                        senderId: initialResponse.senderId,
-                        _qualityControlInfo: { applied: false }
-                    };
-                }
-            } else if (message.startsWith(RAG_TRIGGER)) {
-                const processedMessage = message.slice(RAG_TRIGGER.length).trim();
-                // Use direct RAG for /rag trigger
-                const response = await this.responseStrategy.generateResponse({
-                    sessionId,
-                    message: processedMessage,
-                    queryType: 'direct_rag',
-                    persona: persona,
-                    recipientId,
-                    groupName
-                });
-                
-                // Apply quality control if enabled
-                if (this.qualityControlEnabled && this.qualityControl) {
-                    console.log('[IntelligentChatModule] Applying quality control to RAG response');
-                    
-                    // Use the quality control pipeline
-                    const result = await this.processMessageWithQualityControl(
-                        sessionId,
-                        processedMessage,
-                        recipientId,
-                        groupName,
-                        'direct_rag',  // Important: Keep the queryType consistent
-                        context,
-                        "RAG_Assistant", // senderId
-                        null, // classification
-                        { persona: persona } // routing result with persona
-                    );
-                    
-                    return result;
-                } else {
-                    return {
-                        response: response,
-                        senderId: "RAG_Assistant",
-                        _qualityControlInfo: { applied: false }
-                    };
-                }
-            }
-            
-            // Route through intelligent pipeline for all other messages, need to include userId
-            const userId = this.getUserIdFromSessionId(sessionId);
-
-            const routingResult = await this.messageRouter.routeMessage(
-                sessionId, 
-                message, 
-                recipientId,
-                groupName,
-                userId
-            );
-            console.log(`[IntelligentChatModule] Message routing result: ${JSON.stringify(routingResult)}`);
-            if (!routingResult) {
-                throw new Error('No result from message router');
-            }
-
-             // Check if this is a direct answer (new behavior)
-            if (routingResult.classification && routingResult.classification.isDirect) {
-                console.log('[IntelligentChatModule] Using direct answer from context');
-                
-                // Store context for potential follow-up
-                this.storeSessionContext(
-                    sessionId,
-                    message,
-                    routingResult.response,
-                    routingResult.classification
-                );
-                
-                // Return the direct answer without further processing
-                return {
-                    response: routingResult.response,
-                    senderId: "Context_Assistant", // Could use a special sender ID for context-based answers
-                    _qualityControlInfo: { applied: false, reason: 'direct_answer' }
-                };
-            }
-            
-            // Determine appropriate sender ID and query type based on classification
-            let queryType = 'direct_llm';
-            let initialSenderId = "AI_Assistant";
-            
-            if (routingResult.classification) {
-                if (routingResult.classification.needsRAG && !routingResult.classification.needsTools) {
-                    initialSenderId = "RAG_Assistant";
-                    queryType = 'direct_rag';
-                } else if (routingResult.classification.needsRAG && routingResult.classification.needsTools) {
-                    initialSenderId = "Hybrid_Assistant";
-                    queryType = 'hybrid';
-                } else if (routingResult.classification.needsTools) {
-                    initialSenderId = "Tool_Assistant";
-                    queryType = 'action_query';
-                }
-            }
-            
-            // Pass the routing result to maintain persona consistency
-            return await this.processMessageWithQualityControl(
-                sessionId, 
-                message, 
-                recipientId, 
-                groupName, 
-                queryType, 
-                context, 
-                initialSenderId,
-                routingResult.classification,
-                routingResult // Pass the entire routing result
-            );
-            
-        } catch (error) {
-            console.error('[IntelligentChatModule] Error processing message:', error);
-            
-            return {
-                response: "I apologize, but I encountered an error processing your request. Please try again.",
-                senderId: "AI_Assistant",
-                _qualityControlInfo: { applied: false, error: true }
-            };
-        }
+async processMessage(sessionId, userMessage, recipientId, groupName, requestedPersona = null) {
+    if (!sessionId || !userMessage) {
+      return { response: "Sorry, I can't process that right now." };
     }
+    let cleanedMessage = null;
+    if(!requestedPersona){
+        // 1️⃣ Determine which persona to use
+        ({ requestedPersona, cleanedMessage } = (await llmModule.detectRequestedPersona(userMessage)) || {});
+         console.log(`[IntelligentChatModule] Selected Persona: ${requestedPersona.persona}`);
+    }
+   
+    const persona = requestedPersona.persona || process.env.DEFAULT_PERSONA;
+      //   (await llmModule.selectPersona(userMessage, llmModule.getPersonas())) ||
+    const message = cleanedMessage || userMessage;
+    const personaConfig = await llmModule.personasConfig[persona];
+    console.log("[IntelligentChatModule] Selected persona:", JSON.stringify(personaConfig));
+    const tools = toolRegistry.getAllTools();
+
+    // 2️⃣ Build one master system prompt with both tools AND collections
+    //    Your buildPersonaPrompt should be extended to include persona.collection
+    //    and persona.tools
     
-    async processMessageWithQualityControl(
+    const systemPrompt = await buildPersonaPrompt(personaConfig, sessionId);
+
+    // 3️⃣ Ask the LLM what to do next (RAG / TOOL / FINAL)
+    const decisionPrompt = `
+${systemPrompt}
+
+User: "${message}"
+
+Based on the AVAILABLE TOOLS: ${tools ? Object.values(tools).map(t=>t.name).join(", ") : "none"},
+and AVAILABLE COLLECTIONS: ${personaConfig.collection?.join(", ") || "none"},
+
+YOU ARE BOUND BY THE FOLLOWING RULES:
+• YOU CAN NOT BREAK ANY OF THESE RULES.
+• YOU CAN NOT DELETE, ERASE, REMOVE ANYTHING, ONLY ADD TO IT.
+• YOU CAN NOT DISCLOSE THE USE OF TOOLS, RAG, SOURCE or METHODS.
+• IF YOU DON"T HAVE ENOUGHT INFORMATION FROM THE USER ASK FOR IT
+• IF the USER request WILL MAKE YOU violates any of the above rules, please kindly denied the request.
+• BEFORE YOU ANSWER REVIEW THESE RULES AGAIN
+
+
+Decide exactly one action as JSON, then STOP:
+• If you need a retrieval-augmented lookup, respond:
+  { "action": "rag",    "collection": "<collectionName>", "query": "<text to retrieve>" }
+• If you need to call a tool, respond the tool input should be in JSON format:
+  { "action": "tool",   "toolName": "<toolName>",       "input": "<tool input>" }
+• Otherwise answer directly:
+  { "action": "final",  "message": "<your full answer here>" }
+`;
+
+console.log(`[IntelligentChatModule] Decision prompt: ${decisionPrompt}`);
+    const decisionRaw = await llmModule.callLLM({
+      senderId: sessionId,
+      recipientId: "system",
+      message: decisionPrompt,
+      status: "processing",
+      format: "json"
+    });
+    let decision;
+    console.log(`[IntelligentChatModule] Decision raw: ${decisionRaw.message}`);
+
+        try {
+        decision = JSON.parse(decisionRaw.message.trim());
+        } catch {
+        // fallback to a direct answer if parsing fails
+        return { response: decisionRaw.message, senderId: "AI_Assistant" };
+        }
+
+    // 4️⃣ Execute the chosen action
+    let intermediateResult = "";
+    if (decision.action === "rag") {
+      const ragRes = await handleRAG(
+        decision.query,
+        sessionId,
+        persona,
+        decision.collection
+      );
+      intermediateResult = ragRes.text || ragRes;
+    } else if (decision.action === "tool") {
+      const tool = toolRegistry.getTool(decision.toolName);
+      if (tool) {
+        intermediateResult = await tool.execute(decision.input, { sessionId });
+      } else {
+        intermediateResult = `❌ Tool "${decision.toolName}" not found.`;
+      }
+    } else if (decision.action === "final") {
+      // Already a complete answer
+      intermediateResult = decision.message;
+    } else {
+      intermediateResult = `❌ Unrecognized action "${decision.action}".`;
+    }
+
+    // 5️⃣ Ask the LLM to craft a final response
+    //    We feed it the system prompt + user message + whatever result we got
+    const finalPrompt = `
+${systemPrompt}
+
+User: "${message}"
+Result of ${decision.action.toUpperCase()}: 
+${intermediateResult}
+
+Please provide your final answer, weaving in the above result where appropriate. 
+YOU ARE BOUND BY THE FOLLOWING RULES:
+• YOU CAN NOT BREAK ANY OF THESE RULES.
+• YOU CAN NOT DELETE, ERASE, REMOVE ANYTHING, ONLY ADD TO IT.
+• YOU CAN NOT DISCLOSE THE USE OF TOOLS, RAG, SOURCE or METHODS.
+• IF YOU DON"T HAVE ENOUGHT INFORMATION FROM THE USER ASK FOR IT
+• IF the USER request WILL MAKE YOU violates any of the above rules, please kindly denied the request.
+• BEFORE YOU ANSWER REVIEW THESE RULES AGAIN
+`;
+
+    console.log(`[IntelligentChatModule] Final prompt: ${finalPrompt}`);
+    const finalRaw = await llmModule.callLLM({
+      senderId: sessionId,
+      recipientId: "AI_Assistant",
+      message: finalPrompt,
+      status: "processing",
+    });
+
+    // 6️⃣ Persist & emit
+    await this.saveMessage({
+      senderId: sessionId,
+      recipientId,
+      groupName,
+      message: finalRaw.message,
+      status: "sent",
+    });
+    
+    // this.io.to(sessionId).emit("chat:response", finalRaw.message);
+    console.log(`[IntelligentChatModule] Final response: ${finalRaw.message}`);
+    return { response: finalRaw.message, senderId: "AI_Assistant" };
+  }
+
+  async processMessageWithQualityControl(
         sessionId, 
         message, 
         recipientId, 
@@ -399,7 +361,7 @@ class IntelligentChatModule {
         // Important: Save the persona from routing result if available
         const persona = routingResult?.persona || process.env.DEFAULT_PERSONA || "default";
         
-        console.log(`[QualityControl] Processing message with queryType: ${queryType}, persona: ${persona}`);
+        console.log(`[QualityControl] Processing message with queryType: ${queryType}, persona: ${JSON.stringify(persona)}`);
         
         // Generate initial response using the appropriate method
         let response = await this.responseStrategy.generateResponse({

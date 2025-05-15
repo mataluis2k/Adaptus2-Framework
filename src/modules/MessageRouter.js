@@ -14,8 +14,18 @@ class MessageRouter {
         this.recentQueries = new Map(); // Store recent queries by session for context
         this.maxRecentQueries = 5; // Number of recent queries to keep per session
         this.defaultPersona = process.env.DEFAULT_PERSONA || 'helpfulAssistant'; // Default persona if none is detected
+        this.personasConfig = {}; // Load personas configuration
+        this.initialize().catch(err => {
+            console.error('[MessageRouter] Initialization error:', err);
+        });
     }   
 
+    async initialize() {
+        // Load personas configuration
+        this.personasConfig = llmModule.personasConfig;
+        const personaCount = Object.keys(this.personasConfig).length;
+        console.log(`[MessageRouter] Loaded personas configuration: ${personaCount} personas`);
+    }
     // Record a query for context
     recordQuery(sessionId, message, classification) {
         if (!this.recentQueries.has(sessionId)) {
@@ -70,7 +80,7 @@ class MessageRouter {
                 selectedPersona = personaResult.requestedPersona;
                 processedMessage = personaResult.cleanedMessage || message;
                 routingReason = `Explicitly requested by user (${personaResult.method || 'direct request'})`;
-                console.log(`[MessageRouter] Using explicitly requested persona: ${selectedPersona}`);
+                console.log(`[MessageRouter] Using explicitly requested persona: ${JSON.stringify(selectedPersona)}`);
             } 
             // Step 3: If no persona was explicitly requested, use enhanced selection 
             else {
@@ -121,7 +131,7 @@ class MessageRouter {
                 routingReason = 'Fallback to default persona';
             }
             
-            console.log(`[MessageRouter] Final selected persona: ${selectedPersona}, reason: ${routingReason}`);
+            console.log(`[MessageRouter] Final selected persona: ${JSON.stringify(selectedPersona)}, reason: ${routingReason}`);
             
             // Step 4: NEW FLOW - If we have a recommended tool, use the tool-assisted response flow
             if (recommendedTool) {
@@ -131,7 +141,7 @@ class MessageRouter {
                 const hasToolAccess = toolRegistry.isToolAllowedForPersona(
                     selectedPersona, 
                     recommendedTool, 
-                    llmModule.personasConfig
+                    this.personasConfig
                 );
                 
                 if (hasToolAccess) {
@@ -249,7 +259,8 @@ class MessageRouter {
     // Now includes support for recommended tools
     async classifyMessage(message, persona, isFollowUp = false, recommendedTool = null) {
         // Get persona configuration
-        const personaConfig = llmModule.personasConfig[persona] || {};
+        const personaConfig = this.personasConfig[persona] || {};
+        console.log(`[MessageRouter_CM] Number of Personas: ${personaConfig.length}`);
         console.log(`[MessageRouter] Persona config: ${JSON.stringify(personaConfig)}`);
         
         // Check for explicit triggers (for backward compatibility)
@@ -275,7 +286,7 @@ class MessageRouter {
         const hasRagCapability = personaConfig.collection && personaConfig.collection.length > 0;
         
         // Use tool registry to check if persona has any tools available
-        const personaTools = toolRegistry.getToolsForPersona(persona, llmModule.personasConfig);
+        const personaTools = toolRegistry.getToolsForPersona(persona, this.personasConfig);
         const hasToolsCapability = personaTools.length > 0;
         
         // If there's a recommended tool, prioritize using it
@@ -284,7 +295,7 @@ class MessageRouter {
             const hasToolAccess = toolRegistry.isToolAllowedForPersona(
                 persona, 
                 recommendedTool, 
-                llmModule.personasConfig
+                this.personasConfig
             );
             
             if (hasToolAccess) {
@@ -497,7 +508,7 @@ class MessageRouter {
     async generateToolEnhancedResponse(message, persona, toolName, toolResult, sessionId, recipientId, groupName) {
         try {
             // Get the persona configuration
-            const personaConfig = llmModule.personasConfig[persona] || {};
+            const personaConfig = this.personasConfig[persona] || {};
             
             // Create enhanced prompt that includes the tool result
             const toolResultStr = typeof toolResult === 'object' ? 

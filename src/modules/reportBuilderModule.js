@@ -145,31 +145,32 @@ class ReportBuilderModule {
         }
     }
      
-    extractSQL(aiMessage) {
-        try {
-          const contentStr = aiMessage.content?.trim();
-          if (!contentStr) return null;
-      
-          // Try to parse as JSON if it looks like JSON
-          if (contentStr.startsWith('{') || contentStr.startsWith('"')) {
-            const parsed = JSON.parse(contentStr);
-            if (typeof parsed.SQL === 'string') {
-              return parsed.SQL.trim();
-            }
-          }
-      
-          // If not JSON, try to extract SQL from raw string (strip common prefixes)
-          const sqlMatch = contentStr.match(/(SELECT|INSERT|UPDATE|DELETE)\s.+/i);
-          if (sqlMatch) {
-            return sqlMatch[0].trim();
-          }
-      
-          return null;
-        } catch (err) {
-          console.warn('Warning: could not extract SQL from LLM content:', err.message);
-          return null;
-        }
-      }
+   extractSQL(aiMessage) {
+  const content = aiMessage.content || '';
+  // 1) grab the JSON inside ```json … ```
+  const block = content.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+  if (block) {
+    try {
+      const parsed = JSON.parse(block[1]);
+      // your LLM uses "query" as the field
+      if (parsed.query) return parsed.query.trim();
+      if (parsed.sql)   return parsed.sql.trim();
+    } catch (e) {
+      console.warn('JSON parsing failed:', e);
+    }
+  }
+  // 2) fallback: look for a "query" property anywhere
+  const field = content.match(/"query"\s*:\s*"([^"]+)"/i);
+  if (field) return field[1].trim();
+  // 3) last resort: simple SQL regex (but strip quotes/punctuation)
+  const sql = content.match(/\b(SELECT|INSERT|UPDATE|DELETE)\b[\s\S]*/i);
+  if (sql) {
+    return sql[0]
+      .replace(/["`;]+$/g, '')   // trim trailing quotes, semicolons
+      .trim();
+  }
+  return null;
+}
       
     /**
      * Execute SQL from natural language intent
@@ -199,7 +200,7 @@ Based on this Question and schema:
 `;
             
 
-            const llm = await llmModule.getLLMInstance('sqlcoder');
+            const llm = await llmModule.getLLMInstance('llama3');
                         
             // Create a properly formatted message array
             const messages = [
@@ -228,6 +229,7 @@ Based on this Question and schema:
             
             // Execute query and log the execution
             const result = await query(ctx.config, sqlQuery);
+            
             
             // Log the SQL execution for analytics (optional)
             await eventLogger.logUpdate(

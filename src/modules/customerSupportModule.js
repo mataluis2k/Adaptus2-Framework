@@ -23,21 +23,7 @@ const ORDER_HISTORY_LIMIT = process.env.ORDER_HISTORY_LIMIT || 5;
 const ORDER_HISTORY_SORT = process.env.ORDER_HISTORY_SORT || "created_at DESC";
 const CACHE_DURATION = process.env.CACHE_DURATION || 3600; // Default: 1 hour
 const REFUND_POLICY_DAYS = process.env.REFUND_POLICY_DAYS || 30;
-const customerSupportTools = [
-    issueRefundTool,
-    fetchTrackingInfoTool,
-    checkRefundEligibilityTool,
-    summarizeLastOrdersTool,
-    updateOrderNotesTool,
-    fetchOrderDetailsTool,
-    addCustomerNoteTool,
-    checkReturnStatusTool,
-    createReturnRequestTool,
-    checkLoyaltyPointsTool,
-    addLoyaltyPointsTool,
-    clearCustomerCacheTool,
-    fetchCustomerLastOrdersTool
-  ];
+
   
 // Additional SQL queries for new tools
 const REFUND_UPDATE_QUERY = process.env.REFUND_UPDATE_QUERY || 
@@ -304,6 +290,10 @@ const checkRefundEligibilityTool = new DynamicTool({
     const db = await getDbConnection(SUPPORT_DB_CONFIG);
     const [result] = await db.execute(REFUND_ELIGIBILITY_QUERY, [orderId]);
     const orderDate = result[0]?.created_at;
+    const query = REFUND_ELIGIBILITY_QUERY;
+    console.log(`[TOOL_DEBUG] Executing SQL: ${query}`);
+    console.log(`[TOOL_DEBUG] With parameters:`, JSON.stringify([orderId]));
+    console.log(`[TOOL_DEBUG] Order date: ${orderDate}`);
     if (!orderDate) return `Order not found.`;
 
     let orderDateObj;
@@ -397,11 +387,13 @@ const updateOrderNotesTool = new DynamicTool({
       console.log(`[TOOL_DEBUG] With parameters:`, JSON.stringify(params));
       
       // Execute the query and capture the result
-      const result = await db.execute(query, params);
-      console.log(`[TOOL_DEBUG] Query execution result:`, JSON.stringify(result));
+      const [rows] = await db.execute(query, params);
+      const meta = Array.isArray(rows) ? rows[0] : rows;
+      const affectedRows = meta?.affectedRows ?? 0;
+      console.log(`[TOOL_DEBUG] affectedRows = ${affectedRows}`);
       
       // Check affected rows to verify the update worked
-      const affectedRows = result[0]?.affectedRows || 0;
+      
       if (affectedRows === 0) {
         console.warn(`[TOOL_DEBUG] Warning: No rows affected when updating notes for order ${orderId}`);
         
@@ -611,6 +603,21 @@ ${profile.customerNotes || "No notes available"}
   // await llmModule.addToHistory(sessionId, context, 'system');
 }
 
+const customerSupportTools = [
+    issueRefundTool,
+    fetchTrackingInfoTool,
+    checkRefundEligibilityTool,
+    summarizeLastOrdersTool,
+    updateOrderNotesTool,
+    fetchOrderDetailsTool,
+    addCustomerNoteTool,
+    checkReturnStatusTool,
+    createReturnRequestTool,
+    checkLoyaltyPointsTool,
+    addLoyaltyPointsTool,
+    clearCustomerCacheTool,
+    fetchCustomerLastOrdersTool
+  ];
 try {
   toolRegistry.registerModuleTools(customerSupportTools, 'customer_support', 'customerSupportModule');
 }

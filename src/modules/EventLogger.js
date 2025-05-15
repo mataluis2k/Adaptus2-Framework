@@ -37,7 +37,7 @@ class EventLogger {
    */
   async log(dbConfig, entity, payload) {
     const item = JSON.stringify({ dbConfig, entity, payload });
-    console.log('EventLogger log:', entity);
+    //console.log('EventLogger log:', entity);
     await this.redis.lpush(this.queueKey, item);
     const len = await this.redis.llen(this.queueKey);
     if (len >= this.config.batchSize && !this.flushing) {
@@ -54,7 +54,7 @@ class EventLogger {
       // 1. Grab up to batchSize items
       const raws = await this.redis.lrange(this.queueKey, 0, this.config.batchSize - 1);
       if (raws.length === 0) return;
-      console.log('EventLogger flush:', raws.length);
+      //console.log('EventLogger flush:', raws.length);
       // 2. Trim them off Redis so we won't re-process
       await this.redis.ltrim(this.queueKey, raws.length, -1);
   
@@ -62,13 +62,13 @@ class EventLogger {
       const objs = raws.map(r => JSON.parse(r));
       await Promise.all(objs.map(async item => {
         if (item.op === 'update') {
-          console.log('EventLogger update:', item.entity);
+          //console.log('EventLogger update:', item.entity);
           // UPDATE path: open a connection and execute SQL          
           await query(item.dbConfig, item.sql, item.params);
         } else {
           // INSERT path (default)
           // Need to check for the existeance of created_at and convert to a date
-          console.log('EventLogger create:', item.entity);
+          //console.log('EventLogger create:', item.entity);
           if (item.payload.created_at) {
             item.payload.created_at = new Date(item.payload.created_at);
           }

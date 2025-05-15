@@ -17,7 +17,7 @@ async function buildPersonaPrompt(persona, sessionId = null) {
         return '';
     }
     
-    console.log(`Using persona: ${JSON.stringify(persona)}`);
+    console.log(`[buildPersonaPrompt] Using persona: ${JSON.stringify(persona)}`);
     
     // Start with base persona information
     let systemPrompt = `You are a ${persona.description || 'helpful assistant'}
