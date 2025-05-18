@@ -47,7 +47,7 @@ class Rule {
         // Example: action might be { type:'update', field:'order.total', expression:'order.total - (order.total * 0.1)' }
         const { field, expression } = action;
         if (!field || !expression) {
-          consolewarn(`update action missing field/expression: ${JSON.stringify(action)}`);
+          console.warn(`update action missing field/expression: ${JSON.stringify(action)}`);
           return;
         }
         consolelog.log(`Running update for field "${field}" using expression "${expression}".`);
