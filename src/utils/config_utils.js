@@ -55,6 +55,14 @@ function getDefaultConfig() {
             earlyStoppingPatience: 3,
             featureImportance: true
         },
+
+        // Marketing qualified lead defaults
+        mqlConfig: {
+            targetField: 'is_mql',
+            featureFields: [],
+            epochs: 10,
+            batchSize: 32
+        },
         
         // Customer segmentation defaults
         segmentationConfig: {
@@ -311,39 +319,46 @@ function getConfigSchema(modelType) {
         churn: {
             targetField: { type: 'string', required: true, default: 'churned' },
             featureFields: { type: 'array', required: false, default: [] },
-            probabilityThreshold: { 
-                type: 'number', 
-                required: false, 
+            probabilityThreshold: {
+                type: 'number',
+                required: false,
                 default: 0.5,
                 minimum: 0,
                 maximum: 1
             },
-            balancingStrategy: { 
-                type: 'string', 
-                required: false, 
+            balancingStrategy: {
+                type: 'string',
+                required: false,
                 default: 'oversample',
                 enum: ['none', 'oversample', 'undersample', 'weighted']
             },
-            testSplit: { 
-                type: 'number', 
-                required: false, 
+            testSplit: {
+                type: 'number',
+                required: false,
                 default: 0.2,
                 minimum: 0.1,
                 maximum: 0.5
             },
-            epochs: { 
-                type: 'number', 
-                required: false, 
+            epochs: {
+                type: 'number',
+                required: false,
                 default: 10,
                 minimum: 1
             },
-            earlyStoppingPatience: { 
-                type: 'number', 
-                required: false, 
+            earlyStoppingPatience: {
+                type: 'number',
+                required: false,
                 default: 3,
                 minimum: 0
             },
             featureImportance: { type: 'boolean', required: false, default: true }
+        },
+
+        mql: {
+            targetField: { type: 'string', required: true, default: 'is_mql' },
+            featureFields: { type: 'array', required: false, default: [] },
+            epochs: { type: 'number', required: false, default: 10, minimum: 1 },
+            batchSize: { type: 'number', required: false, default: 32, minimum: 1 }
         },
         
         // Add schemas for other model types as needed
