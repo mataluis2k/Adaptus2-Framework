@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quiz Renderer Demo</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 1000px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        h1 {
+            color: #2c3e50;
+        }
+        
+        .instructions {
+            background-color: #f8f9fa;
+            border-left: 4px solid #3498db;
+            padding: 15px;
+            margin-bottom: 30px;
+        }
+        
+        #quiz-container {
+            margin: 30px 0;
+            min-height: 400px;
+            border: 1px solid #eee;
+        }
+        
+        .demo-controls {
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .demo-controls button {
+            background-color: #3498db;
+            color: white;
+            border: none;
+            padding: 10px 15px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        
+        .demo-controls button:hover {
+            background-color: #2980b9;
+        }
+        
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        
+        footer {
+            margin-top: 50px;
+            text-align: center;
+            font-size: 0.9em;
+            color: #7f8c8d;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <h1>Quiz Renderer Demo</h1>
+        <p>A demonstration of the QuizRenderer JavaScript library</p>
+    </header>
+
+    <section class="instructions">
+        <h2>Instructions</h2>
+        <p>This page demonstrates the QuizRenderer client library. The quiz below is loaded from a sample API endpoint. Navigate through the questions using the Previous and Next buttons, and submit your answers at the end.</p>
+    </section>
+
+    <!-- Quiz container - this is where the quiz will be rendered -->
+    <div id="quiz-container"></div>
+
+    <section class="demo-controls">
+        <h2>Demo Controls</h2>
+        <p>Use these buttons to control the demo:</p>
+        <button id="reset-quiz">Reset Quiz</button>
+        <button id="show-responses">Show Current Responses</button>
+    </section>
+
+    <section>
+        <h2>Implementation Example</h2>
+        <p>To add this quiz to your own page:</p>
+    </section>
+
+    <footer>
+        <p>&copy; 2025 Quiz Renderer Demo. All rights reserved.</p>
+    </footer>
+
+    <!-- Include the QuizRenderer.js script -->
+    <script src="QuizRenderer.js"></script>
+    
+    <!-- Initialize the quiz -->
+    <script>
+        // Initialize quiz on page load
+        document.addEventListener('DOMContentLoaded', function() {
+            // Create a reference to the quiz for later use
+            const quiz = QuizRenderer.init('quiz-container', {
+                quizId: 'd924d755-229c-7c26-f7f9-4066e7dc986f',
+                onComplete: function(results) {
+                    console.log('Quiz completed with results:', results);
+                    alert('Quiz completed! Check the console for results.');
+                }
+            });
+            
+            // Set up demo control buttons
+            document.getElementById('reset-quiz').addEventListener('click', function() {
+                quiz.reset();
+            });
+            
+            document.getElementById('show-responses').addEventListener('click', function() {
+                const responses = quiz.getResponses();
+                console.log('Current responses:', responses);
+                alert('Current responses logged to console');
+            });
+        });
+    </script>
+    <!-- Load the ecommTracker.js script -->
+</body>
+</html>
