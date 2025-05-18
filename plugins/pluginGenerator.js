@@ -14,15 +14,24 @@ module.exports = {
         const { read, query } = customRequire('../src/modules/db');
         const llmModule = customRequire('../src/modules/llmModule');
         const { redisClient } = customRequire('../src/modules/redisClient');
+        const logger = customRequire('../src/modules/logger');
+        const vm = customRequire('vm');
+
+        if (!context || !context.app || !customRequire) {
+            throw new Error('INVALID_DEPENDENCIES: context.app and customRequire are required');
+        }
         const app = context.app;
         const dbConfig = context.dbConfig;
         const pluginManager = context.pluginManager;
         const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
 
-        // Store query function for use in methods
+        // Store query function and utilities for use in other methods
         this.query = query;
-        // Store redisClient for use in methods
         this.redisClient = redisClient;
+        this.logger = logger;
+        this.vm = vm;
+
+        logger.info('Initializing pluginGenerator...');
 
         if (!app || !pluginManager) {
             throw new Error('Express app and plugin manager are required for pluginGenerator.');
@@ -37,77 +46,51 @@ module.exports = {
          */
         app.post('/api/generate-plugin', async (req, res) => {
             try {
-                const { prompt } = req.body;
-                if (!prompt) return res.status(400).json({ error: 'Missing userPrompt' });
+                const { prompt } = req.body || {};
+                if (typeof prompt !== 'string' || !prompt.trim()) {
+                    return res.status(400).json({ errorCode: 'INVALID_PROMPT', message: 'Prompt must be a non-empty string.' });
+                }
 
                 const tableSchemas = await this.getTableSchemas(dbConfig);
                 const actions = Object.keys(context.actions);
                 const pluginNames = pluginManager ? Array.from(pluginManager.plugins.keys()) : [];
                 const apiConfig = context.apiConfig || [];
 
-                const prompt1 = this.buildPluginPrompt({
-                    actions,
-                    plugins: pluginNames,
-                    schemas: tableSchemas,
-                    apiConfig,
-                });
-
-                console.log(prompt1);
-                const llm = await llmModule.getLLMInstance('llama3');
-                const messages = [
-                    { role: 'system', content: prompt1 },
-                    { role: 'user', content: prompt }
-                ];
-                let result = await llm.call(messages);
-
-                // Extract code from the response
-                console.log('LLM Response:', JSON.stringify(result, null, 2));
-                let code = "";
-                try {
-                    // Handle the response object
-                    if (result && result.kwargs && result.kwargs.content) {
-                        // Remove the think section if it exists
-                        let content = result.kwargs.content;
-                        const thinkMatch = content.match(/<think>[\s\S]*?<\/think>/);
-                        if (thinkMatch) {
-                            content = content.replace(thinkMatch[0], '').trim();
-                        }
-                        
-                        // Extract code blocks
-                        const codeBlocks = content.match(/```[\s\S]*?```/g);
-                        if (codeBlocks) {
-                            code = codeBlocks.map(block => {
-                                // Remove the language identifier and backticks
-                                return block.replace(/```\w*\n/, '').replace(/```$/, '');
-                            }).join('\n\n');
-                        } else {
-                            code = content;
-                        }
-                    } else if (typeof result === 'string') {
-                        // Handle string response
-                        const thinkMatch = result.match(/<think>[\s\S]*?<\/think>/);
-                        if (thinkMatch) {
-                            result = result.replace(thinkMatch[0], '').trim();
-                        }
-                        code = result;
+                const attemptGeneration = async (userPrompt, attempt = 0, errors = []) => {
+                    let systemPrompt = this.buildPluginPrompt({ actions, plugins: pluginNames, schemas: tableSchemas, apiConfig });
+                    if (attempt > 0 && errors.length) {
+                        systemPrompt += `\nPrevious attempt failed validation: ${errors.join(', ')}. Please correct these issues and return only valid JavaScript.`;
                     }
-                } catch (parseError) {
-                    console.warn('Failed to parse LLM response:', parseError.message);
-                    // If parsing fails, try to use the raw response
-                    if (typeof result === 'string') {
-                        code = result;
-                    } else if (result && result.kwargs && result.kwargs.content) {
-                        code = result.kwargs.content;
+
+                    const llm = await llmModule.getLLMInstance('llama3');
+                    const messages = [
+                        { role: 'system', content: systemPrompt },
+                        { role: 'user', content: userPrompt }
+                    ];
+
+                    const raw = await llm.call(messages);
+                    logger.info('LLM Response:', JSON.stringify(raw, null, 2));
+                    const code = this.extractCodeFromResponse(raw);
+                    const validation = this.validatePluginCode(code);
+
+                    if (!validation.valid && attempt < 1) {
+                        logger.warn('Plugin validation failed', validation.errors);
+                        return attemptGeneration(userPrompt, attempt + 1, validation.errors);
                     }
+
+                    return { code, validation };
+                };
+
+                const { code, validation } = await attemptGeneration(prompt);
+
+                if (!validation.valid) {
+                    return res.status(400).json({ errorCode: 'INVALID_PLUGIN', errors: validation.errors });
                 }
 
-                res.json({ 
-                    success: true,
-                    code: code // Send code directly at the top level
-                });
+                res.json({ success: true, code });
             } catch (err) {
-                console.error('Error generating plugin:', err.message);
-                res.status(500).json({ error: err.message });
+                logger.error('Error generating plugin:', err);
+                res.status(500).json({ errorCode: 'GENERATION_FAILED', message: err.message });
             }
         });
 
@@ -117,35 +100,80 @@ module.exports = {
          */
         app.post('/api/save-plugin', middleware, async (req, res) => {
             try {
-                const { pluginName, pluginCode } = req.body;
-                if (!pluginName || !pluginCode) {
-                    return res.status(400).json({ error: 'Missing pluginName or pluginCode' });
+                const { pluginName, pluginCode } = req.body || {};
+                if (typeof pluginName !== 'string' || !pluginName.trim() || typeof pluginCode !== 'string' || !pluginCode.trim()) {
+                    return res.status(400).json({ errorCode: 'INVALID_INPUT', message: 'pluginName and pluginCode are required.' });
+                }
+
+                const validation = this.validatePluginCode(pluginCode);
+                if (!validation.valid) {
+                    return res.status(400).json({ errorCode: 'INVALID_PLUGIN', errors: validation.errors });
                 }
 
                 const filePath = path.join(__dirname, `../plugins/${pluginName}.js`);
                 fs.writeFileSync(filePath, pluginCode, 'utf8');
 
                 const result = await pluginManager.loadPlugin(pluginName);
-                console.log(`Plugin ${pluginName} loaded into memory.`);
+                logger.info(`Plugin ${pluginName} loaded into memory.`);
 
                 res.json({ success: true, message: `Plugin ${pluginName} saved and loaded.`, loadResult: result });
             } catch (err) {
-                console.error('Error saving/loading plugin:', err.message);
-                res.status(500).json({ error: err.message });
+                logger.error('Error saving/loading plugin:', err);
+                res.status(500).json({ errorCode: 'SAVE_FAILED', message: err.message });
             }
         });
 
-        console.log('pluginGenerator registered /api/generate-plugin and /api/save-plugin');
+        logger.info('pluginGenerator registered /api/generate-plugin and /api/save-plugin');
     },
 
     /**
      * Build detailed prompt for LLM
      */
     buildPluginPrompt({ actions, plugins, schemas, apiConfig }) {
+        const examples = `
+/* Example Plugin 1 */
+module.exports = {
+    name: 'helloWorld',
+    version: '1.0.0',
+    initialize(dependencies) {
+        const { context } = dependencies;
+        if (!context || !context.actions) throw new Error('Context with actions is required.');
+        async function helloWorld(ctx, params) {
+            if (!params || !params.name) throw new Error('Missing name parameter');
+            return { greeting: \`Hello ${params.name}\` };
+        }
+        if (!context.actions.helloWorld) context.actions.helloWorld = helloWorld;
+    },
+};
+
+/* Example Plugin 2 */
+module.exports = {
+    name: 'externalApi',
+    version: '1.0.0',
+    initialize(dependencies) {
+        const { context, customRequire } = dependencies;
+        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
+        if (!context || !context.actions) throw new Error('Context with actions is required.');
+        async function fetchData(ctx, params) {
+            const apiKey = ctx.config.myServiceKey || process.env.MY_SERVICE_KEY;
+            if (!apiKey) throw new Error('Missing MY_SERVICE_KEY configuration');
+            try {
+                const client = new UniversalApiClient({ baseUrl: 'https://api.example.com', authType: 'apiKey', authValue: apiKey });
+                return await client.get('/resource', params);
+            } catch (error) {
+                throw new Error('Failed to fetch data: ' + error.message);
+            }
+        }
+        if (!context.actions.fetchData) context.actions.fetchData = fetchData;
+    },
+};
+`;
         return `
 You are an expert developer building modular plugins for a Node.js server framework.
 
-Instructions for LLM to Create Server Plugins, YOU MUST WRITE IT IN JAVASCRIPT AND YOU MUST FOLLOW THE BLUEPRINT BELOW:
+Instructions: Return ONLY JavaScript code. Do not include markdown or explanations. Follow the blueprint below and use try/catch for async logic.
+
+${examples}
 
 The goal of these instructions is to guide an LLM in producing server plugins based on a well-defined blueprint. These plugins should follow a standardized architecture, be production-ready, and integrate seamlessly into the server's existing ecosystem.
 
@@ -321,6 +349,84 @@ module.exports = {
 - Register the main function into 'context.actions' using a unique name.
 - Validate that the action is not already registered to avoid conflicts.
 `;
+    },
+
+    /**
+     * Extract JavaScript code from various LLM response formats
+     * @param {any} response - Raw response from the LLM
+     * @returns {string} - Extracted JavaScript code
+     */
+    extractCodeFromResponse(response) {
+        let content = '';
+        if (typeof response === 'string') {
+            content = response;
+        } else if (response && response.kwargs && response.kwargs.content) {
+            content = response.kwargs.content;
+        } else if (response && response.content) {
+            content = response.content;
+        }
+
+        content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+
+        const codeBlocks = [];
+        const blockRegex = /```(?:javascript)?\n([\s\S]*?)```/g;
+        let match;
+        while ((match = blockRegex.exec(content)) !== null) {
+            codeBlocks.push(match[1]);
+        }
+        if (codeBlocks.length > 0) {
+            return codeBlocks.join('\n');
+        }
+        return content;
+    },
+
+    /**
+     * Validate generated plugin code for structure and security
+     * @param {string} code - Code string to validate
+     * @returns {{valid:boolean, errors:string[]}}
+     */
+    validatePluginCode(code) {
+        const errors = [];
+        if (!code || typeof code !== 'string') {
+            return { valid: false, errors: ['EMPTY_CODE'] };
+        }
+
+        try {
+            new this.vm.Script(code);
+        } catch (err) {
+            errors.push('SYNTAX_ERROR: ' + err.message);
+            return { valid: false, errors };
+        }
+
+        const sandbox = { module: { exports: {} }, exports: {} };
+        try {
+            this.vm.runInNewContext(code, sandbox, { timeout: 1000 });
+        } catch (err) {
+            errors.push('EXECUTION_ERROR: ' + err.message);
+            return { valid: false, errors };
+        }
+
+        const plugin = sandbox.module.exports;
+        if (!plugin || typeof plugin !== 'object') {
+            errors.push('NO_EXPORT_OBJECT');
+        } else {
+            if (!plugin.name) errors.push('MISSING_EXPORT_NAME');
+            if (!plugin.version) errors.push('MISSING_EXPORT_VERSION');
+            if (typeof plugin.initialize !== 'function') {
+                errors.push('MISSING_INITIALIZE');
+            } else if (!/try\s*{[\s\S]*catch\s*\(/.test(plugin.initialize.toString())) {
+                errors.push('INITIALIZE_NO_TRY_CATCH');
+            }
+        }
+
+        if (/eval\s*\(/.test(code)) {
+            errors.push('USES_EVAL');
+        }
+        if (/(api[_-]?key|password)\s*[:=]/i.test(code)) {
+            errors.push('HARDCODED_CREDENTIALS');
+        }
+
+        return { valid: errors.length === 0, errors };
     },
 
     /**
