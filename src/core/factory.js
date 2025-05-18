@@ -159,6 +159,18 @@ class ModelHandlerFactory {
                 });
                 return model;
             },
+            mql: (inputShape) => {
+                const model = tf.sequential();
+                model.add(tf.layers.dense({ units: 32, activation: 'relu', inputShape: [inputShape] }));
+                model.add(tf.layers.dropout({ rate: 0.2 }));
+                model.add(tf.layers.dense({ units: 1, activation: 'sigmoid' }));
+                model.compile({
+                    optimizer: 'adam',
+                    loss: 'binaryCrossentropy',
+                    metrics: ['accuracy']
+                });
+                return model;
+            },
             demandForecasting: (inputShape, timeSteps = 10, features = 1) => {
                 const model = tf.sequential();
                 model.add(tf.layers.lstm({
