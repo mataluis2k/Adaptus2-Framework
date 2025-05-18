@@ -126,7 +126,7 @@ For more information, visit: https://ollama.ai/download
         }
     }
 
-    async generateResponse(prompt, messages = [], format = 'text') {
+    async generateResponse(prompt, messages = [], format = 'text', model = this.model) {
         await this.ensureInitialized();
         try {
             // For Ollama, we'll concatenate previous messages into the prompt
@@ -139,7 +139,7 @@ For more information, visit: https://ollama.ai/download
                 prompt;
     
             const options = { 
-                model: this.model, 
+                model: model, 
                 prompt: fullPrompt,
                 stream: false,
             }

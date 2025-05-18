@@ -494,7 +494,7 @@ function stripAllDelimiters(text) {
 async function handleRAG(query, userId = 'default', personaName = null, model = null) {
   if (!vectorStore) return handleNoVectorStoreQuery(query, userId, personaName);
   console.log(`[RAG Debug] handleRAG called with query: "${query.substring(0, 50)}..."`, 
-  `userId: ${userId}, personaName: ${personaName}`);
+  `userId: ${userId}, personaName: ${personaName}, model: ${model}`);
   try {
 
     // Initialize persona handling

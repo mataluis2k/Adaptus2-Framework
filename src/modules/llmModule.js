@@ -1047,7 +1047,7 @@ async detectRequestedPersona(message) {
     
     try {
         // Use the existing selectPersona method as fallback
-        const selectedPersona = await this.selectPersona(message, this.getPersonasWithDescriptions());
+        const {persona : selectedPersona } = await this.selectPersona(message, this.getPersonasWithDescriptions());
         
         return { 
             requestedPersona: selectedPersona, 
@@ -1419,7 +1419,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
         if (!model) {
             model = process.env.OLLAMA_INFERENCE || 'llama3';
         }
-    
+        console.log('model=======>', model);
         switch (this.llmType.toLowerCase()) {
             case 'ollama':
                 try {
@@ -1439,9 +1439,14 @@ async generateDirectAnswer(message, userContext, sessionId) {
                                 recipientId: 'AI_Assistant',
                                 message: messages[messages.length - 1].content,
                                 timestamp: new Date().toISOString(),
-                                status: 'processing'
+                                status: 'processing',
+                                format: 'json'
                             };
-                            const response = await ollamaModule.processMessage(messageData, []);
+                            let format = 'text';
+                            if(model === 'qwen2.5-coder:32b' || model === 'sqlcoder:latest'){
+                                format = 'json';
+                            }
+                            const response = await ollamaModule.generateResponse(messageData, [],format, model);
                             return response.message || '';
                         }
                     };

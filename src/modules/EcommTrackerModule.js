@@ -287,9 +287,9 @@ class EcommerceTracker {
      * @private
      */
     async _processEventSpecificData(dbConfig, data) {
-        const { eventId, name: eventName, data: eventData } = data;
-
-        if(eventName.contains('_click')) {
+        
+        let eventName = data.name || data.event_type || data.eventType;
+        if (typeof eventName === 'string' && eventName.includes('_click')) {
             eventName = "click";
         }
         switch (eventName) {

@@ -1344,7 +1344,15 @@ function buildFilterClause(filterObj, dbTable) {
                     return res.status(400).json({ error: 'No writable fields provided' });
                 }
 
-                const values = writableFields.map((key) => req.body[key]);
+                // Properly serialize objects to JSON strings before sending to database
+                const values = writableFields.map((key) => {
+                    const val = req.body[key];
+                    // Check if value is an object (but not null and not a Date) and convert to JSON string
+                    if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+                        return JSON.stringify(val);
+                    }
+                    return val;
+                });
                 const placeholders = writableFields.map(() => '?').join(', ');
                 const query = `INSERT INTO ${dbTable} (${writableFields.join(', ')}) VALUES (${placeholders})`;
 
@@ -1375,16 +1383,16 @@ if (keys && keys.length > 0) {
     
             // Check if UUID obfuscation is enabled for the primary key.
             if (endpoint.uuidMapping) {
-            if (
-                (typeof endpoint.uuidMapping === 'boolean' && endpoint.uuidMapping === true) ||
-                (Array.isArray(endpoint.uuidMapping) && endpoint.uuidMapping.includes(primaryKey))
-            ) {
-                const decodedId = await uuidTools.getOriginalIdFromUUID(dbTable, primaryKey, recordId);
-                if (!decodedId) {
-                return res.status(400).json({ error: "Invalid UUID provided" });
+                if (
+                    (typeof endpoint.uuidMapping === 'boolean' && endpoint.uuidMapping === true) ||
+                    (Array.isArray(endpoint.uuidMapping) && endpoint.uuidMapping.includes(primaryKey))
+                ) {
+                    const decodedId = await uuidTools.getOriginalIdFromUUID(dbTable, primaryKey, recordId);
+                    if (!decodedId) {
+                    return res.status(400).json({ error: "Invalid UUID provided" });
+                    }
+                    recordId = decodedId;
                 }
-                recordId = decodedId;
-            }
             }
     
             if (!recordId) {
@@ -1396,20 +1404,28 @@ if (keys && keys.length > 0) {
             return res.status(400).json({ error: 'No writable fields provided' });
             }
     
-            const values = writableFields.map((key) => req.body[key]);
+            // Properly serialize objects to JSON strings before sending to database
+            const values = writableFields.map((key) => {
+                const val = req.body[key];
+                // Check if value is an object (but not null and not a Date) and convert to JSON string
+                if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+                    return JSON.stringify(val);
+                }
+                return val;
+            });
             const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
             let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
             const params = [...values, recordId];
     
             if (endpoint.owner) {
-            const user = getContext('user');
-            if (!user) {
-                return res.status(401).json({ error: "Unauthorized" });
+                const user = getContext('user');
+                    if (!user) {
+                        return res.status(401).json({ error: "Unauthorized" });
+                    }
+                query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
+                params.push(user[endpoint.owner.tokenField]);
             }
-            query += ` AND ${dbTable}.${endpoint.owner.column} = ?`;
-            params.push(user[endpoint.owner.tokenField]);
-            }
-    
+            console.log(`Executing query: ${query} with params: ${params}`);
             try {
             const connection = await getDbConnection(endpoint);
             await connection.execute(query, params);
@@ -1454,7 +1470,15 @@ if (keys && keys.length > 0) {
             return res.status(400).json({ error: 'No writable fields provided' });
             }
     
-            const values = writableFields.map((key) => req.body[key]);
+            // Properly serialize objects to JSON strings before sending to database
+            const values = writableFields.map((key) => {
+                const val = req.body[key];
+                // Check if value is an object (but not null and not a Date) and convert to JSON string
+                if (val !== null && typeof val === 'object' && !(val instanceof Date)) {
+                    return JSON.stringify(val);
+                }
+                return val;
+            });
             const setClause = writableFields.map((key) => `${key} = ?`).join(', ');
             let query = `UPDATE ${dbTable} SET ${setClause} WHERE ${primaryKey} = ?`;
             const params = [...values, recordId];
@@ -2310,6 +2334,13 @@ MOD_PAGECLONE=false
         this.dependencyManager.addDependency('app', this.app);
         this.dependencyManager.addDependency('db', getDbConnection); // Add a database connection function.
         this.dependencyManager.addDependency('logger', logger);
+
+        // Set up global context
+        const { globalContext } = require('./modules/context');
+        globalContext.app = this.app;
+        globalContext.pluginManager = this.pluginManager;
+        globalContext.dbConfig = this.apiConfig;
+        globalContext.actions = globalContext.actions || {};
     }
 
     async synchronizePluginsOnStartup() {

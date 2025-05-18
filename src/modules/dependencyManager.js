@@ -9,7 +9,23 @@ const fs = require('fs');
 class DependencyManager {
     constructor() {
         this.dependencies = {};
-        this.context = globalContext; 
+        this.context = globalContext;
+        this.rootDir = process.cwd();
+        this.serverDir = path.join(this.rootDir, 'src');
+        this.modulesDir = path.join(this.serverDir, 'modules');
+    }
+
+    /**
+     * Set custom directory paths
+     * @param {Object} paths - Object containing custom paths
+     * @param {string} [paths.rootDir] - Custom root directory path
+     * @param {string} [paths.serverDir] - Custom server directory path
+     * @param {string} [paths.modulesDir] - Custom modules directory path
+     */
+    setPaths(paths = {}) {
+        if (paths.rootDir) this.rootDir = paths.rootDir;
+        if (paths.serverDir) this.serverDir = paths.serverDir;
+        if (paths.modulesDir) this.modulesDir = paths.modulesDir;
     }
 
     /**
