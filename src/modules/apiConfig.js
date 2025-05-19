@@ -59,6 +59,40 @@ function getConfigNode(table,routeType){
       item.dbTable === table
     );
 }
+
+/**
+ * Scans a directory for JSON files and returns their parsed contents
+ * @param {string} directoryPath - Path to the directory to scan
+ * @returns {Array} - Array of valid configuration objects from JSON files
+ */
+function loadExtraConfigs(directoryPath) {
+  const extraConfigs = [];
+  console.log(`Checking for extra configs in: ${directoryPath}`);
+  
+  if (!fs.existsSync(directoryPath)) {
+    console.log(`Extra configs directory not found: ${directoryPath}. Continuing with main config only.`);
+    return extraConfigs; // Return empty array, which won't affect the main config
+  }
+  
+  try {
+    const files = fs.readdirSync(directoryPath);
+    
+    if (files.length === 0) {
+      console.log(`No files found in extra configs directory. Continuing with main config only.`);
+      return extraConfigs;
+    }
+    
+    console.log(`Found ${files.length} files in extra configs directory, processing...`);
+    
+    // Rest of the code remains the same...
+    // ...
+  } catch (error) {
+    console.error(`Error scanning extra configs directory: ${error.message}. Continuing with main config only.`);
+    return extraConfigs; // Return empty array on any error to continue with main config
+  }
+  
+  return extraConfigs;
+}
 /**
  * Loads custom route types from the `apiTypes.conf` configuration file.
  * @returns {Object} - An object mapping custom route types to their actions.
@@ -188,17 +222,35 @@ const loadConfig = async (configFile = configPath) => {
         const configData = fs.readFileSync(configFile, 'utf-8');
         apiConfig = JSON.parse(configData);
         
+        const extrasConfigDir = path.join(configDir, 'extras_config');
+        let extraConfigs = [];
+        try {
+            extraConfigs = loadExtraConfigs(extrasConfigDir);
+        } catch (error) {
+            // Catch any unexpected errors to ensure main config processing continues
+            console.error(`Failed to load extra configs: ${error.message}. Continuing with main config only.`);
+        }
+
+        // Merge extra configs with main config (only if there are any)
+        if (extraConfigs && extraConfigs.length > 0) {
+            console.log(`Merging ${extraConfigs.length} extra configurations into main config.`);
+            apiConfig = [...apiConfig, ...extraConfigs];
+        } else {
+            console.log('No extra configurations to merge. Proceeding with main config only.');
+        }
+        
         // Add CMS_TABLE_SCHEMA to apiConfig
         if (!apiConfig.find(config => config.dbTable === CMS_TABLE_SCHEMA.dbTable && config.routeType === CMS_TABLE_SCHEMA.routeType)) {
             apiConfig.push(CMS_TABLE_SCHEMA);
         }
+        
         // Add ECOMMTRACKER_TABLE_SCHEMAS to apiConfig
         // ECOMMTRACKER_TABLE_SCHEMAS contains multiple table definitions
         Object.keys(ECOMMTRACKER_TABLE_SCHEMAS).forEach(table => {
-                const schema = ECOMMTRACKER_TABLE_SCHEMAS[table];
+            const schema = ECOMMTRACKER_TABLE_SCHEMAS[table];
             if (!apiConfig.find(config => config.dbTable === schema.dbTable && config.routeType === CMS_TABLE_SCHEMA.routeType)) {
-                    apiConfig.push(schema);
-                }
+                apiConfig.push(schema);
+            }
         });
        
         categorizedConfig = categorizeApiConfig(apiConfig);
