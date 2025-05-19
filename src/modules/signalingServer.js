@@ -1,8 +1,13 @@
 const WebSocket = require('ws');
 const jwt = require('jsonwebtoken');
+const Ajv = require('ajv');
+const logger = require('./logger');
 const { getMyConfig } = require('./apiConfig'); // Adaptus2 API config
 
-const JWT_SECRET = process.env.JWT_SECRET || 'your_secret_key';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+    throw new Error('JWT_SECRET environment variable must be set');
+}
 const SIGNALING_PORT = process.env.WS_SIGNALING_PORT || 4000;
 
 class SignalingServer {
@@ -20,20 +25,27 @@ class SignalingServer {
         this.moderators = new Set(); // Users with moderator role
         this.admins = new Set(); // Users with admin role
         this.bannedUsers = new Set(); // Users who are banned
-        this.mutedUsers = new Set(); // Users who are muted        
+        this.mutedUsers = new Set(); // Users who are muted
+        this.roomActivity = {}; // { roomId: lastActivityTimestamp }
+
+        this.ajv = new Ajv();
+        this.validators = this.createValidators();
+
         this.config = getMyConfig('signalingServer.json');
         this.setupWebSocket();
         this.startHeartbeat();
+        this.startRoomCleanup();
     }
     startHeartbeat() {
         setInterval(() => {
             this.wss.clients.forEach((ws) => {
                 if (ws.isAlive === false) {
-                    console.log('Terminating dead connection');
-                    ws.terminate(); // This triggers `ws.on('close')` -> cleanupUser()
+                    logger.warn('Terminating dead connection');
+                    // This triggers `ws.on(\'close\')` -> cleanupUser()
+                    ws.terminate();
                     return;
                 }
-    
+
                 ws.isAlive = false;
                 ws.ping(); // Triggers client's pong
             });
@@ -42,12 +54,12 @@ class SignalingServer {
 
     setupWebSocket() {
         this.wss.on('connection', (ws, req) => {
-            console.log('New WebSocket connection');
+            logger.info('New WebSocket connection');
             ws.isAlive = true;
             ws.on('pong', () => { ws.isAlive = true; });
 
-            const token = req.url.split('?token=')[1];
-            if (!token) {
+            const tokenHeader = (req.headers['sec-websocket-protocol'] || '').split(',')[0].trim();
+            if (!tokenHeader) {
                 ws.close(4001, 'Unauthorized');
                 return;
             }
@@ -55,51 +67,68 @@ class SignalingServer {
             const credentialsMap = this.config.credentialsObject;
             let userId;
             try {
-                const decoded = jwt.verify(token, JWT_SECRET);
+                const decoded = jwt.verify(tokenHeader, JWT_SECRET);
                 userId = decoded[credentialsMap.userId];
+                if (!userId) throw new Error('Missing userId');
+                if (this.bannedUsers.has(userId)) {
+                    ws.close(4003, 'Banned');
+                    return;
+                }
                 this.clients[userId] = ws;
             } catch (err) {
-                console.error('JWT validation failed:', err);
+                logger.error('JWT validation failed:', err);
                 ws.close(4001, 'Invalid token');
                 return;
             }
 
+            ws.messageCount = 0;
+            ws.lastMessageTime = Date.now();
+
             ws.on('message', (message) => {
+                // Simple rate limiting
+                const now = Date.now();
+                if (now - ws.lastMessageTime < 1000) {
+                    ws.messageCount++;
+                    if (ws.messageCount > 20) {
+                        ws.close(4008, 'Rate limit exceeded');
+                        return;
+                    }
+                } else {
+                    ws.messageCount = 1;
+                    ws.lastMessageTime = now;
+                }
+
                 try {
                     const data = JSON.parse(message);
+                    if (!this.validateMessage(data)) {
+                        logger.warn('Invalid message from', userId, data);
+                        return;
+                    }
                     if (data.type === 'join') {
                         userId = data.senderId;
                         this.clients[userId] = ws;
+                        ws.userId = userId;
                         this.handleJoin(userId, data.roomId);
-                        ws.userId = userId; // <- Assign userId to ws for cleanup later
                     } else if (userId) {
                         this.handleMessage(userId, data);
                     }
                 } catch (err) {
-                    console.error('Failed to parse message:', err);
+                    logger.error('Failed to parse message:', err);
                 }
+            });
+            ws.on('error', (err) => {
+                logger.error('WebSocket error', err);
             });
             ws.on('close', () => {
                 const currentUserId = ws.userId;
-                
                 this.cleanupUser(currentUserId);
-                if (!currentUserId) return;
-                // Cleanup on disconnect
-                for (const roomId in this.rooms) {
-                    this.rooms[roomId] = this.rooms[roomId].filter(p => p.userId !== currentUserId);
-                    this.rooms[roomId].forEach(peer => {
-                        peer.ws.send(JSON.stringify({ type: 'peer_disconnect', userId: currentUserId }));
-                    });
-                    if (this.rooms[roomId].length === 0) delete this.rooms[roomId];
-                }
-                this.userSockets.delete(currentUserId);
-                console.log(`User ${currentUserId} disconnected`);
+                logger.info(`User ${currentUserId} disconnected`);
             });
         });
     }
 
     handleMessage(userId, data) {
-        console.log(`Received from ${userId}:`, data);
+        logger.debug(`Received from ${userId}: ${JSON.stringify(data)}`);
         
 
         switch (data.type) {
@@ -110,10 +139,11 @@ class SignalingServer {
             case 'offer':
             case 'answer':
             case 'candidate':
+                if (this.userRooms[data.target] !== this.userRooms[userId]) {
+                    logger.warn('Target user not in same room');
+                    break;
+                }
                 this.relayMessage(userId, data.target, data);
-                break;
-	        case 'leave':
-                this.handleLeave(userId, data.roomId);
                 break;
             case 'screen_share':
                     const isScreenSharing = data.screenSharing;
@@ -130,25 +160,24 @@ class SignalingServer {
                     });
                     break;
             case 'chat_message':
+                if (this.mutedUsers.has(userId)) break;
                 this.broadcastToRoom(this.userRooms[userId], {
                     type: 'chat_message',
                     senderId: userId,
-                    message: data.message,
+                    message: this.sanitize(data.message),
                 }, userId);
                 break;
 
             case 'file_meta':
+                if (this.mutedUsers.has(userId)) break;
                 this.broadcastToRoom(this.userRooms[userId], {
                     type: 'file_meta',
                     userId,
-                    fileName: data.fileName,
+                    fileName: this.sanitize(data.fileName),
                     fileSize: data.fileSize,
                 }, userId);
                 break;
 
-            case 'leave':
-                this.handleLeave(userId, this.userRooms[userId]);
-                break;
             case 'raise_hand':
                 const isRaised = data.isRaised;
                 if (isRaised) {
@@ -202,11 +231,14 @@ class SignalingServer {
 
     handleJoin(userId, roomId) {
         if (!this.rooms[roomId]) this.rooms[roomId] = [];
-        
+        if (this.userRooms[userId] === roomId) {
+            return; // already joined
+        }
+
         // Get the websocket for this user
         const ws = this.clients[userId];
         if (!ws) {
-            console.error(`Cannot find websocket for user ${userId}`);
+            logger.error(`Cannot find websocket for user ${userId}`);
             return;
         }
     
@@ -216,6 +248,8 @@ class SignalingServer {
             this.waitingRoomUsers[roomId] = this.waitingRoomUsers[roomId].filter(id => id !== userId);
         }
     
+        this.roomActivity[roomId] = Date.now();
+
         // Notify the new user about existing peers
         this.rooms[roomId].forEach(peer => {
             ws.send(JSON.stringify({ type: 'new_peer', userId: peer.userId }));
@@ -254,8 +288,8 @@ class SignalingServer {
         this.rooms[roomId].push({ userId, ws });
         this.userRooms[userId] = roomId;
         this.userSockets.set(userId, ws);
-    
-        console.log(`User ${userId} joined room ${roomId}`);
+
+        logger.info(`User ${userId} joined room ${roomId}`);
     }
 
     // Handle waiting room requests
@@ -276,7 +310,7 @@ handleWaitingRoomRequest(userId, roomId, user) {
         });
     }
     
-    console.log(`User ${userId} is waiting to join room ${roomId}`);
+    logger.info(`User ${userId} is waiting to join room ${roomId}`);
 }
 
 // Handle admitting users from waiting room
@@ -309,29 +343,8 @@ handleEndMeeting(roomId) {
     
     delete this.rooms[roomId];
     delete this.waitingRoomUsers[roomId];
-    console.log(`Meeting ended in room ${roomId}`);
-}
-
-// Handle user leaving a room
-handleLeave(userId, roomId) {
-    if (!this.rooms[roomId]) return;
-
-    // Remove user from the room
-    this.rooms[roomId] = this.rooms[roomId].filter(peer => peer.userId !== userId);
-
-    // Notify others
-    this.broadcastToRoom(roomId, { type: 'peer_disconnect', userId });
-
-    // Clean up any states for the user
-    this.screenShareUsers.delete(userId);
-    this.recordingUsers.delete(userId);
-    this.handRaisedUsers.delete(userId);
-
-    if (this.rooms[roomId].length === 0) {
-        delete this.rooms[roomId];
-    }
-
-    delete this.userRooms[userId];
+    delete this.roomActivity[roomId];
+    logger.info(`Meeting ended in room ${roomId}`);
 }
 
     // Relay targeted offer/answer/candidate
@@ -340,6 +353,7 @@ handleLeave(userId, roomId) {
         if (targetSocket) {
             data.senderId = senderId; // Important for the client to know the sender
             targetSocket.send(JSON.stringify(data));
+            this.roomActivity[this.userRooms[senderId]] = Date.now();
         }
     }
 
@@ -351,19 +365,22 @@ handleLeave(userId, roomId) {
                 peer.ws.send(JSON.stringify(message));
             }
         });
+        this.roomActivity[roomId] = Date.now();
     }
 
     handleLeave(userId, roomId) {
         if (!this.rooms[roomId]) return;
 
-        // Remove user from the room
         this.rooms[roomId] = this.rooms[roomId].filter(peer => peer.userId !== userId);
-
-        // Notify others
         this.broadcastToRoom(roomId, { type: 'peer_disconnect', userId });
+
+        this.screenShareUsers.delete(userId);
+        this.recordingUsers.delete(userId);
+        this.handRaisedUsers.delete(userId);
 
         if (this.rooms[roomId].length === 0) {
             delete this.rooms[roomId];
+            delete this.roomActivity[roomId];
         }
 
         delete this.userRooms[userId];
@@ -387,8 +404,89 @@ handleLeave(userId, roomId) {
         this.screenShareUsers.delete(userId);
         this.recordingUsers.delete(userId);
         this.handRaisedUsers.delete(userId);
-        
-        console.log(`Cleaned up user ${userId}`);
+
+        logger.info(`Cleaned up user ${userId}`);
+    }
+
+    createValidators() {
+        return {
+            join: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'join' },
+                    roomId: { type: 'string' },
+                    senderId: { type: 'string' }
+                },
+                required: ['type', 'roomId', 'senderId']
+            }),
+            offer: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'offer' },
+                    target: { type: 'string' },
+                    sdp: { type: 'string' }
+                },
+                required: ['type', 'target', 'sdp']
+            }),
+            answer: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'answer' },
+                    target: { type: 'string' },
+                    sdp: { type: 'string' }
+                },
+                required: ['type', 'target', 'sdp']
+            }),
+            candidate: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'candidate' },
+                    target: { type: 'string' },
+                    candidate: { type: 'string' }
+                },
+                required: ['type', 'target', 'candidate']
+            }),
+            chat_message: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'chat_message' },
+                    message: { type: 'string' }
+                },
+                required: ['type', 'message']
+            }),
+            file_meta: this.ajv.compile({
+                type: 'object',
+                properties: {
+                    type: { const: 'file_meta' },
+                    fileName: { type: 'string' },
+                    fileSize: { type: 'number' }
+                },
+                required: ['type', 'fileName', 'fileSize']
+            })
+        };
+    }
+
+    validateMessage(data) {
+        const validator = this.validators[data.type];
+        return validator ? validator(data) : true;
+    }
+
+    sanitize(str = '') {
+        return String(str).replace(/[<>]/g, '');
+    }
+
+    startRoomCleanup() {
+        setInterval(() => {
+            const now = Date.now();
+            for (const [roomId, ts] of Object.entries(this.roomActivity)) {
+                if (this.rooms[roomId] && this.rooms[roomId].length === 0 && now - ts > 3600000) {
+                    delete this.rooms[roomId];
+                    delete this.roomActivity[roomId];
+                    delete this.waitingRoomUsers[roomId];
+                    logger.info(`Cleaned up empty room ${roomId}`);
+                }
+            }
+        }, 600000); // every 10 minutes
     }
 }
 
