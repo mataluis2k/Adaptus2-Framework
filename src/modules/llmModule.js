@@ -1410,134 +1410,74 @@ async generateDirectAnswer(message, userContext, sessionId) {
         return null; // No match found
     }
 
-    async getLLMInstance(model = null) {
+    async getLLMInstance(model = null, options = {}) {
         const { ChatOllama } = require('@langchain/ollama');
         const { ChatOpenAI } = require('@langchain/openai');
-    
-        // Check if the model is provided, otherwise use the default
+
+        // Allow overriding of LLM type and other settings via options
+        const { type, baseUrl, ...llmOptions } = options || {};
+        const llmType = (type || this.llmType || 'ollama').toLowerCase();
+
+        // Default to environment model if none supplied
         if (!model) {
             // Use a code-optimized model by default
             model = process.env.OLLAMA_INFERENCE || 'codellama:13b-instruct';
         }
-        console.log('model=======>', model);
-        
-        // Determine if this is a code generation task
-        const isCodeGeneration = model.toLowerCase().includes('code') || 
-                                 model.toLowerCase().includes('llama') ||
-                                 model.toLowerCase().includes('qwen');
-        
-        // Set appropriate parameters based on task type
-        const temperature = isCodeGeneration ? 0.1 : 0.3;
-        const topP = isCodeGeneration ? 0.1 : 0.8;
-        const stopSequences = isCodeGeneration ? ["```", "Step", "Note:"] : [];
-        
-        // Define strong system prompts for different tasks
-        const codeGenerationSystemPrompt = "You are a JavaScript code generator that ONLY outputs valid JavaScript. Your entire response must be executable code starting with 'module.exports = {'. Do not include explanations, markdown, or anything except the code.";
-        const defaultSystemPrompt = "You are a helpful AI assistant.";
-        
-        switch (this.llmType.toLowerCase()) {
+
+        switch (llmType) {
             case 'ollama':
                 try {
                     return new ChatOllama({
-                        baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-                        model: model,
-                        temperature: temperature,
-                        topP: topP,
-                        stop: stopSequences,
-                        systemPrompt: isCodeGeneration ? codeGenerationSystemPrompt : defaultSystemPrompt
+                        baseUrl: baseUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                        model,
+                        temperature: 0.3,
+                        ...llmOptions
                     });
                 } catch (error) {
                     console.error('Error creating ChatOllama instance:', error);
                     // Improved fallback implementation
                     return {
                         call: async (messages) => {
-                            try {
-                                // Direct call to ollamaModule with better formatting
-                                const systemMessage = isCodeGeneration ? codeGenerationSystemPrompt : defaultSystemPrompt;
-                                
-                                // Prepend system message if not already present
-                                if (messages.length > 0 && messages[0].role !== 'system') {
-                                    messages.unshift({ role: 'system', content: systemMessage });
-                                }
-                                console.log('systemMessage=======>', systemMessage);
-                                const format = isCodeGeneration ? 'json' : 'text';
-                                
-                                const messageData = {
-                                    senderId: 'rag_system',
-                                    recipientId: 'AI_Assistant',
-                                    message: messages[messages.length - 1].content,
-                                    systemPrompt: systemMessage,
-                                    timestamp: new Date().toISOString(),
-                                    status: 'processing',
-                                    format: format,
-                                    parameters: {
-                                        temperature: temperature,
-                                        top_p: topP,
-                                        top_k: isCodeGeneration ? 10 : 40,
-                                        presence_penalty: isCodeGeneration ? 0.5 : 0.0,
-                                        frequency_penalty: isCodeGeneration ? 0.5 : 0.0,
-                                        stop: stopSequences
-                                    }
-                                };
-                                console.log('messageData=======>', messageData);
-                                const response = await ollamaModule.generateResponse(
-                                    messageData, 
-                                    messages.slice(0, -1),  // Include previous messages for context
-                                    format, 
-                                    model
-                                );
-                                
-                                // Process the response for code-specific requirements
-                                if (isCodeGeneration && response.message) {
-                                    let content = response.message;
-                                    // Extract only JS code if wrapped in markdown
-                                    if (content.includes('module.exports')) {
-                                        content = content.substring(content.indexOf('module.exports'));
-                                        // Remove anything after the last curly brace
-                                        const lastBrace = content.lastIndexOf('}');
-                                        if (lastBrace !== -1) {
-                                            content = content.substring(0, lastBrace + 1);
-                                        }
-                                    }
-                                    return { content };
-                                }
-                                
-                                return response.message || '';
-                            } catch (retryError) {
-                                console.error('Error in fallback implementation:', retryError);
-                                throw retryError;
-                            }
+                            const messageData = {
+                                senderId: 'rag_system',
+                                recipientId: 'AI_Assistant',
+                                message: messages[messages.length - 1].content,
+                                timestamp: new Date().toISOString(),
+                                status: 'processing'
+                            };
+                            const response = await ollamaModule.processMessage(messageData, [], { model, ...llmOptions });
+                            return response.message || '';
                         }
                     };
                 }
             case 'openai':
-                    if (!this.openaiApiKey) {
-                        throw new Error("Missing OpenAI API Key");
-                    }
-                    try {
-                        return new ChatOpenAI({
-                            modelName: this.openaiModel,
-                            openAIApiKey: this.openaiApiKey,
-                            temperature: 0.3
-                        });
-                    } catch (error) {
-                        console.error('Error creating ChatOpenAI instance:', error);
-                        // Fallback implementation
-                        return {
-                            call: async (messages) => {
-                                const response = await this.callOpenAI(messages);
-                                return response.message || '';
-                            }
-                        };
-                    }
-                default:
-                    throw new Error(`Unsupported LLM type: ${this.llmType}`);
-            }
+                if (!this.openaiApiKey) {
+                    throw new Error("Missing OpenAI API Key");
+                }
+                try {
+                    return new ChatOpenAI({
+                        modelName: this.openaiModel,
+                        openAIApiKey: this.openaiApiKey,
+                        temperature: 0.3,
+                        ...llmOptions
+                    });
+                } catch (error) {
+                    console.error('Error creating ChatOpenAI instance:', error);
+                    return {
+                        call: async (messages) => {
+                            const response = await this.callOpenAI(messages);
+                            return response.message || '';
+                        }
+                    };
+                }
+            default:
+                throw new Error(`Unsupported LLM type: ${llmType}`);
         }
+    }
     
 
     // Simple LLM call for internal use (persona selection) that doesn't affect the main conversation
-    async simpleLLMCall(messageData) {
+    async simpleLLMCall(messageData, options = {}) {
         try {
             // Ensure all required fields are present to prevent DB errors
             const safeMessageData = {
@@ -1550,10 +1490,13 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 format: messageData.format || 'text'
             };
             
-            switch (this.llmType.toLowerCase()) {
+            const llmType = (options.type || this.llmType).toLowerCase();
+            const llmOpts = options.llmOptions || options;
+
+            switch (llmType) {
                 case 'ollama':
                     // Pass empty history to avoid affecting main conversation
-                    return await ollamaModule.processMessage(safeMessageData, []);
+                    return await ollamaModule.processMessage(safeMessageData, [], llmOpts);
                 case 'openai':
                     return await this.callOpenAI([{ role: 'user', content: safeMessageData.message }]);
                 case 'claude':
@@ -1561,7 +1504,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 case 'openrouter':
                     return await this.callOpenRouter([{ role: 'user', content: safeMessageData.message }]);
                 default:
-                    throw new Error(`Unsupported LLM type for persona selection: ${this.llmType}`);
+                    throw new Error(`Unsupported LLM type for persona selection: ${llmType}`);
             }
         } catch (error) {
             logger.error('Error in simple LLM call:', error);
@@ -1637,7 +1580,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 _processedMessage: messageToProcess
             };
             
-             const initialResponse = await this.callLLM(enhancedMessageData);
+             const initialResponse = await this.callLLM(enhancedMessageData, messageData.llmOptions || {});
         
             // New Step 7: Apply quality control
             if (this.qualityControlEnabled) {
@@ -1677,8 +1620,9 @@ async generateDirectAnswer(message, userContext, sessionId) {
         }
     }
 
-    async callLLM(messageData) {
-        logger.info(`Calling LLM (${this.llmType}) for ${messageData.senderId}`);
+    async callLLM(messageData, options = {}) {
+        const llmType = (options.type || this.llmType).toLowerCase();
+        logger.info(`Calling LLM (${llmType}) for ${messageData.senderId}`);
         
         // Ensure messageData has all required fields to prevent DB errors
         const safeMessageData = {
@@ -1692,7 +1636,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
         };
         
         try {
-            if (!this.llmType) {
+            if (!llmType) {
                 throw new Error('LLM type not configured');
             }
             
@@ -1702,10 +1646,14 @@ async generateDirectAnswer(message, userContext, sessionId) {
             // Process based on LLM type
             let response;
             
-            switch (this.llmType.toLowerCase()) {
+            switch (llmType) {
                 case 'ollama':
                     const ollamaHistory = this.getHistory(safeMessageData.senderId);
-                    response = await ollamaModule.processMessage(safeMessageData, ollamaHistory);
+                    response = await ollamaModule.processMessage(
+                        safeMessageData,
+                        ollamaHistory,
+                        options.llmOptions || options
+                    );
                     break;
                     
                 case 'openai':
@@ -1740,9 +1688,8 @@ async generateDirectAnswer(message, userContext, sessionId) {
                     tempOpenRouterHistory.push({ role: 'user', content: safeMessageData.message }); // Add enhanced message
                     response = await this.callOpenRouter(tempOpenRouterHistory);
                     break;
-                    
                 default:
-                    throw new Error(`Unsupported LLM type: ${this.llmType}`);
+                    throw new Error(`Unsupported LLM type: ${llmType}`);
             }
             
             // Make sure response is well-formed

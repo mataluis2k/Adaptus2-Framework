@@ -126,7 +126,7 @@ For more information, visit: https://ollama.ai/download
         }
     }
 
-    async generateResponse(prompt, messages = [], format = 'text', model = this.model) {
+    async generateResponse(prompt, messages = [], format = 'text', opts = {}) {
         await this.ensureInitialized();
         try {
             // For Ollama, we'll concatenate previous messages into the prompt
@@ -138,16 +138,19 @@ For more information, visit: https://ollama.ai/download
                 `${contextPrompt}\nuser: ${prompt}` : 
                 prompt;
     
-            const options = { 
-                model: model, 
+            const requestOptions = {
+                model: opts.model || this.model,
                 prompt: fullPrompt,
                 stream: false,
-            }
+            };
             if (format === 'json') {
-                options.format = 'json';
+                requestOptions.format = 'json';
             }
-            console.log('Using Ollama model:', this.model);
-            const response = await this.ollama.generate(options);
+            if (opts && Object.keys(opts).length > 0) {
+                requestOptions.options = opts.options || opts;
+            }
+            console.log('Using Ollama model:', requestOptions.model);
+            const response = await this.ollama.generate(requestOptions);
     
             return response.response;
         } catch (error) {
@@ -156,12 +159,12 @@ For more information, visit: https://ollama.ai/download
         }
     }
     // Method to handle chat messages
-    async processMessage(messageData, history = []) {
+    async processMessage(messageData, history = [], opts = {}) {
         const { senderId, recipientId, groupName, message,format } = messageData;
         
         try {
             // Pass history directly to generateResponse
-            const aiResponse = await this.generateResponse(message, history, format);
+            const aiResponse = await this.generateResponse(message, history, format, opts);
             
             // Prepare response data
             const responseData = {
@@ -213,12 +216,12 @@ For more information, visit: https://ollama.ai/download
             authenticateMiddleware(true),
             async (req, res) => {
                 try {
-                    const { prompt, messages } = req.body;
+                    const { prompt, messages, options } = req.body;
                     if (!prompt) {
                         return res.status(400).json({ error: 'Prompt is required' });
                     }
 
-                    const response = await this.generateResponse(prompt, messages || []);
+                    const response = await this.generateResponse(prompt, messages || [], 'text', options || {});
                     res.json({ response });
                 } catch (error) {
                     console.error('Error in generate endpoint:', error);
