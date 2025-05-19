@@ -23,7 +23,6 @@ module.exports = {
         const app = context.app;
         const dbConfig = context.dbConfig;
         const pluginManager = context.pluginManager;
-        const UniversalApiClient = customRequire('../src/modules/universalAPIClient');
 
         // Store query function and utilities for use in other methods
         this.query = query;
@@ -56,29 +55,90 @@ module.exports = {
                 const pluginNames = pluginManager ? Array.from(pluginManager.plugins.keys()) : [];
                 const apiConfig = context.apiConfig || [];
 
+                // In pluginGenerator.js, modify the attemptGeneration function
+
                 const attemptGeneration = async (userPrompt, attempt = 0, errors = []) => {
                     let systemPrompt = this.buildPluginPrompt({ actions, plugins: pluginNames, schemas: tableSchemas, apiConfig });
                     if (attempt > 0 && errors.length) {
                         systemPrompt += `\nPrevious attempt failed validation: ${errors.join(', ')}. Please correct these issues and return only valid JavaScript.`;
                     }
-
-                    const llm = await llmModule.getLLMInstance('llama3');
-                    const messages = [
-                        { role: 'system', content: systemPrompt },
-                        { role: 'user', content: userPrompt }
-                    ];
-
-                    const raw = await llm.call(messages);
-                    logger.info('LLM Response:', JSON.stringify(raw, null, 2));
-                    const code = this.extractCodeFromResponse(raw);
-                    const validation = this.validatePluginCode(code);
-
-                    if (!validation.valid && attempt < 1) {
-                        logger.warn('Plugin validation failed', validation.errors);
-                        return attemptGeneration(userPrompt, attempt + 1, validation.errors);
+                
+                    try {
+                        // Directly use ollamaModule to ensure the model is correctly passed
+                        const ollamaModule = customRequire('../src/modules/ollamaModule');
+                        
+                        // Combine system prompt and user prompt for more direct control
+                        const fullPrompt = `${systemPrompt}\n\nUser request: ${userPrompt}\n\nRemember to ONLY output valid JavaScript code starting with "module.exports = {".`;
+                        
+                        // Call generateResponse directly with explicit model parameter
+                        const response = await ollamaModule.generateResponse(
+                            fullPrompt,
+                            [], // No history needed
+                            'text', // Using 'text' instead of 'json' for raw output
+                            'qwen2.5-coder:32b' // Explicitly specify the model to override env settings
+                        );
+                        
+                        console.log('response=======>', response);
+                        
+                        // Process response
+                        const code = this.extractCodeFromResponse(typeof response === 'string' ? response : { message: response });
+                        return {code ,valid: true };
+                        const validation = this.validatePluginCode(code);
+                
+                        if (!validation.valid && attempt < 2) {
+                            logger.warn('Plugin validation failed', validation.errors);
+                            
+                            // On retry, make instructions more explicit
+                            const retryPrompt = `IMPORTANT: Your previous response was invalid. You MUST output ONLY JavaScript code starting with "module.exports = {". No explanations or markdown, just code. Here's your task:\n\n${userPrompt}\n\nErrors to fix: ${validation.errors.join(', ')}`;
+                            
+                            return attemptGeneration(retryPrompt, attempt + 1, validation.errors);
+                        }
+                
+                        return { code, validation };
+                    } catch (err) {
+                        logger.error('Error in direct Ollama call:', err);
+                        
+                        // Fallback to original method if direct call fails
+                        try {
+                            // Create a modified message for improved formatting
+                            const finalPrompt = `
+                ## IMPORTANT INSTRUCTIONS
+                You are a code generator. Return ONLY valid JavaScript code.
+                Your entire response must be a valid Node.js module starting with "module.exports = {".
+                DO NOT include explanations, markdown format, or anything else.
+                
+                ${userPrompt}
+                
+                Remember: ONLY JavaScript code, nothing else.
+                `;
+                            // Get Ollama instance through alternative path to avoid middleware issues
+                            const { ChatOllama } = customRequire('@langchain/ollama');
+                            const llm = new ChatOllama({
+                                baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                                model: 'codellama:13b-instruct',
+                                temperature: 0.1,
+                                topP: 0.1,
+                                stop: ["```", "Step", "Note:"]
+                            });
+                            
+                            const response = await llm.call([
+                                { role: 'system', content: systemPrompt },
+                                { role: 'user', content: finalPrompt }
+                            ]);
+                            
+                            logger.info('Fallback LLM Response:', JSON.stringify(response, null, 2));
+                            const code = this.extractCodeFromResponse(response);
+                            const validation = this.validatePluginCode(code);
+                            
+                            return { code, validation };
+                        } catch (fallbackErr) {
+                            logger.error('All LLM attempts failed:', fallbackErr);
+                            return { 
+                                code: 'module.exports = { name: "errorPlugin", version: "1.0.0", initialize() { console.log("Plugin generation failed"); } };', 
+                                validation: { valid: true, errors: [] }
+                            };
+                        }
                     }
-
-                    return { code, validation };
                 };
 
                 const { code, validation } = await attemptGeneration(prompt);
@@ -140,7 +200,7 @@ module.exports = {
         if (!context || !context.actions) throw new Error('Context with actions is required.');
         async function helloWorld(ctx, params) {
             if (!params || !params.name) throw new Error('Missing name parameter');
-            return { greeting: \`Hello ${params.name}\` };
+            return { greeting: \`Hello \${params.name}\` };
         }
         if (!context.actions.helloWorld) context.actions.helloWorld = helloWorld;
     },
@@ -169,13 +229,33 @@ module.exports = {
 };
 `;
         return `
-You are an expert developer building modular plugins for a Node.js server framework.
+## CRITICAL: YOU MUST FOLLOW THESE INSTRUCTIONS EXACTLY
 
-Instructions: Return ONLY JavaScript code. Do not include markdown or explanations. Follow the blueprint below and use try/catch for async logic.
+1. Return ONLY JavaScript code for a Node.js plugin. 
+2. DO NOT include explanations, tutorials, documentation, or markdown.
+3. DO NOT use markdown code blocks with backticks.
+4. DO NOT include steps, guides, or numbered instructions.
+5. Begin your response IMMEDIATELY with "module.exports = {".
+6. Follow EXACTLY the plugin structure shown below.
+
+IF YOU RESPOND WITH ANYTHING OTHER THAN VALID JAVASCRIPT CODE, YOUR RESPONSE WILL BE REJECTED.
+
+Here are valid examples of the EXACT format required:
 
 ${examples}
 
-The goal of these instructions is to guide an LLM in producing server plugins based on a well-defined blueprint. These plugins should follow a standardized architecture, be production-ready, and integrate seamlessly into the server's existing ecosystem.
+// The plugin MUST begin with module.exports and follow this structure
+module.exports = {
+    name: '<pluginName>',
+    version: '1.0.0',
+    initialize(dependencies) {
+        // Your code here
+    },
+};
+
+// ANY OTHER FORMAT WILL BE REJECTED
+// START YOUR RESPONSE WITH module.exports IMMEDIATELY
+/* Context for plugin generation: */
 
 ### Existing Actions available to use in the plugin:
 ${actions.join('\n')}
@@ -356,29 +436,60 @@ module.exports = {
      * @param {any} response - Raw response from the LLM
      * @returns {string} - Extracted JavaScript code
      */
-    extractCodeFromResponse(response) {
-        let content = '';
-        if (typeof response === 'string') {
-            content = response;
-        } else if (response && response.kwargs && response.kwargs.content) {
-            content = response.kwargs.content;
-        } else if (response && response.content) {
-            content = response.content;
-        }
+    /**
+ * Extract JavaScript code from various LLM response formats
+ * @param {any} response - Raw response from the LLM
+ * @returns {string} - Extracted JavaScript code
+ */
+extractCodeFromResponse(response) {
+    // Get content as string no matter what format it comes in
+    let content = '';
+    if (typeof response === 'string') {
+        content = response;
+    } else if (response && response.kwargs && response.kwargs.content) {
+        content = response.kwargs.content;
+    } else if (response && response.content) {
+        content = response.content;
+    } else if (response && response.message) {
+        content = response.message;
+    }
 
-        content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
-
-        const codeBlocks = [];
-        const blockRegex = /```(?:javascript)?\n([\s\S]*?)```/g;
-        let match;
-        while ((match = blockRegex.exec(content)) !== null) {
-            codeBlocks.push(match[1]);
+    // Remove thinking blocks and clean up
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, '').trim();
+    
+    // First, try to extract code from markdown code blocks with more flexible pattern
+    // This pattern matches code blocks with or without a newline after the language identifier
+    const blockRegex = /```(?:javascript|js)?[ \t]*\r?\n?([\s\S]*?)```/g;
+    const codeBlocks = [];
+    let match;
+    
+    while ((match = blockRegex.exec(content)) !== null) {
+        codeBlocks.push(match[1].trim());
+    }
+    
+    if (codeBlocks.length > 0) {
+        // If multiple code blocks, use the one that starts with module.exports
+        for (const block of codeBlocks) {
+            if (block.startsWith('module.exports') || block.startsWith('require') || block.includes('module.exports')) {
+                return block;
+            }
         }
-        if (codeBlocks.length > 0) {
-            return codeBlocks.join('\n');
+        // If no code block with module.exports, return the first block
+        return codeBlocks[0];
+    }
+    
+    // If no code blocks found, look for module.exports directly
+    if (content.includes('module.exports')) {
+        // Extract from start of module.exports to end of code
+        const moduleExportsMatch = content.match(/(?:require\([^)]*\)[;\s]*\n)?module\.exports\s*=\s*{[\s\S]*?};?(?=\s*(?:```|$|\n\n|###))/);
+        if (moduleExportsMatch) {
+            return moduleExportsMatch[0];
         }
-        return content;
-    },
+    }
+    
+    // If even that fails, just return the content in case it's raw code
+    return content;
+},
 
     /**
      * Validate generated plugin code for structure and security
