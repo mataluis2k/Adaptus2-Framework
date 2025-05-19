@@ -1410,30 +1410,33 @@ async generateDirectAnswer(message, userContext, sessionId) {
         return null; // No match found
     }
 
-    async getLLMInstance(model = null) {
+    async getLLMInstance(model = null, options = {}) {
         const { ChatOllama } = require('@langchain/ollama');
         const { ChatOpenAI } = require('@langchain/openai');
 
-        // Check if the model is provided, otherwise use the default
-        // This overrides the environment variable if needed
+        // Allow overriding of LLM type and other settings via options
+        const { type, baseUrl, ...llmOptions } = options || {};
+        const llmType = (type || this.llmType || 'ollama').toLowerCase();
+
+        // Default to environment model if none supplied
         if (!model) {
             model = process.env.OLLAMA_INFERENCE || 'llama3';
         }
-    
-        switch (this.llmType.toLowerCase()) {
+
+        switch (llmType) {
             case 'ollama':
                 try {
                     return new ChatOllama({
-                        baseUrl: process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
-                        model: model,
-                        temperature: 0.3
+                        baseUrl: baseUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                        model,
+                        temperature: 0.3,
+                        ...llmOptions
                     });
                 } catch (error) {
                     console.error('Error creating ChatOllama instance:', error);
                     // Fallback to a more basic implementation if needed
                     return {
                         call: async (messages) => {
-                            // Direct call to ollamaModule
                             const messageData = {
                                 senderId: 'rag_system',
                                 recipientId: 'AI_Assistant',
@@ -1441,7 +1444,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
                                 timestamp: new Date().toISOString(),
                                 status: 'processing'
                             };
-                            const response = await ollamaModule.processMessage(messageData, []);
+                            const response = await ollamaModule.processMessage(messageData, [], { model, ...llmOptions });
                             return response.message || '';
                         }
                     };
@@ -1454,11 +1457,11 @@ async generateDirectAnswer(message, userContext, sessionId) {
                     return new ChatOpenAI({
                         modelName: this.openaiModel,
                         openAIApiKey: this.openaiApiKey,
-                        temperature: 0.3
+                        temperature: 0.3,
+                        ...llmOptions
                     });
                 } catch (error) {
                     console.error('Error creating ChatOpenAI instance:', error);
-                    // Fallback implementation
                     return {
                         call: async (messages) => {
                             const response = await this.callOpenAI(messages);
@@ -1467,13 +1470,13 @@ async generateDirectAnswer(message, userContext, sessionId) {
                     };
                 }
             default:
-                throw new Error(`Unsupported LLM type: ${this.llmType}`);
+                throw new Error(`Unsupported LLM type: ${llmType}`);
         }
     }
     
 
     // Simple LLM call for internal use (persona selection) that doesn't affect the main conversation
-    async simpleLLMCall(messageData) {
+    async simpleLLMCall(messageData, options = {}) {
         try {
             // Ensure all required fields are present to prevent DB errors
             const safeMessageData = {
@@ -1486,10 +1489,13 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 format: messageData.format || 'text'
             };
             
-            switch (this.llmType.toLowerCase()) {
+            const llmType = (options.type || this.llmType).toLowerCase();
+            const llmOpts = options.llmOptions || options;
+
+            switch (llmType) {
                 case 'ollama':
                     // Pass empty history to avoid affecting main conversation
-                    return await ollamaModule.processMessage(safeMessageData, []);
+                    return await ollamaModule.processMessage(safeMessageData, [], llmOpts);
                 case 'openai':
                     return await this.callOpenAI([{ role: 'user', content: safeMessageData.message }]);
                 case 'claude':
@@ -1497,7 +1503,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 case 'openrouter':
                     return await this.callOpenRouter([{ role: 'user', content: safeMessageData.message }]);
                 default:
-                    throw new Error(`Unsupported LLM type for persona selection: ${this.llmType}`);
+                    throw new Error(`Unsupported LLM type for persona selection: ${llmType}`);
             }
         } catch (error) {
             logger.error('Error in simple LLM call:', error);
@@ -1573,7 +1579,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
                 _processedMessage: messageToProcess
             };
             
-             const initialResponse = await this.callLLM(enhancedMessageData);
+             const initialResponse = await this.callLLM(enhancedMessageData, messageData.llmOptions || {});
         
             // New Step 7: Apply quality control
             if (this.qualityControlEnabled) {
@@ -1613,8 +1619,9 @@ async generateDirectAnswer(message, userContext, sessionId) {
         }
     }
 
-    async callLLM(messageData) {
-        logger.info(`Calling LLM (${this.llmType}) for ${messageData.senderId}`);
+    async callLLM(messageData, options = {}) {
+        const llmType = (options.type || this.llmType).toLowerCase();
+        logger.info(`Calling LLM (${llmType}) for ${messageData.senderId}`);
         
         // Ensure messageData has all required fields to prevent DB errors
         const safeMessageData = {
@@ -1627,7 +1634,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
         };
         
         try {
-            if (!this.llmType) {
+            if (!llmType) {
                 throw new Error('LLM type not configured');
             }
             
@@ -1637,10 +1644,14 @@ async generateDirectAnswer(message, userContext, sessionId) {
             // Process based on LLM type
             let response;
             
-            switch (this.llmType.toLowerCase()) {
+            switch (llmType) {
                 case 'ollama':
                     const ollamaHistory = this.getHistory(safeMessageData.senderId);
-                    response = await ollamaModule.processMessage(safeMessageData, ollamaHistory);
+                    response = await ollamaModule.processMessage(
+                        safeMessageData,
+                        ollamaHistory,
+                        options.llmOptions || options
+                    );
                     break;
                     
                 case 'openai':
@@ -1675,9 +1686,8 @@ async generateDirectAnswer(message, userContext, sessionId) {
                     tempOpenRouterHistory.push({ role: 'user', content: safeMessageData.message }); // Add enhanced message
                     response = await this.callOpenRouter(tempOpenRouterHistory);
                     break;
-                    
                 default:
-                    throw new Error(`Unsupported LLM type: ${this.llmType}`);
+                    throw new Error(`Unsupported LLM type: ${llmType}`);
             }
             
             // Make sure response is well-formed

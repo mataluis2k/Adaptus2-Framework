@@ -19,13 +19,18 @@ Content-Type: application/json
 
 {
     "prompt": "Your question or prompt here",
-    "context": "Optional context for the conversation"
+    "context": "Optional context for the conversation",
+    "options": {
+        "model": "llama3",
+        "temperature": 0.2
+    }
 }
 ```
 
 **Parameters:**
 - `prompt` (required): The text prompt to send to the AI model
 - `context` (optional): Additional context to help guide the AI's response
+- `options` (optional): Additional generation settings such as model name or temperature
 
 **Response:**
 ```json
