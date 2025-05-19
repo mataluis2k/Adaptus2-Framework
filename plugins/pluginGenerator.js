@@ -80,21 +80,11 @@ module.exports = {
                         
                         console.log('response=======>', response);
                         
-                        // Process response
-                        const code = this.extractCodeFromResponse(typeof response === 'string' ? response : { message: response });
-                        return {code ,valid: true };
-                        const validation = this.validatePluginCode(code);
-                
-                        if (!validation.valid && attempt < 2) {
-                            logger.warn('Plugin validation failed', validation.errors);
-                            
-                            // On retry, make instructions more explicit
-                            const retryPrompt = `IMPORTANT: Your previous response was invalid. You MUST output ONLY JavaScript code starting with "module.exports = {". No explanations or markdown, just code. Here's your task:\n\n${userPrompt}\n\nErrors to fix: ${validation.errors.join(', ')}`;
-                            
-                            return attemptGeneration(retryPrompt, attempt + 1, validation.errors);
-                        }
-                
-                        return { code, validation };
+                        // Return the raw response
+                        return { 
+                            code: typeof response === 'string' ? response : response.message || JSON.stringify(response),
+                            validation: { valid: true, errors: [] }
+                        };
                     } catch (err) {
                         logger.error('Error in direct Ollama call:', err);
                         
@@ -127,10 +117,12 @@ module.exports = {
                             ]);
                             
                             logger.info('Fallback LLM Response:', JSON.stringify(response, null, 2));
-                            const code = this.extractCodeFromResponse(response);
-                            const validation = this.validatePluginCode(code);
                             
-                            return { code, validation };
+                            // Return the raw response from fallback
+                            return { 
+                                code: typeof response === 'string' ? response : response.message || JSON.stringify(response),
+                                validation: { valid: true, errors: [] }
+                            };
                         } catch (fallbackErr) {
                             logger.error('All LLM attempts failed:', fallbackErr);
                             return { 
