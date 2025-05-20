@@ -22,7 +22,7 @@ class BraintreeTransport {
 
     async createPayment({ customerId, amount, currency }) {
         const sale = await this.client.transaction.sale({
-            amount: (amount / 100).toFixed(2), // Braintree expects string amounts
+            amount: (amount / 100).toFixed(2),
             paymentMethodToken: customerId,
             options: { submitForSettlement: true },
         });
@@ -37,6 +37,32 @@ class BraintreeTransport {
         });
         if (subscription.success) return subscription.subscription;
         throw new Error(subscription.message);
+    }
+
+    async refundFull({ transactionId }) {
+        const result = await this.client.transaction.refund(transactionId);
+        if (result.success) return result.transaction;
+        throw new Error(result.message);
+    }
+
+    async refundPartial({ transactionId, amount }) {
+        const result = await this.client.transaction.refund(transactionId, (amount / 100).toFixed(2));
+        if (result.success) return result.transaction;
+        throw new Error(result.message);
+    }
+
+    async cancelSubscription({ subscriptionId }) {
+        const result = await this.client.subscription.cancel(subscriptionId);
+        if (result.success) return result.subscription;
+        throw new Error(result.message);
+    }
+
+    async pauseSubscription({ subscriptionId }) {
+        const result = await this.client.subscription.update(subscriptionId, {
+            status: 'Paused',
+        });
+        if (result.success) return result.subscription;
+        throw new Error(result.message);
     }
 }
 
