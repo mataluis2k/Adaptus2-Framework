@@ -6,21 +6,23 @@ const path = require('path');
 const fs   = require('fs');
 
 const configDefault =  {
-  queueKey: 'eventLoggerQueue',
+  queueKey: 'eventLogger:queue',
   flushIntervalMs: 5000,
   batchSize: 100
 };
 
 class EventLogger {
   constructor() {
-    this.config = require(path.join(
+    try{
+       this.config = require(path.join(
       process.env.CONFIG_DIR || './config',
       'eventLogger.json'
     ));
-    if (!this.config) {
+    } catch (err) {
       console.warn('EventLogger config not found, using defaults');
       this.config = configDefault;
-    }    
+    }
+       
     this.redis = redisClient;
     this.queueKey = this.config.queueKey;
     this.flushing = false;
