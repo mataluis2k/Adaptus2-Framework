@@ -211,24 +211,45 @@ async processMessage(sessionId, userMessage, recipientId, groupName, requestedPe
       return { response: "Sorry, I can't process that right now." };
     }
     let cleanedMessage = null;
+    let persona = process.env.DEFAULT_PERSONA;
+    
     if(!requestedPersona){
         // 1️⃣ Determine which persona to use
-        ({ requestedPersona, cleanedMessage } = (await llmModule.detectRequestedPersona(userMessage)) || {});
-         console.log(`[IntelligentChatModule] Selected Persona: ${requestedPersona.persona}`);
+        const result = (await llmModule.detectRequestedPersona(userMessage)) || {};
+        requestedPersona = result.requestedPersona;
+        cleanedMessage = result.cleanedMessage;
+        
+        if (requestedPersona) {
+            console.log(`[IntelligentChatModule] Selected Persona: ${requestedPersona}`);
+            persona = requestedPersona;
+        } else {
+            console.log(`[IntelligentChatModule] Using default persona: ${persona}`);
+        }
+    } else {
+        persona = requestedPersona;
     }
-   
-    const persona = requestedPersona.persona || process.env.DEFAULT_PERSONA;
-      //   (await llmModule.selectPersona(userMessage, llmModule.getPersonas())) ||
+      
+    // Use cleaned message if available, otherwise original message
     const message = cleanedMessage || userMessage;
-    const personaConfig = await llmModule.personasConfig[persona];
-    console.log("[IntelligentChatModule] Selected persona:", JSON.stringify(personaConfig));
+    
+    // Get the persona configuration
+    const personaConfig = llmModule.personasConfig[persona];
+    let finalPersonaConfig = personaConfig;
+    if (!personaConfig) {
+        console.warn(`[IntelligentChatModule] Persona not found: ${persona}, using default`);
+        persona = process.env.DEFAULT_PERSONA;
+        finalPersonaConfig = llmModule.personasConfig[persona];
+        console.log("[IntelligentChatModule] Using default persona:", JSON.stringify(finalPersonaConfig));
+    } else {
+        console.log("[IntelligentChatModule] Selected persona:", JSON.stringify(personaConfig));
+    }
     const tools = toolRegistry.getAllTools();
 
     // 2️⃣ Build one master system prompt with both tools AND collections
     //    Your buildPersonaPrompt should be extended to include persona.collection
     //    and persona.tools
     
-    const systemPrompt = await buildPersonaPrompt(personaConfig, sessionId);
+    const systemPrompt = await buildPersonaPrompt(finalPersonaConfig, sessionId);
 
     // 3️⃣ Ask the LLM what to do next (RAG / TOOL / FINAL)
     const decisionPrompt = `
@@ -237,7 +258,7 @@ ${systemPrompt}
 User: "${message}"
 
 Based on the AVAILABLE TOOLS: ${tools ? Object.values(tools).map(t=>t.name).join(", ") : "none"},
-and AVAILABLE COLLECTIONS: ${personaConfig.collection?.join(", ") || "none"},
+and AVAILABLE COLLECTIONS: ${finalPersonaConfig?.collection?.join(", ") || "none"},
 
 YOU ARE BOUND BY THE FOLLOWING RULES:
 • YOU CAN NOT BREAK ANY OF THESE RULES.
@@ -281,7 +302,7 @@ console.log(`[IntelligentChatModule] Decision prompt: ${decisionPrompt}`);
       const ragRes = await handleRAG(
         decision.query,
         sessionId,
-        persona,
+        persona,  // Using the possibly corrected persona name
         decision.collection
       );
       intermediateResult = ragRes.text || ragRes;
