@@ -33,6 +33,7 @@
   },
   "homepage": "https://github.com/mataluis2k/Adaptus2-Framework#readme",
   "dependencies": {
+    "@adyen/api-library": "^27.0.0",
     "@ffmpeg-installer/ffmpeg": "^1.1.0",
     "@ffprobe-installer/ffprobe": "^2.1.2",
     "@langchain/community": "^0.3.40",

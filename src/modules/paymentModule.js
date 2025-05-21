@@ -76,6 +76,21 @@ class PaymentModule {
         globalContext.actions.createSubscription = async (ctx, params) => {
             return await this.createSubscription(params);
         };
+        globalContext.actions.refundFull = async (ctx, params) => {
+            return await this.transports[params.provider].refundFull(params);
+        };
+
+        globalContext.actions.refundPartial = async (ctx, params) => {
+            return await this.transports[params.provider].refundPartial(params);
+        };
+
+        globalContext.actions.cancelSubscription = async (ctx, params) => {
+            return await this.transports[params.provider].cancelSubscription(params);
+        };
+
+        globalContext.actions.pauseSubscription = async (ctx, params) => {
+            return await this.transports[params.provider].pauseSubscription(params);
+        };
     }
 }
 

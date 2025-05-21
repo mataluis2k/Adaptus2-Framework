@@ -1,3 +1,5 @@
+const { model } = require("../src/modules/ollamaModule");
+
 module.exports = {
     name: 'pluginGenerator',
     version: '1.0.0',
@@ -70,12 +72,13 @@ module.exports = {
                         // Combine system prompt and user prompt for more direct control
                         const fullPrompt = `${systemPrompt}\n\nUser request: ${userPrompt}\n\nRemember to ONLY output valid JavaScript code starting with "module.exports = {".`;
                         
+                        const options = { model: 'qwen2.5-coder:32b', temperature: 0.1, topP: 0.1 };
                         // Call generateResponse directly with explicit model parameter
                         const response = await ollamaModule.generateResponse(
                             fullPrompt,
                             [], // No history needed
                             'text', // Using 'text' instead of 'json' for raw output
-                            'qwen2.5-coder:32b' // Explicitly specify the model to override env settings
+                            options
                         );
                         
                         console.log('response=======>', response);
