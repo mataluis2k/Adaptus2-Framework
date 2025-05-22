@@ -150,21 +150,29 @@ For more information, visit: https://ollama.ai/download
                 requestOptions.options = opts.options || opts;
             }
             console.log('Using Ollama model:', requestOptions.model);
-            const response = await this.ollama.generate(requestOptions);
-    
-            return response.response;
+            
+            try {
+                const response = await this.ollama.generate(requestOptions);
+                return response.response;
+            } catch (fetchError) {
+                console.error('Fetch error in Ollama generate:', fetchError);
+                return `Error: Unable to reach Ollama service. Please ensure Ollama is running and accessible at ${OLLAMA_HOST}.`;
+            }
         } catch (error) {
             console.error('Failed to generate response:', error.message);
-            throw error;
+            return `Error: ${error.message}`;
         }
     }
     // Method to handle chat messages
     async processMessage(messageData, history = [], opts = {}) {
-        const { senderId, recipientId, groupName, message,format } = messageData;
+        const { senderId, recipientId, groupName, message, format } = messageData;
         
         try {
             // Pass history directly to generateResponse
             const aiResponse = await this.generateResponse(message, history, format, opts);
+            
+            // Check if response is an error message
+            const isError = typeof aiResponse === 'string' && aiResponse.startsWith('Error:');
             
             // Prepare response data
             const responseData = {
@@ -172,16 +180,30 @@ For more information, visit: https://ollama.ai/download
                 recipientId: senderId,
                 groupName: groupName,
                 message: aiResponse,
-                status: 'delivered'
+                status: isError ? 'error' : 'delivered'
             };
 
-            // Save AI response to database
-            await this.saveResponse(responseData);
+            // Save AI response to database only if not an error
+            if (!isError) {
+                try {
+                    await this.saveResponse(responseData);
+                } catch (dbError) {
+                    console.error('Error saving response to database:', dbError);
+                    // Continue despite database error
+                }
+            }
 
             return responseData;
         } catch (error) {
             console.error('Error processing message:', error);
-            throw error;
+            // Return error response instead of throwing
+            return {
+                senderId: 'AI_Assistant',
+                recipientId: senderId,
+                groupName: groupName,
+                message: `Error processing your request: ${error.message}`,
+                status: 'error'
+            };
         }
     }
 

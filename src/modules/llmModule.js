@@ -146,7 +146,8 @@ Only include the JSON array in your response, no other text.
         
         const response = await global.llmModule.simpleLLMCall(messageData);
         
-        if (!response || !response.message) {
+        if (!response || !response.message || response.status === 'error') {
+            console.warn('LLM call failed or returned error status');
             return [];
         }
         
