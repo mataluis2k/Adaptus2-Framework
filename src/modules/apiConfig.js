@@ -83,9 +83,31 @@ function loadExtraConfigs(directoryPath) {
     }
     
     console.log(`Found ${files.length} files in extra configs directory, processing...`);
+    files.forEach((file) => {
+      const filePath = path.join(directoryPath, file);
+      if (path.extname(file) === '.json') {
+        try {
+          const fileContent = fs.readFileSync(filePath, 'utf-8');
+          if (!fileContent.trim()) {
+            console.warn(`File is empty: ${filePath}. Skipping.`);
+            return;
+          }
+          const config = JSON.parse(fileContent);
+          if (Array.isArray(config)) {
+            extraConfigs.push(...config);
+          } else {
+            extraConfigs.push(config);
+          }
+          console.log(`Loaded extra config from: ${filePath}`);
+        } catch (error) {
+          console.error(`Failed to parse JSON from file: ${filePath}. Error: ${error.message}`);
+        }
+      } else {
+        console.warn(`Skipping non-JSON file: ${filePath}`);
+      }
+    }); 
     
-    // Rest of the code remains the same...
-    // ...
+
   } catch (error) {
     console.error(`Error scanning extra configs directory: ${error.message}. Continuing with main config only.`);
     return extraConfigs; // Return empty array on any error to continue with main config
