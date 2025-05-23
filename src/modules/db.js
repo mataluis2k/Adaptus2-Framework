@@ -12,26 +12,26 @@ let isContextExtended = false;
  * IMPORTANT NOTES AND EXCEPTIONS:
  *
  * 1. CONNECTION POOLING: The original db.js manages MySQL pools manually,
- *    but adaptus2-orm handles pooling internally. The mysqlPools object
- *    is maintained for backward compatibility but is not actively used.
+ * but adaptus2-orm handles pooling internally. The mysqlPools object
+ * is maintained for backward compatibility but is not actively used.
  *
  * 2. CONNECTION RELEASE: The original db.js has 'db.release()' calls everywhere,
- *    but adaptus2-orm manages connections internally. These calls are
- *    converted to no-ops (empty functions) to maintain interface compatibility.
+ * but adaptus2-orm manages connections internally. These calls are
+ * converted to no-ops (empty functions) to maintain interface compatibility.
  *
  * 3. TRANSACTION HANDLING: The original db.js uses manual transactions in initDatabase,
- *    but adaptus2-orm handles transactions differently. We simulate the behavior
- *    using adaptus2-orm's transaction methods where possible.
+ * but adaptus2-orm handles transactions differently. We simulate the behavior
+ * using adaptus2-orm's transaction methods where possible.
  *
  * 4. SNOWFLAKE CALLBACKS: The original db.js uses callback-style snowflake SDK,
- *    but adaptus2-orm uses promises. We convert between these patterns.
+ * but adaptus2-orm uses promises. We convert between these patterns.
  *
  * 5. ERROR HANDLING: The original db.js has specific error codes (ER_DUP_FIELDNAME),
- *    but adaptus2-orm normalizes errors. We preserve the interface but may not
- *    have exact error code matching.
+ * but adaptus2-orm normalizes errors. We preserve the interface but may not
+ * have exact error code matching.
  *
  * 6. CONFIG NORMALIZATION: The original db.js normalizes database connection
- *    names (replacing hyphens with underscores). We maintain this for compatibility.
+ * names (replacing hyphens with underscores). We maintain this for compatibility.
  */
 
 /**
@@ -804,20 +804,11 @@ async function read(config, entity, query, options = {}) {
             return result.data || [];
         }
 
-        // Create a new response object instead of using the singleton
-        const newResponse = {
-            success: true,
-            status: 200,
-            message: 'Records retrieved successfully',
-            data: result.data || [],
-            error: null,
-            action: 'read_records'
-        };
-
         // Set the singleton response for backward compatibility
         response.setResponse(200, 'Records retrieved successfully', '', result.data, 'read_records');
 
-        return newResponse;
+        // Return just the data, not a new response object
+        return result.data || [];
     } catch (error) {
         console.error(`Error reading records from ${entity}:`, error.message);
         // Only skip response if options.skipResponse is explicitly true
@@ -825,20 +816,11 @@ async function read(config, entity, query, options = {}) {
             return { error: error.message };
         }
 
-        // Create a new error response object
-        const errorResponse = {
-            success: false,
-            status: 500,
-            message: `Error reading records from ${entity}`,
-            data: {},
-            error: error.message,
-            action: 'read_records'
-        };
-
         // Set the singleton response for backward compatibility
         response.setResponse(500, `Error reading records from ${entity}`, error.message, {}, 'read_records');
 
-        return errorResponse;
+        // Return error data
+        return { error: error.message };
     } finally {
         if (db && db.release) db.release();
     }
