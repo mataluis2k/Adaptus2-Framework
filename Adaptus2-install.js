@@ -226,10 +226,10 @@ const baseGroups = {
 
 // Module-specific groups that only appear when their module is enabled
 const moduleGroups = {
-  "SOCKET CLI": {
-    variables: ["SOCKET_CLI_PORT", "CLI_USERNAME", "CLI_PASSWORD"],
+  "CONSOLE CONFIGURATION": {
+    variables: ["SOCKET_CLI", "SOCKET_CLI_PORT", "CLI_USERNAME", "CLI_PASSWORD"],
     description: "Socket CLI configuration for remote management",
-    dependencies: [{ var: "SOCKET_CLI", value: "TRUE" }],
+    always: true,
     mode: INSTALLER_MODES.BASIC
   },
   "CHAT SERVER": {
@@ -288,7 +288,7 @@ const groups = { ...baseGroups, ...moduleGroups };
 // Essential configuration that will always be included
 const mandatoryConfig = {
   // General settings (always required)
-  ENABLE_LOGGING: "TRUE",
+  ENABLE_LOGGING: "FALSE",
   CONFIG_DIR: "./config",
   DEFAULT_DBTYPE: "mysql",
   DEFAULT_DBCONNECTION: "MYSQL_1",
@@ -349,7 +349,7 @@ const fullConfig = {
   SHUTDOWN_ON_REJECTION: "false",
   
   // Server configuration
-  SOCKET_CLI: "FALSE",
+  SOCKET_CLI: "TRUE",
   SOCKET_CLI_PORT: 5000,
   CHAT_SERVER_PORT: 3007,
   WS_SIGNALING_PORT: 4000,
