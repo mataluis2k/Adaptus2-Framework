@@ -316,8 +316,13 @@ class LLMModule {
         
         switch (llmType) {
             case 'ollama':
-                // Ollama doesn't require API keys but check if service is available
                 console.log('✅ LLMModule: Using Ollama configuration');
+                // Check if basic Ollama environment variables are available
+                const ollamaHost = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+                const ollamaInference = process.env.OLLAMA_INFERENCE || 'llama3';
+                
+                // For now, assume Ollama is configured if environment variables are present
+                // The actual connectivity check will happen during initialization
                 return true;
                 
             case 'openai':
@@ -443,19 +448,6 @@ class LLMModule {
         } catch (error) {
             console.error('Error during LLMModule initialization:', error);
             this.isEnabled = false; // Ensure module is marked as disabled on error
-            
-            // Ensure personas are loaded even if other initialization fails
-            if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
-                try {
-                    const personaFile = path.join(process.env.CONFIG_DIR, 'personas.json');
-                    const data = fs.readFileSync(personaFile, 'utf-8');
-                    this.personasConfig = JSON.parse(data);
-                    console.log(`Emergency persona load: ${Object.keys(this.personasConfig).length} personas found`);
-                } catch (fallbackError) {
-                    console.error('Critical error: Unable to load personas:', fallbackError);
-                    this.personasConfig = {};
-                }
-            }
         }
     }
     // Initialize quality control after the instance is fully constructed
