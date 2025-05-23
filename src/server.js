@@ -84,7 +84,12 @@ const MLAnalytics = require('./core/ml_analytics2');
 const RateLimit = require('./modules/rate_limit');
 const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
-const { IntelligentChatModule, setActiveInstance } = require('./modules/IntelligentChatModule');
+const moduleGateway = require('./modules/moduleGateway');
+
+// Conditionally load LLM-dependent modules using moduleGateway
+const IntelligentChatModuleResult = moduleGateway.safeLoadModule('IntelligentChatModule', './modules/IntelligentChatModule');
+const IntelligentChatModule = IntelligentChatModuleResult?.IntelligentChatModule;
+const setActiveInstance = IntelligentChatModuleResult?.setActiveInstance;
 
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
@@ -133,7 +138,10 @@ const SECRET_SALT = process.env.SECRET_SALT || '';
 
 
 ruleEngine = null; // Global variable to hold the rule engine
-const {  initializeRAG , handleRAG } = require("./modules/ragHandler1");
+// Conditionally load RAG module 
+const ragHandlerResult = moduleGateway.safeLoadModule('ragHandler1', './modules/ragHandler1');
+const initializeRAG = ragHandlerResult?.initializeRAG;
+const handleRAG = ragHandlerResult?.handleRAG;
 
 const corsOptions = {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
@@ -1623,6 +1631,13 @@ function setupRag(apiConfig) {
       console.log('OpenAI API key not found. RAG will not be initialized.');
         return;
     }
+    
+    // Check if RAG module is available
+    if (!initializeRAG) {
+        console.warn('⚠️  RAG module disabled: llmModule not available');
+        return;
+    }
+    
     // Initialize RAG during server startup
     initializeRAG(apiConfig).catch((error) => {
         console.error("Failed to initialize RAG:", error.message);
@@ -1797,6 +1812,46 @@ class Adaptus2Server {
                 }
             }
         }, memoryMonitoringInterval);
+    }
+
+    /**
+     * Logs the status of all modules, showing which are enabled/disabled
+     */
+    logModuleStatus() {
+        console.log('\n🔧 Module Status Report:');
+        console.log('========================');
+        
+        const status = moduleGateway.getModuleStatus();
+        
+        if (status.llmModuleAvailable) {
+            console.log('✅ LLMModule: ENABLED');
+        } else {
+            console.log('❌ LLMModule: DISABLED (missing configuration)');
+        }
+        
+        console.log('\n📦 LLM-Dependent Modules:');
+        status.llmDependentModules.forEach(moduleName => {
+            if (status.enabledModules.includes(moduleName)) {
+                console.log(`   ✅ ${moduleName}: ENABLED`);
+            } else {
+                console.log(`   ❌ ${moduleName}: DISABLED (LLM dependency)`);
+            }
+        });
+        
+        console.log('\n🔌 LLM-Dependent Plugins:');
+        status.llmDependentPlugins.forEach(pluginName => {
+            console.log(`   🔍 ${pluginName}: Check at runtime`);
+        });
+        
+        if (status.enabledModules.length > 0) {
+            console.log(`\n✅ ${status.enabledModules.length} modules successfully loaded`);
+        }
+        
+        if (status.disabledModules.length > 0) {
+            console.log(`⚠️  ${status.disabledModules.length} modules disabled due to dependencies`);
+        }
+        
+        console.log('========================\n');
     }
 
     async initializeTables() {
@@ -2201,26 +2256,35 @@ MOD_PAGECLONE=false
                     const corsOptions = {  origin: process.env.CORS_ORIGIN,  methods : process.env.CORS_METHODS };
                     
                     //this.chatModule = new ChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);
-                    this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
-                    this.chatModule.start();
-                    // Store the instance globally for access from other modules
-                    global.chatModule = this.chatModule;
-                    
-                    // Define the global helper function AFTER setting global.chatModule
-                    global.getUserIdFromSessionId = function(sessionId) {
-                        if (!global.chatModule) return sessionId;
+                    if (IntelligentChatModule) {
+                        this.chatModule = new IntelligentChatModule(httpServer, app, JWT_SECRET, this.apiConfig, corsOptions);                
+                        this.chatModule.start();
+                        // Store the instance globally for access from other modules
+                        global.chatModule = this.chatModule;
                         
-                        // Access the connected users directly from the global instance
-                        for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
-                            if (username === sessionId) {
-                                const socket = global.chatModule.io.sockets.sockets.get(socketId);
-                                if (socket && socket.user && socket.user.id) {
-                                    return socket.user.id;
+                        // Define the global helper function AFTER setting global.chatModule
+                        global.getUserIdFromSessionId = function(sessionId) {
+                            if (!global.chatModule) return sessionId;
+                            
+                            // Access the connected users directly from the global instance
+                            for (const [username, socketId] of global.chatModule.connectedUsers.entries()) {
+                                if (username === sessionId) {
+                                    const socket = global.chatModule.io.sockets.sockets.get(socketId);
+                                    if (socket && socket.user && socket.user.id) {
+                                        return socket.user.id;
+                                    }
                                 }
                             }
-                        }
-                        return sessionId; // Fallback
-                    };
+                            return sessionId; // Fallback
+                        };
+                    } else {
+                        console.warn('⚠️  IntelligentChatModule disabled: llmModule not available');
+                        global.chatModule = null;
+                        // Define a fallback getUserIdFromSessionId function
+                        global.getUserIdFromSessionId = function(sessionId) {
+                            return sessionId; // Simple fallback
+                        };
+                    }
                     httpServer.listen(chat_port, () => {
                         console.log('Chat running on:' + chat_port);
                     });
@@ -2256,14 +2320,18 @@ MOD_PAGECLONE=false
         }
         if (process.env.MOD_AGENT_WORKFLOW_ENABLED) {
             try {
-                const AgentWorkflowModule = require('./modules/agentWorkflowModule.js');
-                // Pass database configuration
-                const dbConfig = {
-                    dbType: process.env.DEFAULT_DBTYPE || 'mysql',
-                    dbConnection: process.env.DEFAULT_DBCONNECTION || 'local'
-                };
-                const agentWorkflowManager = new AgentWorkflowModule(dbConfig, redisClient, app);
-                console.log('Agent Workflow Builder module initialized successfully');
+                const AgentWorkflowModule = moduleGateway.safeLoadModule('agentWorkflowManager', './modules/agentWorkflowModule.js');
+                if (AgentWorkflowModule) {
+                    // Pass database configuration
+                    const dbConfig = {
+                        dbType: process.env.DEFAULT_DBTYPE || 'mysql',
+                        dbConnection: process.env.DEFAULT_DBCONNECTION || 'local'
+                    };
+                    const agentWorkflowManager = new AgentWorkflowModule(dbConfig, redisClient, app);
+                    console.log('Agent Workflow Builder module initialized successfully');
+                } else {
+                    console.warn('⚠️  Agent Workflow Builder module disabled: llmModule not available');
+                }
             } catch (error) {
                 console.error('Failed to initialize Agent Workflow Builder Module:', error.message);
             }
@@ -2645,6 +2713,10 @@ MOD_PAGECLONE=false
             this.registerAnalyticsRoutes();
             this.registerDevTools();
             setupRag(this.apiConfig);
+            
+            // Log module status
+            this.logModuleStatus();
+            
              // Register validation middleware globally
             const validationMiddleware = createGlobalValidationMiddleware();
             this.app.use(validationMiddleware);

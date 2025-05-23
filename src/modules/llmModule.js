@@ -292,7 +292,70 @@ class LLMModule {
         this.personasConfig = {};
         this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
         this.keywordToPersonaMap = {};
-        this.initialize();
+        this.isEnabled = false; // Track if module is properly initialized
+        
+        // Validate environment configuration before initialization
+        if (this.validateEnvironmentConfiguration()) {
+            this.initialize();
+        } else {
+            console.warn('⚠️  LLMModule disabled: Missing required environment configuration');
+        }
+    }
+
+    /**
+     * Validates that the required environment variables are present for the selected LLM type
+     * @returns {boolean} true if configuration is valid, false otherwise
+     */
+    validateEnvironmentConfiguration() {
+        if (!this.llmType) {
+            console.error('❌ LLM_TYPE environment variable is required');
+            return false;
+        }
+
+        const llmType = this.llmType.toLowerCase();
+        
+        switch (llmType) {
+            case 'ollama':
+                // Ollama doesn't require API keys but check if service is available
+                console.log('✅ LLMModule: Using Ollama configuration');
+                return true;
+                
+            case 'openai':
+                if (!this.openaiApiKey) {
+                    console.error('❌ OPENAI_API_KEY environment variable is required for OpenAI LLM type');
+                    return false;
+                }
+                console.log('✅ LLMModule: Using OpenAI configuration');
+                return true;
+                
+            case 'claude':
+                if (!this.claudeApiKey) {
+                    console.error('❌ CLAUDE_API_KEY environment variable is required for Claude LLM type');
+                    return false;
+                }
+                console.log('✅ LLMModule: Using Claude configuration');
+                return true;
+                
+            case 'openrouter':
+                if (!this.openRouterApiKey) {
+                    console.error('❌ OPENROUTER_API_KEY environment variable is required for OpenRouter LLM type');
+                    return false;
+                }
+                console.log('✅ LLMModule: Using OpenRouter configuration');
+                return true;
+                
+            default:
+                console.error(`❌ Unsupported LLM_TYPE: ${this.llmType}. Supported types: ollama, openai, claude, openrouter`);
+                return false;
+        }
+    }
+
+    /**
+     * Checks if the LLMModule is enabled and properly configured
+     * @returns {boolean} true if enabled, false otherwise
+     */
+    isModuleEnabled() {
+        return this.isEnabled;
     }
 
 
@@ -376,8 +439,10 @@ class LLMModule {
             }
             
             console.log('LLMModule initialization complete');
+            this.isEnabled = true; // Mark as enabled after successful initialization
         } catch (error) {
             console.error('Error during LLMModule initialization:', error);
+            this.isEnabled = false; // Ensure module is marked as disabled on error
             
             // Ensure personas are loaded even if other initialization fails
             if (!this.personasConfig || Object.keys(this.personasConfig).length === 0) {
@@ -1848,12 +1913,21 @@ async generateDirectAnswer(message, userContext, sessionId) {
 
 // Create instance and initialize quality control
 const llmModuleInstance = new LLMModule();
-(async () => {
-    llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
-    llmModuleInstance.initQualityControl();
-})();
 
-// Set the global reference to avoid circular dependency issues
-global.llmModule = llmModuleInstance;
+// Only set up the module if it's enabled
+if (llmModuleInstance.isModuleEnabled()) {
+    (async () => {
+        llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
+        llmModuleInstance.initQualityControl();
+    })();
+    
+    // Set the global reference to avoid circular dependency issues
+    global.llmModule = llmModuleInstance;
+    console.log('✅ LLMModule enabled and initialized');
+} else {
+    // Set global reference to null to indicate module is disabled
+    global.llmModule = null;
+    console.log('❌ LLMModule disabled due to configuration issues');
+}
 
 module.exports = llmModuleInstance;

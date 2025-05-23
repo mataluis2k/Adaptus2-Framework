@@ -7,6 +7,7 @@ const path = require('path');
 const crypto = require('crypto');
 const Redis = require('ioredis');
 const { promisify } = require('util');
+const moduleGateway = require('./moduleGateway');
 
 // Constants for configuration
 const CLUSTER_NAME = process.env.CLUSTER_NAME || 'default'; // Default cluster
@@ -99,6 +100,11 @@ class PluginManager {
     
             if (!this.validatePlugin(plugin)) {
                 throw new Error(`Plugin ${pluginName} failed validation.`);
+            }
+
+            // Check if plugin can be loaded based on dependencies
+            if (!moduleGateway.canLoadPlugin(pluginName, plugin)) {
+                throw new Error(`Plugin ${pluginName} cannot be loaded due to missing dependencies (likely llmModule)`);
             }
     
             // Initialize the plugin with dependencies
@@ -315,6 +321,11 @@ class PluginManager {
                 
                 if (!this.validatePlugin(plugin)) {
                     throw new Error(`Plugin ${pluginName} failed validation.`);
+                }
+
+                // Check if plugin can be loaded based on dependencies
+                if (!moduleGateway.canLoadPlugin(pluginName, plugin)) {
+                    throw new Error(`Plugin ${pluginName} cannot be loaded due to missing dependencies (likely llmModule)`);
                 }
                 
                 const dependencies = this.dependencyManager.getDependencies();
