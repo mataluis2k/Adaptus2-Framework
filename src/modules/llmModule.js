@@ -1906,6 +1906,9 @@ async generateDirectAnswer(message, userContext, sessionId) {
 // Create instance and initialize quality control
 const llmModuleInstance = new LLMModule();
 
+// Expose helper to other modules
+llmModuleInstance.buildPersonaPrompt = buildPersonaPrompt;
+
 // Only set up the module if it's enabled
 if (llmModuleInstance.isModuleEnabled()) {
     (async () => {
