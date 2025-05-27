@@ -6,6 +6,8 @@ const logger = require('./logger');
 const { read } = require('./db');
 const moment = require('moment');
 
+const AGENTS_TABLE = 'agents';
+
 class AgentWorkflowManager extends EventEmitter {
     constructor(config, redisClient, context) {
         super();
@@ -34,6 +36,22 @@ class AgentWorkflowManager extends EventEmitter {
         return workflow;
     }
 
+    async loadAgent(agentId) {
+        const cacheKey = `agent:${agentId}`;
+        let agent = await this.redis.get(cacheKey);
+
+        if (agent) return JSON.parse(agent);
+
+        const agents = await read(this.config, AGENTS_TABLE, { id: agentId });
+        agent = agents.length ? agents[0] : null;
+
+        if (agent) {
+            await this.redis.set(cacheKey, JSON.stringify(agent), "EX", this.cacheTTL);
+        }
+
+        return agent;
+    }
+
     async executeWorkflow(workflowId, inputData) {
         const workflow = await this.loadWorkflow(workflowId);
         if (!workflow) {
@@ -48,9 +66,15 @@ class AgentWorkflowManager extends EventEmitter {
             const fromElement = elementMap.get(connection.from);
             const toElement = elementMap.get(connection.to);
 
-            const fromPersona = fromElement.agentId;
-            const personaPrompt = llmModule.buildPersonaPrompt(fromPersona);
+            const fromPersonaId = fromElement.agentId;
+            const agentConfig = await this.loadAgent(fromPersonaId);
+            const personaPrompt = llmModule.buildPersonaPrompt(agentConfig);
             const mcpAttachment = workflow.mcpAttachments[fromElement.id];
+
+            if (!mcpAttachment || !mcpAttachment.parameters) {
+                logger.error(`Missing MCP attachment for element ${fromElement.id}`);
+                continue;
+            }
 
             const commandPayload = {
                 prompt: personaPrompt,
