@@ -5,7 +5,24 @@
 const { Server } = require("socket.io");
 const jwt = require("jsonwebtoken");
 const { query } = require("./db"); // Import both getDbConnection and query functions
-const llmModule = require("./llmModule");
+
+// Safe LLM module loading - check if it's available
+let llmModule = null;
+try {
+    llmModule = require("./llmModule");
+    // Check if module is properly initialized
+    if (llmModule && !llmModule.isModuleEnabled()) {
+        console.warn('⚠️  IntelligentChatModule: llmModule loaded but not enabled');
+    }
+} catch (error) {
+    console.error('❌ IntelligentChatModule: Failed to load llmModule:', error.message);
+}
+
+// Helper function to check if LLM is available
+function isLLMAvailable() {
+    return llmModule && llmModule.isModuleEnabled && llmModule.isModuleEnabled();
+}
+
 const { preloadCustomerContext } = require("./customerSupportModule.js");
 const MessageRouter = require("./MessageRouter");
 const ResponseStrategy = require("./ResponseStrategy");

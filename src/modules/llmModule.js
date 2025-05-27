@@ -293,12 +293,31 @@ class LLMModule {
         this.qualityControlEnabled = process.env.QUALITY_CONTROL_ENABLED === 'true';
         this.keywordToPersonaMap = {};
         this.isEnabled = false; // Track if module is properly initialized
+        this.initializationComplete = false;
+        this.initializationError = null;
         
+        // Create initialization promise
+        this.initializationPromise = this._startInitialization();
+    }
+    
+    async _startInitialization() {
         // Validate environment configuration before initialization
         if (this.validateEnvironmentConfiguration()) {
-            this.initialize();
+            try {
+                await this.initialize();
+                this.initializationComplete = true;
+                return true;
+            } catch (error) {
+                console.error('Failed to initialize LLMModule:', error);
+                this.isEnabled = false;
+                this.initializationError = error;
+                this.initializationComplete = true;
+                return false;
+            }
         } else {
             console.warn('⚠️  LLMModule disabled: Missing required environment configuration');
+            this.initializationComplete = true;
+            return false;
         }
     }
 
@@ -318,7 +337,7 @@ class LLMModule {
             case 'ollama':
                 console.log('✅ LLMModule: Using Ollama configuration');
                 // Check if basic Ollama environment variables are available
-                const ollamaHost = process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
+                const ollamaHost = process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || 'http://localhost:11434';
                 const ollamaInference = process.env.OLLAMA_INFERENCE || 'llama3';
                 
                 // For now, assume Ollama is configured if environment variables are present
@@ -360,6 +379,17 @@ class LLMModule {
      * @returns {boolean} true if enabled, false otherwise
      */
     isModuleEnabled() {
+        return this.isEnabled;
+    }
+    
+    /**
+     * Wait for initialization to complete and check if module is enabled
+     * @returns {Promise<boolean>} true if enabled after initialization
+     */
+    async waitForInitialization() {
+        if (this.initializationPromise) {
+            await this.initializationPromise;
+        }
         return this.isEnabled;
     }
 
@@ -447,6 +477,12 @@ class LLMModule {
             this.isEnabled = true; // Mark as enabled after successful initialization
         } catch (error) {
             console.error('Error during LLMModule initialization:', error);
+            console.error('Error stack:', error.stack);
+            console.error('Error details:', {
+                message: error.message,
+                code: error.code,
+                name: error.name
+            });
             this.isEnabled = false; // Ensure module is marked as disabled on error
         }
     }
@@ -1485,7 +1521,7 @@ async generateDirectAnswer(message, userContext, sessionId) {
             case 'ollama':
                 try {
                     return new ChatOllama({
-                        baseUrl: baseUrl || process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
+                        baseUrl: baseUrl || process.env.OLLAMA_HOST || process.env.OLLAMA_BASE_URL || 'http://localhost:11434',
                         model,
                         temperature: 0.3,
                         ...llmOptions
@@ -1903,23 +1939,14 @@ async generateDirectAnswer(message, userContext, sessionId) {
 }
 
 
-// Create instance and initialize quality control
+// Create instance
 const llmModuleInstance = new LLMModule();
 
-// Only set up the module if it's enabled
-if (llmModuleInstance.isModuleEnabled()) {
-    (async () => {
-        llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
-        llmModuleInstance.initQualityControl();
-    })();
-    
-    // Set the global reference to avoid circular dependency issues
-    global.llmModule = llmModuleInstance;
-    console.log('✅ LLMModule enabled and initialized');
-} else {
-    // Set global reference to null to indicate module is disabled
-    global.llmModule = null;
-    console.log('❌ LLMModule disabled due to configuration issues');
-}
+// Always set the global reference to the instance
+// The isModuleEnabled() method will indicate if it's actually usable
+global.llmModule = llmModuleInstance;
+
+// Note: initialization happens asynchronously in the constructor
+// Modules that depend on llmModule should check isModuleEnabled()
 
 module.exports = llmModuleInstance;

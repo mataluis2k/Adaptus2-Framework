@@ -86,6 +86,10 @@ const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
 const moduleGateway = require('./modules/moduleGateway');
 
+// Initialize llmModule early before dependent modules
+const llmModule = require('./modules/llmModule');
+console.log('⏳ Initializing LLM Module early...');
+
 // Conditionally load LLM-dependent modules using moduleGateway
 const IntelligentChatModuleResult = moduleGateway.safeLoadModule('IntelligentChatModule', './modules/IntelligentChatModule');
 const IntelligentChatModule = IntelligentChatModuleResult?.IntelligentChatModule;
@@ -1817,16 +1821,16 @@ class Adaptus2Server {
     /**
      * Logs the status of all modules, showing which are enabled/disabled
      */
-    logModuleStatus() {
+    async logModuleStatus() {
         console.log('\n🔧 Module Status Report:');
         console.log('========================');
         
-        const status = moduleGateway.getModuleStatus();
+        const status = await moduleGateway.getModuleStatus();
         
         if (status.llmModuleAvailable) {
             console.log('✅ LLMModule: ENABLED');
         } else {
-            console.log('❌ LLMModule: DISABLED (missing configuration)');
+            console.log('❌ LLMModule: DISABLED (missing configuration or initialization failed)');
         }
         
         console.log('\n📦 LLM-Dependent Modules:');
@@ -2707,6 +2711,16 @@ MOD_PAGECLONE=false
     
             // Set up other parts of the server
             this.setupDependencies();
+            
+            // Wait for LLM module initialization before loading dependent modules
+            console.log('\n⏳ Waiting for LLM Module initialization...');
+            const llmInitialized = await llmModule.waitForInitialization();
+            if (llmInitialized) {
+                console.log('✅ LLM Module initialized successfully');
+            } else {
+                console.log('⚠️  LLM Module initialization failed or disabled');
+            }
+            
             this.setupPluginLoader();
             autoloadPlugins(this.pluginManager);
            
@@ -2714,8 +2728,8 @@ MOD_PAGECLONE=false
             this.registerDevTools();
             setupRag(this.apiConfig);
             
-            // Log module status
-            this.logModuleStatus();
+            // Log module status now that LLM initialization is complete
+            await this.logModuleStatus();
             
              // Register validation middleware globally
             const validationMiddleware = createGlobalValidationMiddleware();

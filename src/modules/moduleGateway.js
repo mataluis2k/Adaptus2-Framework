@@ -27,18 +27,35 @@ class ModuleGateway {
 
     /**
      * Checks if llmModule is available and properly configured
-     * @returns {boolean} true if llmModule is available
+     * @returns {Promise<boolean>} true if llmModule is available
      */
-    isLLMModuleAvailable() {
+    async isLLMModuleAvailable() {
         try {
             // First check if global.llmModule is set and not null
-            if (global.llmModule !== undefined) {
-                return global.llmModule !== null;
+            if (global.llmModule !== undefined && global.llmModule !== null) {
+                // Check if it's already initialized
+                if (global.llmModule.isModuleEnabled && global.llmModule.isModuleEnabled()) {
+                    return true;
+                }
+                // Otherwise wait for initialization to complete
+                const isEnabled = await global.llmModule.waitForInitialization();
+                return isEnabled;
             }
             
             // Fallback to checking the module directly
             const llmModule = require('./llmModule');
-            return llmModule && llmModule.isModuleEnabled && llmModule.isModuleEnabled();
+            if (llmModule) {
+                // Check if it's already initialized
+                if (llmModule.isModuleEnabled && llmModule.isModuleEnabled()) {
+                    return true;
+                }
+                // Otherwise wait for initialization to complete
+                if (llmModule.waitForInitialization) {
+                    const isEnabled = await llmModule.waitForInitialization();
+                    return isEnabled;
+                }
+            }
+            return false;
         } catch (error) {
             console.warn('Could not check llmModule availability:', error.message);
             return false;
@@ -64,13 +81,14 @@ class ModuleGateway {
             }
         }
 
-        // Check if module depends on llmModule
+        // For LLM-dependent modules, check if llmModule is already available
         if (this.llmDependentModules.has(moduleName)) {
-            if (!this.isLLMModuleAvailable()) {
-                console.warn(`⚠️  Module ${moduleName} disabled: depends on llmModule which is not available`);
-                this.disabledModules.add(moduleName);
-                this.moduleCache.set(moduleName, { success: false, reason: 'llmModule_unavailable' });
-                return null;
+            // Do a quick synchronous check first
+            const llmAvailable = global.llmModule && global.llmModule.isModuleEnabled && global.llmModule.isModuleEnabled();
+            if (llmAvailable) {
+                console.log(`✅ ${moduleName} loading with LLM support enabled`);
+            } else {
+                console.log(`⚠️  ${moduleName} depends on llmModule - loading module but functionality may be limited until LLM initializes`);
             }
         }
 
@@ -151,16 +169,42 @@ class ModuleGateway {
 
     /**
      * Gets the status of all modules
-     * @returns {Object} Status object with enabled and disabled modules
+     * @returns {Promise<Object>} Status object with enabled and disabled modules
      */
-    getModuleStatus() {
+    async getModuleStatus() {
+        const llmAvailable = await this.isLLMModuleAvailable();
         return {
-            llmModuleAvailable: this.isLLMModuleAvailable(),
+            llmModuleAvailable: llmAvailable,
             enabledModules: Array.from(this.enabledModules),
             disabledModules: Array.from(this.disabledModules),
             llmDependentModules: Array.from(this.llmDependentModules),
             llmDependentPlugins: Array.from(this.llmDependentPlugins)
         };
+    }
+
+    /**
+     * Waits for LLM module initialization and reports final status
+     * @returns {Promise<void>}
+     */
+    async waitForLLMAndReport() {
+        console.log('⏳ Waiting for LLM module initialization...');
+        const isAvailable = await this.isLLMModuleAvailable();
+        
+        if (isAvailable) {
+            console.log('✅ LLM module initialized successfully');
+            console.log('📦 LLM-dependent modules can now use full functionality');
+        } else {
+            console.log('⚠️  LLM module initialization failed or disabled');
+            console.log('⚠️  LLM-dependent modules will have limited functionality');
+            
+            // List affected modules
+            const affected = Array.from(this.llmDependentModules);
+            if (affected.length > 0) {
+                console.log('   Affected modules:', affected.join(', '));
+            }
+        }
+        
+        return isAvailable;
     }
 
     /**
