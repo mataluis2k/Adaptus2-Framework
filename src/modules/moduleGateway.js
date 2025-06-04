@@ -30,20 +30,36 @@ class ModuleGateway {
      * @returns {boolean} true if llmModule is available
      */
     isLLMModuleAvailable() {
-        try {
-            // First check if global.llmModule is set and not null
-            if (global.llmModule !== undefined) {
-                return global.llmModule !== null;
+    try {
+        // First check if global.llmModule is set and enabled
+        if (global.llmModule !== undefined && global.llmModule !== null) {
+            // If we have a global reference, check if it's actually enabled
+            if (global.llmModule.isModuleEnabled && typeof global.llmModule.isModuleEnabled === 'function') {
+                return global.llmModule.isModuleEnabled();
             }
-            
-            // Fallback to checking the module directly
-            const llmModule = require('./llmModule');
-            return llmModule && llmModule.isModuleEnabled && llmModule.isModuleEnabled();
-        } catch (error) {
-            console.warn('Could not check llmModule availability:', error.message);
-            return false;
+            // If no isModuleEnabled method, assume it's available if not null
+            return true;
         }
+        
+        // Fallback to checking the module directly
+        // Clear require cache to get fresh module state
+        delete require.cache[require.resolve('./llmModule')];
+        const llmModule = require('./llmModule');
+        
+        if (llmModule) {
+            // Update global reference if module is now available
+            if (llmModule.isModuleEnabled && llmModule.isModuleEnabled()) {
+                global.llmModule = llmModule;
+                return true;
+            }
+        }
+        
+        return false;
+    } catch (error) {
+        console.warn('Could not check llmModule availability:', error.message);
+        return false;
     }
+}
 
     /**
      * Safely loads a module with dependency checking
@@ -66,10 +82,12 @@ class ModuleGateway {
 
         // Check if module depends on llmModule
         if (this.llmDependentModules.has(moduleName)) {
+            // Clear cache entry to force re-evaluation
+            this.moduleCache.delete(moduleName);
+            
             if (!this.isLLMModuleAvailable()) {
                 console.warn(`⚠️  Module ${moduleName} disabled: depends on llmModule which is not available`);
                 this.disabledModules.add(moduleName);
-                this.moduleCache.set(moduleName, { success: false, reason: 'llmModule_unavailable' });
                 return null;
             }
         }
@@ -79,6 +97,7 @@ class ModuleGateway {
             const module = require(modulePath);
             console.log(`✅ Module ${moduleName} loaded successfully`);
             this.enabledModules.add(moduleName);
+            this.disabledModules.delete(moduleName); // Remove from disabled if it was there
             this.moduleCache.set(moduleName, { success: true, module });
             return module;
         } catch (error) {

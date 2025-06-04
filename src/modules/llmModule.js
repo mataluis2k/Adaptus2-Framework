@@ -360,6 +360,13 @@ class LLMModule {
      * @returns {boolean} true if enabled, false otherwise
      */
     isModuleEnabled() {
+        // If we're not enabled but have valid configuration, try to initialize
+        if (!this.isEnabled && this.validateEnvironmentConfiguration()) {
+            // Don't block on initialization, just trigger it
+            this.initialize().catch(err => {
+                console.error('Background initialization failed:', err);
+            });
+        }
         return this.isEnabled;
     }
 
@@ -444,7 +451,12 @@ class LLMModule {
             }
             
             console.log('LLMModule initialization complete');
-            this.isEnabled = true; // Mark as enabled after successful initialization
+            this.isEnabled = true; // ALWAYS mark as enabled after successful initialization
+
+            // Update global reference to indicate successful initialization
+            if (global.llmModule === null) {
+                global.llmModule = this;
+            }
         } catch (error) {
             console.error('Error during LLMModule initialization:', error);
             this.isEnabled = false; // Ensure module is marked as disabled on error
@@ -456,6 +468,11 @@ class LLMModule {
         return this.qualityControl;
     }
 
+    forceReinitialize() {
+        this.isEnabled = false;
+        this.initPromise = null;
+        return this.initialize();
+    }
     /**
  * Checks if the keywordToPersonaMap needs to be initialized
  * @returns {Promise<boolean>} - True if the map needs initialization, false otherwise
@@ -1911,18 +1928,24 @@ llmModuleInstance.buildPersonaPrompt = buildPersonaPrompt;
 
 // Only set up the module if it's enabled
 if (llmModuleInstance.isModuleEnabled()) {
+    // Module is ready immediately
     (async () => {
-        llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
-        llmModuleInstance.initQualityControl();
+        try {
+            llmModuleInstance.personasConfig = await llmModuleInstance.loadPersonas();
+            llmModuleInstance.initQualityControl();
+            console.log('✅ LLMModule enabled and initialized');
+        } catch (error) {
+            console.error('Error during LLMModule async initialization:', error);
+        }
     })();
     
-    // Set the global reference to avoid circular dependency issues
+    // Set the global reference
     global.llmModule = llmModuleInstance;
-    console.log('✅ LLMModule enabled and initialized');
 } else {
-    // Set global reference to null to indicate module is disabled
-    global.llmModule = null;
-    console.log('❌ LLMModule disabled due to configuration issues');
+    // Module is not ready yet, but don't set to null - keep the instance
+    // This allows later initialization attempts to succeed
+    global.llmModule = llmModuleInstance; // Keep the instance available for re-initialization
+    console.log('⚠️  LLMModule not immediately available - will retry initialization later');
 }
 
 module.exports = llmModuleInstance;

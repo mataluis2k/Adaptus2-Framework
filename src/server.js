@@ -86,10 +86,12 @@ const generateGraphQLSchema = require('./modules/generateGraphQLSchema');
 const { createHandler } = require('graphql-http/lib/use/express');
 const moduleGateway = require('./modules/moduleGateway');
 
-// Conditionally load LLM-dependent modules using moduleGateway
-const IntelligentChatModuleResult = moduleGateway.safeLoadModule('IntelligentChatModule', './modules/IntelligentChatModule');
-const IntelligentChatModule = IntelligentChatModuleResult?.IntelligentChatModule;
-const setActiveInstance = IntelligentChatModuleResult?.setActiveInstance;
+// Initialize LLM Module early to ensure it's available for dependent modules
+const llmModule = require('./modules/llmModule');
+
+// LLM-dependent modules will be loaded later after LLM module is initialized
+let IntelligentChatModule = null;
+let setActiveInstance = null;
 
 const StreamingServer = require('./modules/streamingServer'); // Streaming Module
 const RuleEngine = require('./modules/ruleEngine');
@@ -138,10 +140,9 @@ const SECRET_SALT = process.env.SECRET_SALT || '';
 
 
 ruleEngine = null; // Global variable to hold the rule engine
-// Conditionally load RAG module 
-const ragHandlerResult = moduleGateway.safeLoadModule('ragHandler1', './modules/ragHandler1');
-const initializeRAG = ragHandlerResult?.initializeRAG;
-const handleRAG = ragHandlerResult?.handleRAG;
+// RAG module will be loaded later after LLM module is initialized
+let initializeRAG = null;
+let handleRAG = null;
 
 const corsOptions = {
     origin: process.env.CORS_ORIGIN || 'http://localhost:5173',
@@ -2152,6 +2153,99 @@ registerMiddleware() {
         );
     }
 
+    // Ensure LLM Module is fully initialized before dependent modules load
+    async ensureLLMModuleInitialized() {
+    try {
+        console.log('Ensuring LLM module is fully initialized...');
+        
+        // First, check if we need to force re-initialization
+        if (llmModule && !llmModule.isModuleEnabled() && llmModule.validateEnvironmentConfiguration()) {
+            console.log('LLM module has valid configuration but is disabled - attempting re-initialization');
+            
+            // Force re-initialization
+            if (llmModule.forceReinitialize && typeof llmModule.forceReinitialize === 'function') {
+                await llmModule.forceReinitialize();
+            } else if (llmModule.initialize && typeof llmModule.initialize === 'function') {
+                await llmModule.initialize();
+            }
+        }
+        
+        // Now check if initialization succeeded
+        let retryCount = 0;
+        const maxRetries = 10;
+        const retryDelay = 1000; // 1 second
+        
+        while (retryCount < maxRetries) {
+            // Check both the module's isModuleEnabled and global reference
+            const moduleEnabled = llmModule.isModuleEnabled && llmModule.isModuleEnabled();
+            const globalEnabled = global.llmModule !== null && global.llmModule !== undefined;
+            
+            if (moduleEnabled || globalEnabled) {
+                console.log('LLM module initialization confirmed');
+                
+                // Ensure global reference is set
+                if (!global.llmModule && llmModule) {
+                    global.llmModule = llmModule;
+                }
+                
+                // Clear module cache in moduleGateway to force re-evaluation
+                if (moduleGateway && moduleGateway.clearCache) {
+                    moduleGateway.clearCache();
+                }
+                
+                // Now load LLM-dependent modules
+                await this.loadLLMDependentModules();
+                return;
+            }
+            
+            console.log(`Waiting for LLM module initialization... (attempt ${retryCount + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, retryDelay));
+            retryCount++;
+        }
+        
+        console.warn('LLM module initialization could not be confirmed after maximum retries');
+        // Even if LLM failed, try to load modules that might work in degraded mode
+        await this.loadLLMDependentModules();
+        
+    } catch (error) {
+        console.error('Error ensuring LLM module initialization:', error);
+        // Don't throw error to prevent server startup failure
+        // Try to load modules anyway
+        await this.loadLLMDependentModules();
+    }
+    }
+
+    // Load LLM-dependent modules after LLM module is ready
+    async loadLLMDependentModules() {
+        try {
+            console.log('Loading LLM-dependent modules...');
+            
+            // Load IntelligentChatModule
+            const IntelligentChatModuleResult = moduleGateway.safeLoadModule('IntelligentChatModule', './IntelligentChatModule');
+            if (IntelligentChatModuleResult) {
+                IntelligentChatModule = IntelligentChatModuleResult.IntelligentChatModule;
+                setActiveInstance = IntelligentChatModuleResult.setActiveInstance;
+                console.log('✅ IntelligentChatModule loaded successfully');
+            } else {
+                console.log('⚠️  IntelligentChatModule disabled: depends on llmModule which is not available');
+            }
+            
+            // Load RAG handler
+            const ragHandlerResult = moduleGateway.safeLoadModule('ragHandler1', './ragHandler1');
+            if (ragHandlerResult) {
+                initializeRAG = ragHandlerResult.initializeRAG;
+                handleRAG = ragHandlerResult.handleRAG;
+                console.log('✅ RAG handler loaded successfully');
+            } else {
+                console.log('⚠️  RAG module disabled: llmModule not available');
+            }
+            
+        } catch (error) {
+            console.error('Error loading LLM-dependent modules:', error);
+            // Don't throw error to prevent server startup failure
+        }
+    }
+
     // Initialize optional modules safely
     initializeOptionalModules(app) {
         app.use(cors(corsOptions));
@@ -2320,7 +2414,7 @@ MOD_PAGECLONE=false
         }
         if (process.env.MOD_AGENT_WORKFLOW_ENABLED) {
             try {
-                const AgentWorkflowModule = moduleGateway.safeLoadModule('agentWorkflowManager', './modules/agentWorkflowModule.js');
+                const AgentWorkflowModule = moduleGateway.safeLoadModule('agentWorkflowManager', './agentWorkflowModule.js');
                 if (AgentWorkflowModule) {
                     // Pass database configuration
                     const dbConfig = {
@@ -2732,6 +2826,10 @@ MOD_PAGECLONE=false
             this.registerDynamicEndpoints();
             this.registerFileUploadEndpoints();
             this.registerStaticEndpoints();
+            
+            // Ensure LLM Module is fully initialized before loading dependent modules
+            await this.ensureLLMModuleInitialized();
+            
             this.initializeOptionalModules(this.app);            
 
 
