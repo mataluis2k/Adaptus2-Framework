@@ -271,11 +271,14 @@ YOU ARE BOUND BY THE FOLLOWING RULES:
 
 Decide exactly one action as JSON, then STOP:
 • If you need a retrieval-augmented lookup, respond:
-  { "action": "rag",    "collection": "<collectionName>", "query": "<text to retrieve>" }
-• If you need to call a tool, respond the tool input should be in JSON format:
-  { "action": "tool",   "toolName": "<toolName>",       "input": "<tool input>" }
+  { "action": "rag", "collection": "<collectionName>", "query": "<text to retrieve>" }
+• If you need to call a tool, respond:
+  { "action": "tool", "toolName": "<exact_tool_name>", "input": <tool_input_object> }
+  Example: { "action": "tool", "toolName": "update_order_notes", "input": { "orderId": "TXN-123", "note": "Customer complaint" } }
 • Otherwise answer directly:
-  { "action": "final",  "message": "<your full answer here>" }
+  { "action": "final", "message": "<your full answer here>" }
+
+IMPORTANT: The toolName must match exactly one of the available tools. The input must be a valid JSON object matching the tool's expected parameters.
 `;
 
 console.log(`[IntelligentChatModule] Decision prompt: ${decisionPrompt}`);
@@ -309,15 +312,33 @@ console.log(`[IntelligentChatModule] Decision prompt: ${decisionPrompt}`);
     } else if (decision.action === "tool") {
       const tool = toolRegistry.getTool(decision.toolName);
       if (tool) {
-        intermediateResult = await tool.execute(decision.input, { sessionId });
+        try {
+          console.log(`[IntelligentChatModule] Executing tool: ${decision.toolName} with input:`, JSON.stringify(decision.input));
+          intermediateResult = await tool.execute(decision.input, { sessionId });
+        } catch (error) {
+          console.error(`[IntelligentChatModule] Tool execution error:`, error);
+          intermediateResult = `❌ Error executing tool "${decision.toolName}": ${error.message}`;
+        }
       } else {
-        intermediateResult = `❌ Tool "${decision.toolName}" not found.`;
+        intermediateResult = `❌ Tool "${decision.toolName}" not found. Available tools: ${Object.keys(toolRegistry.getAllTools()).join(', ')}`;
       }
     } else if (decision.action === "final") {
       // Already a complete answer
       intermediateResult = decision.message;
     } else {
-      intermediateResult = `❌ Unrecognized action "${decision.action}".`;
+      // Check if the action itself might be a tool name (backwards compatibility)
+      const tool = toolRegistry.getTool(decision.action);
+      if (tool && decision.input) {
+        try {
+          console.log(`[IntelligentChatModule] Handling legacy tool format: ${decision.action} with input:`, JSON.stringify(decision.input));
+          intermediateResult = await tool.execute(decision.input, { sessionId });
+        } catch (error) {
+          console.error(`[IntelligentChatModule] Legacy tool execution error:`, error);
+          intermediateResult = `❌ Error executing tool "${decision.action}": ${error.message}`;
+        }
+      } else {
+        intermediateResult = `❌ Unrecognized action "${decision.action}". Available actions: rag, tool, final. Available tools: ${Object.keys(toolRegistry.getAllTools()).join(', ')}`;
+      }
     }
 
     // 5️⃣ Ask the LLM to craft a final response

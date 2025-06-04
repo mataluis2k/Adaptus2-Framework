@@ -359,21 +359,43 @@ const summarizeLastOrdersTool = new DynamicTool({
 
 const updateOrderNotesTool = new DynamicTool({
   name: "update_order_notes",
-  description: "Add a customer service note to an order.",
+  description: "Add a customer service note to an order. Use parameters: orderId (or order_id) and note (or notes array).",
   category: "customer_support",
   requiresAuth: true,
   schema: {
     orderId: {
       type: 'string',
-      description: 'Order ID to refund'
+      description: 'Order ID to add note to (can also use order_id)'
     },
     note: {
       type: 'string',
-      description: 'Note to add to the order'
+      description: 'Note to add to the order (can also use notes as string or array)'
     }
   },
-  execute: async ({ orderId, note }) => {
+  execute: async (params) => {
+    // Handle both parameter formats: { orderId, note } and { order_id, notes }
+    const orderId = params.orderId || params.order_id;
+    let note = params.note;
+    
+    // Handle notes array format
+    if (!note && params.notes) {
+      if (Array.isArray(params.notes)) {
+        note = params.notes.join('\n');
+      } else {
+        note = params.notes;
+      }
+    }
+    
     console.log(`[TOOL_DEBUG] Starting update_order_notes for orderId: ${orderId}, note: ${note}`);
+    console.log(`[TOOL_DEBUG] Raw params received:`, JSON.stringify(params));
+    
+    // Validate parameters
+    if (!orderId) {
+      return `❌ Error: Missing order ID. Please provide either 'orderId' or 'order_id' parameter.`;
+    }
+    if (!note) {
+      return `❌ Error: Missing note. Please provide either 'note' or 'notes' parameter.`;
+    }
     
     try {
       // Get DB connection with extended timeout and debug
