@@ -83,12 +83,12 @@ class RequestLogger {
 
         const iv = crypto.randomBytes(16);
         const cipher = crypto.createCipheriv('aes-256-gcm', Buffer.from(this.encryptionKey, 'hex'), iv);
-        
+
         let encrypted = cipher.update(JSON.stringify(data), 'utf8', 'hex');
         encrypted += cipher.final('hex');
-        
+
         const authTag = cipher.getAuthTag();
-        
+
         // Return IV, encrypted data, and auth tag as a single string
         return `${iv.toString('hex')}:${authTag.toString('hex')}:${encrypted}`;
     }
@@ -99,16 +99,16 @@ class RequestLogger {
         }
 
         const [ivHex, authTagHex, encryptedText] = encryptedData.split(':');
-        
+
         const iv = Buffer.from(ivHex, 'hex');
         const authTag = Buffer.from(authTagHex, 'hex');
         const decipher = crypto.createDecipheriv('aes-256-gcm', Buffer.from(this.encryptionKey, 'hex'), iv);
-        
+
         decipher.setAuthTag(authTag);
-        
+
         let decrypted = decipher.update(encryptedText, 'hex', 'utf8');
         decrypted += decipher.final('utf8');
-        
+
         return JSON.parse(decrypted);
     }
     formatForMySQL(date) {
@@ -298,7 +298,7 @@ class RequestLogger {
     async getLogsByTimeRange(startTime, endTime) {
         try {
             const selectQuery = {
-                text: `SELECT * FROM ${this.tableName} 
+                text: `SELECT * FROM ${this.tableName}
                       WHERE timestamp_start BETWEEN ? AND ?
                       ORDER BY timestamp_start DESC`,
                 values: [startTime, endTime]
@@ -315,7 +315,7 @@ class RequestLogger {
     async getLogsByStatusCode(statusCode) {
         try {
             const selectQuery = {
-                text: `SELECT * FROM ${this.tableName} 
+                text: `SELECT * FROM ${this.tableName}
                       WHERE response_status = ?
                       ORDER BY timestamp_start DESC`,
                 values: [statusCode]
@@ -332,7 +332,7 @@ class RequestLogger {
     async getLogsByUserId(userId) {
         try {
             const selectQuery = {
-                text: `SELECT * FROM ${this.tableName} 
+                text: `SELECT * FROM ${this.tableName}
                       WHERE user_id = ?
                       ORDER BY timestamp_start DESC`,
                 values: [userId]
