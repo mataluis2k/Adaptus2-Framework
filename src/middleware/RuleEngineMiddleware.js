@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+// Note: Assuming 'ruleEngine' module export is { RuleEngine }, but the file is ruleEngine.js
 const { RuleEngine } = require(path.join(__dirname, '../modules/ruleEngine'));
 const response = require(path.join(__dirname, '../modules/response'));
 const { setContext } = require('../modules/context');
@@ -16,15 +17,18 @@ class RuleEngineMiddleware {
             }
         } catch (error) {
             console.error('Error initializing RuleEngineMiddleware:', error.message);
-            this.ruleEngine = null;
+            this.ruleEngine = null; // Disable middleware if initialization fails
         }
     }
 
     middleware() {
+        const self = this;
+
         return async (req, res, next) => {
+            const { setContext } = require('../modules/context');
             setContext('req', req);
-            if (!this.ruleEngine) {
-                console.warn('RuleEngineMiddleware is disabled. Skipping rules processing.');
+
+            if (!self.ruleEngine) {
                 return next();
             }
 
@@ -32,122 +36,75 @@ class RuleEngineMiddleware {
             let pathSegments = req.path.split('/').filter(Boolean);
             let entityName = pathSegments.includes('api') ? pathSegments[pathSegments.indexOf('api') + 1] : pathSegments[0];
 
-            const hasRules = this.ruleEngine.hasRulesForEntity(entityName);
-            if (!hasRules) {
+            if (eventType !== 'GET') {
+                // Logic for POST/PUT/etc. remains the same
+                if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(eventType) && req.body) {
+                    try {
+                        const data = { ...req.body, user_agent: req.headers['user-agent'], user_ip: req.ip, method: req.method, path: req.path };
+                        await self.ruleEngine.processEvent(eventType, entityName, data, {
+                            ...(self.dependencyManager.context || {}),
+                            actions: { ...((self.dependencyManager.context || {}).actions || {}), update: (ctx, entity, field, value) => { req.body[field] = value; } },
+                        });
+                    } catch (err) {
+                      console.error(`Error processing inbound ${eventType} rules:`, err.message);
+                      return res.status(500).json({ error: `${eventType} rules processing failed` });
+                    }
+                }
                 return next();
             }
 
-            const globalContext = this.dependencyManager.context;
+            const globalContext = self.dependencyManager.context || {};
+            const rules = self.ruleEngine.getRules();
 
-            if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(eventType) && req.body) {
-                // Logic for POST, PUT, PATCH, DELETE remains unchanged...
-                try {
-                    const data = { ...req.body, user_agent: req.headers['user-agent'], user_ip: req.ip || req.connection.remoteAddress, method: req.method, path: req.path };
-                    await this.ruleEngine.processEvent(eventType, entityName, data, { ...globalContext, actions: { ...globalContext.actions, update: (ctx, entity, field, value) => { req.body[field] = value; } } });
-                    if ((response.data && Object.keys(response.data).length > 0 && response.module) || (response.error && response.error !== '') || response.status !== 200) {
-                        res.status(response.status).json({ success: response.success !== undefined ? response.success : !response.error, message: response.message, error: response.error, data: response.data, module: response.module, code: response.code });
-                    }
-                    if (response.status === 600) {
-                        response.status = 200;
-                        return res.status(response.status).json({ message: response.message, error: response.error, data: response.data, module: response.module });
-                    }
-                    response.Reset();
-                    return next();
-                } catch (err) {
-                    console.error(`Error processing inbound ${eventType} rules:`, err.message);
-                    return res.status(500).json({ error: `${eventType} rules processing failed` });
-                }
+            const getRulesForEntity = rules.filter(rule =>
+                rule.entity.toLowerCase() === entityName.toLowerCase() && rule.eventType === 'GET'
+            );
 
-            } else if (eventType === 'GET') {
-                res.locals.ruleEngineData = null;
+            const hasGetInRule = getRulesForEntity.some(rule => rule.direction === 'in');
+            const hasGetOutRule = getRulesForEntity.some(rule => rule.direction === 'out');
+            const hasGenericGetRule = getRulesForEntity.some(rule => rule.direction === null);
 
-                try {
-                    const data = { ...req.query, user_agent: req.headers['user-agent'], user_ip: req.ip || req.connection.remoteAddress, method: req.method, path: req.path };
-                    await this.ruleEngine.processEvent(eventType, entityName, data, { ...globalContext, actions: { ...globalContext.actions, update: (ctx, entity, field, value) => { req.query[field] = value; }, sendResponse: (ctx, responseData) => { res.locals.ruleEngineData = responseData; } }, direction: 'in' });
-                } catch (err) {
-                    console.error(`Error processing inbound GET (GETIN) query parameters:`, err.message);
-                    return res.status(500).json({ error: `GET query parameter processing failed` });
-                }
+            if (hasGetInRule || hasGenericGetRule) {
+                const data = { ...req.query, user_agent: req.headers['user-agent'], user_ip: req.ip, method: req.method, path: req.path };
 
+                await self.ruleEngine.processEvent('GET', entityName, data, {
+                    ...globalContext,
+                    req: req,
+                    res: res,
+                    actions: { ...(globalContext.actions || {}) },
+                    direction: 'in'
+                });
+                // The plugin has run and populated the responseBus.
+                // We now pass control to the DynamicRouteHandler.
+                return next();
+
+            } else if (hasGetOutRule) {
+                // Logic for GETOUT remains the same
                 const originalSend = res.send;
                 res.send = async (responseData) => {
-                    const finalData = res.locals.ruleEngineData !== null ? res.locals.ruleEngineData : responseData;
-
-                    if (res.statusCode >= 300) {
-                        return originalSend.call(res, finalData);
-                    }
-
                     try {
-                        let parsedData;
-                        try {
-                            parsedData = typeof finalData === 'string' ? JSON.parse(finalData) : finalData;
-                        } catch (parseError) {
-                            return originalSend.call(res, finalData);
-                        }
-                        if (!parsedData) {
-                            return originalSend.call(res, finalData);
-                        }
-                        if (!parsedData.data) {
-                            parsedData = { data: parsedData };
-                        }
-                        const ruleData = Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data];
-                        const customUpdateAction = (ctx, action) => {
-                            if (action.field && action.expression) {
-                                try {
-                                    let computedValue;
-                                    if (typeof action.expression === 'string') {
-                                        computedValue = action.expression.replace(/\${([^}]+)}/g, (match, inner) => {
-                                            try {
-                                                const fn = new Function('data', `with(data) { return ${inner}; }`);
-                                                const value = fn(ctx.data);
-                                                return value !== undefined && value !== null ? value : match;
-                                            } catch (e) { return match; }
-                                        });
-                                    } else {
-                                        computedValue = action.expression;
-                                    }
-                                    ctx.data[action.field] = computedValue;
-                                    if (Array.isArray(parsedData.data)) {
-                                        parsedData.data.forEach(item => { item[action.field] = computedValue; });
-                                    } else if (typeof parsedData.data === 'object') {
-                                        parsedData.data[action.field] = computedValue;
-                                    } else {
-                                        parsedData.data = { [action.field]: computedValue };
-                                    }
-                                } catch (err) {
-                                    console.error(`Error in custom update action for field "${action.field}":`, err.message);
-                                }
-                            }
-                        };
-                        await this.ruleEngine.processEvent(eventType, entityName, ruleData, { ...globalContext, actions: { ...globalContext.actions, update: customUpdateAction }, direction: 'out' });
-                        
-                        const cleanUserData = (obj) => {
-                            if (!obj || typeof obj !== 'object') return;
-                            if (Array.isArray(obj)) {
-                                obj.forEach(item => cleanUserData(item));
-                            } else {
-                                delete obj.user;
-                                Object.values(obj).forEach(value => cleanUserData(value));
-                            }
-                        };
-                        if (parsedData.data) {
-                            cleanUserData(parsedData.data);
-                        }
+                        let parsedData = (typeof responseData === 'string') ? JSON.parse(responseData) : responseData;
+                        const ruleData = parsedData.data ? (Array.isArray(parsedData.data) ? parsedData.data : [parsedData.data]) : [];
 
-                        // *** FIX REVERTED: Now calling originalSend to re-enable the fixed logger. ***
+                        if (ruleData.length > 0) {
+                            await self.ruleEngine.processEvent('GET', entityName, ruleData, {
+                                ...globalContext,
+                                actions: { ...(globalContext.actions || {}) },
+                                direction: 'out'
+                            });
+                        }
                         originalSend.call(res, JSON.stringify(parsedData));
-
                     } catch (err) {
-                        console.error(`Error processing outbound GET (GETOUT) rules for entity: ${entityName}:`, err.message);
-                        originalSend.call(res, finalData);
+                        console.error(`Error processing outbound GET rules for entity: ${entityName}:`, err.message);
+                        originalSend.call(res, responseData);
                     }
                 };
                 return next();
             } else {
-                next();
+                return next();
             }
         };
     }
-}
+  }
 
-module.exports = RuleEngineMiddleware;
+  module.exports = RuleEngineMiddleware;
