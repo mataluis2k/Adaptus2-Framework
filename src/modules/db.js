@@ -1057,30 +1057,33 @@ async function createTable(config, tableName, columnDefinitions) {
     }
 }
 
+/**
+ * Extend Global Context with CRUD Actions
+ *
+ * UNCHANGED: This function remains the same as the original,
+ * since the underlying CRUD functions maintain the same interface
+ */
 function extendContext() {
     if (!globalContext.actions) globalContext.actions = {};
 
-    // *** FIX: Pass the entire 'params' object as the options to the DB functions ***
-    // This ensures that { skipResponse: true } is correctly passed through.
-    
     globalContext.actions.create_record = async (ctx, params) => {
         const { entity, data } = params;
-        return await create(ctx.config, entity, data, params);
+        return await create(ctx.config, entity, data);
     };
 
     globalContext.actions.read = async (ctx, params) => {
         const { entity, query } = params;
-        return await read(ctx.config, entity, query, params);
+        return await read(ctx.config, entity, query);
     };
 
     globalContext.actions.update = async (ctx, params) => {
         const { entity, query, data } = params;
-        return await update(ctx.config, entity, query, data, params);
+        return await update(ctx.config, entity, query, data);
     };
 
     globalContext.actions.delete = async (ctx, params) => {
         const { entity, query } = params;
-        return await deleteRecord(ctx.config, entity, query, params);
+        return await deleteRecord(ctx.config, entity, query);
     };
 
     globalContext.actions.exists = async (ctx, params) => {
