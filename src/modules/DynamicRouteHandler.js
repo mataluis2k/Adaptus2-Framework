@@ -157,7 +157,7 @@ class DynamicRouteHandler {
         try {
             // --- START: NEW CONDITIONAL BYPASS LOGIC ---
             // Before resetting the bus, check if a plugin has already populated it.
-            if (responseBus.data && Object.keys(responseBus.data).length > 0) {
+            if (responseBus.module) {
                 // A rule-based plugin has already run and prepared the response.
                 // Send the response from the bus and terminate the request here.
                 return res.status(responseBus.status).json({
