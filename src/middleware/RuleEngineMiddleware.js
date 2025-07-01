@@ -24,7 +24,7 @@ class RuleEngineMiddleware {
     const self = this;
 
     return async (req, res, next) => {
-      // inject request into global context once
+      // inject the request into global context
       setContext('req', req);
 
       if (!self.ruleEngine) {
@@ -41,13 +41,11 @@ class RuleEngineMiddleware {
       if (eventType !== 'GET') {
         if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(eventType) && req.body) {
           try {
-            // merge context with endpointConfig and dependencyManager.context
-            const ctx = {
+            const baseCtx = {
               ...self.dependencyManager.context,
-              endpoint: endpointConfig,
+              endpoint: endpointConfig
             };
 
-            // prepare data for rules
             const data = {
               ...req.body,
               user_agent: req.headers['user-agent'],
@@ -61,17 +59,15 @@ class RuleEngineMiddleware {
               entityName,
               data,
               {
-                ...ctx,
+                ...baseCtx,
                 actions: {
-                  ...(ctx.actions || {}),
-                  update: (ctxInner, _, field, value) => {
-                    req.body[field] = value;
-                  },
-                },
+                  ...(baseCtx.actions || {}),
+                  update: (_, __, field, value) => { req.body[field] = value; }
+                }
               }
             );
 
-            // short-circuit if plugin set response
+            // short-circuit if plugin set a response
             if (
               (response.data && Object.keys(response.data).length) ||
               response.error ||
@@ -80,92 +76,107 @@ class RuleEngineMiddleware {
               const success = response.success !== undefined
                 ? response.success
                 : (!response.error);
-              return res
-                .status(response.status)
-                .json({
-                  success,
-                  message: response.message,
-                  error: response.error,
-                  data: response.data,
-                  module: response.module,
-                  code: response.code,
-                });
+              return res.status(response.status).json({
+                success,
+                message: response.message,
+                error: response.error,
+                data: response.data,
+                module: response.module,
+                code: response.code
+              });
             }
 
-            // handle special 600 status
+            // special status 600 handling
             if (response.status === 600) {
               response.status = 200;
-              return res
-                .status(response.status)
-                .json({
-                  message: response.message,
-                  error: response.error,
-                  data: response.data,
-                  module: response.module,
-                });
+              return res.status(response.status).json({
+                message: response.message,
+                error: response.error,
+                data: response.data,
+                module: response.module
+              });
             }
 
             // reset shared state before continuing
             response.Reset();
+
           } catch (err) {
             console.error(`Error processing inbound ${eventType} rules:`, err.message);
-            return res
-              .status(500)
-              .json({ error: `${eventType} rules processing failed` });
+            return res.status(500).json({ error: `${eventType} rules processing failed` });
           }
         }
         return next();
       }
 
       // === GET ===
-      const globalContext = self.dependencyManager.context || {};
+      const globalCtx = self.dependencyManager.context || {};
       const allRules = self.ruleEngine.getRules();
-      const entityRules = allRules.filter(rule =>
-        rule.resource.toLowerCase() === entityName.toLowerCase() &&
-        rule.event.toUpperCase() === 'GET'
-      );
 
-      const hasGetIn = entityRules.some(r => r.direction === 'in');
-      const hasGetOut = entityRules.some(r => r.direction === 'out');
+      // support both `.resource`+`.event` and `.entity`+`.eventType`
+      const entityRules = allRules.filter(rule => {
+        const rsrc = ((rule.resource || rule.entity) || '').toLowerCase();
+        const evt  = ((rule.event    || rule.eventType) || '').toUpperCase();
+        return rsrc === entityName.toLowerCase() && evt === 'GET';
+      });
+
+      const hasGetIn      = entityRules.some(r => r.direction === 'in');
+      const hasGetOut     = entityRules.some(r => r.direction === 'out');
       const hasGenericGet = entityRules.some(r => r.direction == null);
 
-      // --- GET INBOUND ---
+      // --- GET INBOUND (always processed, even if req.query is empty) ---
       if (hasGetIn || hasGenericGet) {
-        if (req.query && Object.keys(req.query).length) {
-          try {
-            const data = {
-              ...req.query,
-              user_agent: req.headers['user-agent'],
-              user_ip: req.ip || req.connection?.remoteAddress,
-              method: req.method,
-              path: req.path,
-            };
+        try {
+          const data = {
+            ...req.query,
+            user_agent: req.headers['user-agent'],
+            user_ip: req.ip || req.connection?.remoteAddress,
+            method: req.method,
+            path: req.path
+          };
 
-            await self.ruleEngine.processEvent(
-              'GET',
-              entityName,
-              data,
-              {
-                ...globalContext,
-                endpoint: endpointConfig,
-                req,
-                res,
-                actions: {
-                  ...(globalContext.actions || {}),
-                  update: (_, __, field, value) => {
-                    req.query[field] = value;
-                  },
-                },
-                direction: 'in',
-              }
-            );
-          } catch (err) {
-            console.error('Error processing inbound GET rules:', err.message);
-            return res
-              .status(500)
-              .json({ error: 'GET query parameter processing failed' });
+          await self.ruleEngine.processEvent(
+            'GET',
+            entityName,
+            data,
+            {
+              ...globalCtx,
+              endpoint: endpointConfig,
+              req, res,
+              actions: {
+                ...(globalCtx.actions || {}),
+                update: (_, __, field, value) => { req.query[field] = value; }
+              },
+              direction: 'in'
+            }
+          );
+
+          // short-circuit if plugin set a response
+          if (
+            (response.data && Object.keys(response.data).length) ||
+            response.error ||
+            response.status !== 200
+          ) {
+            const success = response.success !== undefined
+              ? response.success
+              : (!response.error);
+            return res.status(response.status).json({
+              success,
+              message: response.message,
+              error: response.error,
+              data: response.data,
+              module: response.module,
+              code: response.code
+            });
           }
+
+          // reset shared state before falling through
+          response.Reset();
+
+        } catch (err) {
+          console.error('Error processing inbound GET rules:', err.message);
+          return res.status(500).json({ error: 'GET query parameter processing failed' });
         }
+
         return next();
       }
 
@@ -178,40 +189,34 @@ class RuleEngineMiddleware {
           }
 
           try {
-            let parsed = typeof responseData === 'string'
+            const parsed = typeof responseData === 'string'
               ? JSON.parse(responseData)
               : responseData;
 
-            // Ensure a data array for rule processing
             const payload = parsed.data
               ? (Array.isArray(parsed.data) ? parsed.data : [parsed.data])
               : [];
 
             if (payload.length) {
-              // custom update merges back into parsed.data
               const customUpdate = (ctxInner, action) => {
                 if (!action.field) return;
-                let computed;
+                let val;
                 if (typeof action.expression === 'string') {
-                  computed = action.expression.replace(
-                    /\${([^}]+)}/g,
-                    (_, expr) => {
-                      try {
-                        const fn = new Function('data', `with(data){return ${expr}}`);
-                        return fn(ctxInner.data);
-                      } catch {
-                        return null;
-                      }
+                  val = action.expression.replace(/\${([^}]+)}/g, (_, expr) => {
+                    try {
+                      return new Function('data', `with(data){return ${expr}}`)(ctxInner.data);
+                    } catch {
+                      return null;
                     }
-                  );
+                  });
                 } else {
-                  computed = action.expression;
+                  val = action.expression;
                 }
-                ctxInner.data[action.field] = computed;
+                ctxInner.data[action.field] = val;
                 if (Array.isArray(parsed.data)) {
-                  parsed.data.forEach(item => { item[action.field] = computed; });
+                  parsed.data.forEach(item => item[action.field] = val);
                 } else if (parsed.data && typeof parsed.data === 'object') {
-                  parsed.data[action.field] = computed;
+                  parsed.data[action.field] = val;
                 }
               };
 
@@ -220,30 +225,28 @@ class RuleEngineMiddleware {
                 entityName,
                 payload,
                 {
-                  ...globalContext,
+                  ...globalCtx,
                   endpoint: endpointConfig,
                   actions: {
-                    ...(globalContext.actions || {}),
-                    update: customUpdate,
+                    ...(globalCtx.actions || {}),
+                    update: customUpdate
                   },
-                  direction: 'out',
+                  direction: 'out'
                 }
               );
             }
 
-            // sanitize any nested user fields
+            // sanitize nested user fields
             const clean = obj => {
               if (!obj || typeof obj !== 'object') return;
-              if (Array.isArray(obj)) {
-                obj.forEach(clean);
-              } else {
-                delete obj.user;
-                Object.values(obj).forEach(clean);
-              }
+              if (Array.isArray(obj)) return obj.forEach(clean);
+              delete obj.user;
+              Object.values(obj).forEach(clean);
             };
             if (parsed.data) clean(parsed.data);
 
             originalSend.call(res, JSON.stringify(parsed));
+
           } catch (err) {
             console.error(`Error processing outbound GET rules for ${entityName}:`, err.message);
             originalSend.call(res, responseData);
@@ -253,7 +256,7 @@ class RuleEngineMiddleware {
         return next();
       }
 
-      // no matching rules
+      // no relevant GET rules
       return next();
     };
   }
