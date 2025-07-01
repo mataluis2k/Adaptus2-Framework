@@ -13,7 +13,7 @@ const unauthorizedResponse = responseBus.unauthorized(); // Import the unauthori
  * Inspects the SQL query and ensures it contains a WHERE clause.
  * If no WHERE clause is found, it inserts "WHERE 1=1" before any ORDER BY.
  * This dummy condition allows for appending additional AND clauses later.
- * 
+ *
  * @param {string} sqlQuery - The original SQL query.
  * @returns {string} The SQL query guaranteed to contain a WHERE clause.
  */
@@ -49,7 +49,7 @@ function ensureWhereClause(sqlQuery = '') {
 
 /**
  * Adds the specified fields to the SELECT clause of the SQL query.
- *  
+ *
  * @param {string} sqlQuery - The original SQL query.
  * @param {string} include - The fields to include in the SELECT clause.
  * @returns {string} The SQL query with the specified fields included in the SELECT clause.
@@ -60,19 +60,19 @@ function addIncludes(sqlQuery, include) {
   if (fromIndex === -1) {
     throw new Error("Invalid SQL query, no FROM clause found.");
   }
-  
+
   let selectClause = sqlQuery.substring(0, fromIndex).trim();
   const fromClause = sqlQuery.substring(fromIndex);
-  
+
   // Ensure the select clause ends with a comma
   if (!selectClause.endsWith(',')) {
     selectClause += ',';
   }
-  
+
   // Process the include fields, trimming any extra spaces
   const includeFields = include.split(',').map(field => field.trim());
   const includeFieldsString = includeFields.map(field => `${field}`).join(',');
-  
+
   sqlQuery = `${selectClause} ${includeFieldsString} ${fromClause}`;
   return sqlQuery;
 }
@@ -104,14 +104,14 @@ class DynamicRouteHandler {
         uuidMapping = []; // or leave it as an empty array if no keys are provided
       }
     }
-  
+
     allowMethods.forEach((method) => {
       const auth = endpoint.auth;
       const acl = endpoint.acl;
-      
+
       // Retrieve the rule engine instance from app.locals.
       const ruleEngineInstance = app.locals.ruleEngineMiddleware;
-      
+
       if(method.toLowerCase() === 'get'){
         const getParamPath = keys && keys.length > 0 ? `/:${keys[0]}?` : "";
         route = `${route}${getParamPath}`;
@@ -120,8 +120,8 @@ class DynamicRouteHandler {
       // custom error codes for unauthorized (default behavior if not present)
       const unauthorized = (endpoint.errorCodes && endpoint.errorCodes.unauthorized) ? endpoint.errorCodes.unauthorized : unauthorizedResponse;
       // Create middleware array for the route
-      const middlewares = [aarMiddleware(auth, {acl, unauthorized }, ruleEngineInstance)];
-      
+      const middlewares = [aarMiddleware(auth, {acl, unauthorized }, ruleEngineInstance, endpoint)];
+
       // Add rate limiting middleware if configured
       // if (endpoint.rateLimit && endpoint.rateLimit.requestsPerMinute) {
       //   const rateLimitMiddleware = async (req, res, next) => {
@@ -129,36 +129,52 @@ class DynamicRouteHandler {
       //       const { requestsPerMinute } = endpoint.rateLimit;
       //       const clientIP = req.ip;
       //       const rateLimitKey = `rate-limit:${route}:${clientIP}`;
-            
+
       //       const requestCount = await dynaRouteRedis.incr(rateLimitKey);
 
-            
+
       //       if (requestCount === 1) {
       //         // Set expiration to 1 minute
       //         await dynaRouteRedis.expire(rateLimitKey, 60);
       //       }
-            
+
       //       if (requestCount > requestsPerMinute) {
       //         console.log(`Rate limit exceeded for ${clientIP} on dynamic route ${route}`);
       //         return res.status(429).json({ error: 'Too Many Requests' });
       //       }
-            
+
       //       next();
       //     } catch (error) {
       //       console.error('Rate limit middleware error:', error.message);
       //       next(); // Continue to the next middleware in case of error
       //     }
       //   };
-        
+
       //   middlewares.push(rateLimitMiddleware);
       // }
-      
+
       app[method.toLowerCase()](route, middlewares, async (req, res) => {
         try {
-          responseBus.Reset(); // Reset the response object at the beginning of the request
+            // --- START: NEW CONDITIONAL BYPASS LOGIC ---
+            // Before resetting the bus, check if a plugin has already populated it.
+            if (responseBus.module) {
+                // A rule-based plugin has already run and prepared the response.
+                // Send the response from the bus and terminate the request here.
+                return res.status(responseBus.status).json({
+                    message: responseBus.message,
+                    error: responseBus.error,
+                    data: responseBus.data,
+                    module: responseBus.module
+                });
+            }
+            // --- END: NEW CONDITIONAL BYPASS LOGIC ---
 
-          // Data from query parameters (GET) or request body (others)
-          const data = method.toLowerCase() === 'get' ? { ...req.query, ...req.params } : req.body;
+            // If the bypass was not triggered, proceed with the handler's normal logic.
+            responseBus.Reset();
+
+            // Data from query parameters (GET) or request body (others)
+            const data = method.toLowerCase() === 'get' ? { ...req.query, ...req.params } : req.body;
+
 
           // Process business logic if defined (if any business logic is set, ignore SQL)
           if (businessLogic) {
@@ -168,15 +184,15 @@ class DynamicRouteHandler {
             }
             return res.json(businessLogicResult);
           }
-  
+
           // Execute SQL query if defined
           if (sqlQuery) {
               // The user might send an "include" in the query parameters that will be used to include the fields in the response
               const includes = data.include;
-              if (includes) {               
+              if (includes) {
                 sqlQuery = addIncludes(sqlQuery, includes);
               }
-                                
+
               // Interpolate the sqlQuery with the user object from context
               const user = getContext('user');
               if (user) {
@@ -190,7 +206,7 @@ class DynamicRouteHandler {
 
             let finalSql = ensureWhereClause(sqlQuery);
             const queryParams = [];
-  
+
             // Process each searchable key specified in the keys array.
             // For each key present in the request data, add a filter.
             if (Array.isArray(keys) && keys.length > 0) {
@@ -206,23 +222,23 @@ class DynamicRouteHandler {
                     }
                     searchValue = realId;
                   }
-                  
+
                   finalSql += " AND " + searchKey + " = ?";
                   queryParams.push(searchValue);
                 }
               }
             }
-  
+
             const dbConnection = await getDbConnection(endpoint);
             const [queryResult] = await dbConnection.execute(finalSql, queryParams);
-  
+
             // For response encryption, iterate over the keys in uuidMapping only.
             if (Array.isArray(uuidMapping) && queryResult.length > 0) {
               for (const row of queryResult) {
                 for (const key of uuidMapping) { // Only encrypt the keys specified in the uuidMapping array
                   const originalId = row[key];
                   if (!originalId) continue; // Skip if key does not exist in the row
-          
+
                   const reverseKey = `uuidMapping:original:${key}:${originalId}`;
                   let existingUuid = await dynaRouteRedis.get(reverseKey);
                   if (existingUuid) {
@@ -238,10 +254,10 @@ class DynamicRouteHandler {
                 }
               }
             }
-  
+
             return res.json({ message: 'SQL query executed successfully', result: queryResult });
           }
-  
+
           // Fallback response if no SQL or business logic defined.
           if (!responseBus.data || Object.keys(responseBus.data).length === 0) {
             responseBus.setResponse(200, 'Success', null, {}, responseBus.module);
@@ -253,7 +269,7 @@ class DynamicRouteHandler {
             data: responseBus.data,
             module: responseBus.module
           });
-  
+
         } catch (error) {
           console.error(`Error processing route ${route}:`, error.message);
           return res.status(500).json({ error: 'Internal Server Error', details: error.message });
@@ -261,7 +277,7 @@ class DynamicRouteHandler {
       });
     });
   }
-  
+
   /**
    * Filter the response fields based on the configuration.
    * @param {Object|Array} data - Data to filter.
