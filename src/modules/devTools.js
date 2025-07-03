@@ -20,7 +20,7 @@ class DevTools {
             ),
             transports: [
                 new winston.transports.Console(),
-                new winston.transports.File({ 
+                new winston.transports.File({
                     filename: 'dev.log',
                     maxsize: 5242880, // 5MB
                     maxFiles: 5
@@ -54,22 +54,36 @@ class DevTools {
         try {
             // Read apiConfig.json
             const apiConfigPath = path.join(process.cwd(), 'config', 'apiConfig.json');
+
+            console.log('[DEBUG] apiConfigPath: ', apiConfigPath);
             const apiConfig = JSON.parse(await fs.readFile(apiConfigPath, 'utf8'));
 
             // Generate swagger documentation
-            const generateSwaggerDoc = require('./generateSwaggerDoc');
+            const { generateSwaggerDoc } = require('./generateSwaggerDoc');
             // Create a temporary file to store JSON output
             const tempJsonPath = path.join(process.cwd(), 'docs', 'temp-api-docs.json');
-            
+
+            // Ensure docs directory exists
+            const docsDir = path.dirname(tempJsonPath);
+            try {
+                await fs.access(docsDir);
+            } catch (error) {
+                await fs.mkdir(docsDir, { recursive: true });
+            }
+
+            // Get paths for business rules and plugins
+            const businessRulesPath = path.join(process.cwd(), 'config', 'businessRules.dsl');
+            const pluginsPath = path.join(process.cwd(), 'plugins');
+
             // Generate swagger documentation
-            generateSwaggerDoc(apiConfig, tempJsonPath);
-            
+            generateSwaggerDoc(apiConfig, tempJsonPath, businessRulesPath, pluginsPath);
+
             // Read the generated JSON file
             const swaggerJson = JSON.parse(await fs.readFile(tempJsonPath, 'utf8'));
-            
+
             // Delete temporary file
             await fs.unlink(tempJsonPath);
-            
+
             const specs = swaggerJson;
 
             // Write as YAML

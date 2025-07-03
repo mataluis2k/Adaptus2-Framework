@@ -12,9 +12,10 @@ const { authenticateMiddleware, aclMiddleware } = require('./authenticationMiddl
  * @param {any|null} authConfig - Configuration for authentication; if null, authentication is disabled.
  * @param {any|null} aclConfig - Configuration for ACL; if null, ACL is disabled.
  * @param {object} ruleEngineInstance - An instance of the RuleEngine middleware.
+ * @param {object} endpointConfig - Optional endpoint configuration to pass to plugins.
  * @returns {Array<Function>} An array of middleware functions.
  */
-function aarMiddleware(authConfig, aclConfig, ruleEngineInstance) {
+function aarMiddleware(authConfig, aclConfig, ruleEngineInstance, endpointConfig = null) {
   const middlewares = [];
 
   // Add authentication middleware if authConfig is provided.
@@ -44,13 +45,13 @@ function aarMiddleware(authConfig, aclConfig, ruleEngineInstance) {
     middlewares.push(aclMiddleware(allowedRoles, message));
   }
 
-  // Always include the RuleEngine middleware.
-  middlewares.push(ruleEngineInstance.middleware());
+  // Always include the RuleEngine middleware with endpoint configuration.
+  middlewares.push(ruleEngineInstance.middleware(endpointConfig));
 
   return middlewares;
 }
 
 module.exports = { aarMiddleware };
-/** TO use it we would declare the route as follows app.get(route, aarMiddleware(auth, acl, ruleEngineInstance) 
+/** TO use it we would declare the route as follows app.get(route, aarMiddleware(auth, acl, ruleEngineInstance)
  * Where auth and acl can be null if those values are NOT present, that will disabled the authentication and ACL middleware
 */
