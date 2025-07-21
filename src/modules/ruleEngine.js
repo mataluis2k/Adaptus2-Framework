@@ -11,7 +11,7 @@ const bcrypt = require('bcrypt');
 
 global.sha256 = (value) => crypto.createHash('sha256').update(value).digest('hex');
 global.bcrypt = (value) => {
-  const saltRounds = 10; 
+  const saltRounds = 10;
   return bcrypt.hash(value, saltRounds);
 };
 /**
@@ -93,7 +93,7 @@ class Rule {
   /**
    * Check if this rule is relevant based on eventType + entity.
    * Then evaluate top-level conditions.
-   * 
+   *
    * @param {string} eventType - "NEW", "UPDATE", "DELETE"
    * @param {string} entityName - e.g. "order"
    * @param {object} data - The data triggering the rule
@@ -102,7 +102,7 @@ class Rule {
   match(eventType, entityName, data, direction = null) {
     console.log(`Matching rule: eventType=${this.eventType}, entity=${this.entity}, direction=${this.direction}`);
     console.log(`Against: eventType=${eventType}, entityName=${entityName}, direction=${direction}`);
-    
+
     if (this.eventType !== eventType) {
         console.log(`Event type mismatch: ${this.eventType} !== ${eventType}`);
         return false;
@@ -146,7 +146,7 @@ class Rule {
   /**
    * If main conditions fail, we check each elseIf in order.
    * If none match, we run elseActions if present.
-   * 
+   *
    * @param {object} context - e.g. { data, actions, config... }
    * @param {object} data - The entity data
    */
@@ -155,9 +155,9 @@ class Rule {
     if (data == null) {
       return;
     }
-   
+
     if (this._evaluateConditionArray(this.conditions, data.data)) {
-    
+
         await this._runActions(context, data.data, this.thenActions);
     } else {
         for (const elseIfBlock of this.elseIfs) {
@@ -185,9 +185,9 @@ class Rule {
   _evaluateConditionArray(conditionArray, data) {
     let result = null;
     let currentOp = null;
-  
+
     for (const item of conditionArray) {
-     
+
       if (typeof item === 'string') {
         // AND / OR
         currentOp = item.toUpperCase();
@@ -220,10 +220,10 @@ class Rule {
    * e.g. order.status = "paid", op='=', field='order.status', value='"paid"'
    */
   _evaluateSingleCondition(cond, data) {
- 
+
     const { field, op, value } = cond;
     const actualValue = this._getNestedValue(data, field);
-   
+
     // Strip quotes from the condition's value if it's a string
     const expectedValue = typeof value === 'string'
       ? value.replace(/^"(.*)"$/, '$1').replace(/^'(.*)'$/, '$1')
@@ -235,7 +235,7 @@ class Rule {
       case '!=':
         return actualValue != expectedValue;
       case '>':
-     
+
         return Number(actualValue) > Number(expectedValue);
       case '<':
         return Number(actualValue) < Number(expectedValue);
@@ -269,7 +269,7 @@ class Rule {
       config: this.dbConfig || context.config || {},
       data
     };
-    
+
     // const actionPromises  = [];
 
     for (const action of actions) {
@@ -316,11 +316,11 @@ class Rule {
     const method = req.method.toUpperCase(); // "GET", "POST", etc.
     if (!data.user) {
       console.log("User missing in data, restoring from req.user", req.user);
-      setContext('user', req.user);      
+      setContext('user', req.user);
       data.user = req.user;
     }
- 
- 
+
+
     // Handle custom actions
     const customHandler = actionContext.actions[action.type];
     if (typeof customHandler === 'function') {
@@ -348,25 +348,25 @@ class Rule {
           try {
             consolelog.log("ExecuteActions ========================>:", action);
             consolelog.log("Data before update:", data);
-            
+
             // Check if there's a custom update handler in the context
-            if (typeof actionContext.actions.update === 'function' && 
+            if (typeof actionContext.actions.update === 'function' &&
                 actionContext.actions.update.toString().includes('customUpdateAction')) {
                 // Use the custom update handler directly
                 actionContext.actions.update(actionContext, action);
                 return; // Skip the rest of the processing
             }
-            
+
             // Check if the expression contains a command marker
             const isCommand = /^\s*command:\s*(.+)/i.exec(action.expression);
             let computedValue;
- 
+
              if (isCommand) {
                     const command = isCommand[1].trim();
                     consolelog.log(`Detected command: ${command}`);
 
                       // Split at the first occurrence of "data:"
-                    const commandAction = this.parseCommandString(command);                            
+                    const commandAction = this.parseCommandString(command);
 
                     console.log("Command Action:",commandAction);
                     // Execute the command action using executeAction
@@ -374,7 +374,7 @@ class Rule {
                     console.log("Returned result:",actionContext.data.response);
                     // Assume the command stores its result in `data[commandAction.outputKey]`
                     computedValue = actionContext.data.response;
-                  
+
                   try{
                     computedValue = JSON.parse(computedValue);
                   } catch (err) {
@@ -383,7 +383,7 @@ class Rule {
                   // Parse computedValue to JSON if it's a string
                   let parsedValue = typeof computedValue === 'string' ? JSON.parse(computedValue) : computedValue;
               } else {
-        
+
                       // Check if the expression contains any global functions
                     const globalFunctionNames = Object.keys(global);
                     const containsGlobalFunction = globalFunctionNames.some((fnName) =>
@@ -398,9 +398,9 @@ class Rule {
                       // Stringify the interpolated object otherwise
                       interpolatedExpression = JSON.stringify(this._interpolatePlaceholders(action.expression, data));
                     }
-                  
+
                       consolelog.log("Interpolated Expression ========================>:", interpolatedExpression);
-                  
+
                       // Dynamically evaluate the expression
                       // computedValue = new Function(
                       //   'data',
@@ -414,7 +414,7 @@ class Rule {
                       //   `
                       // )(data, global);
                     computedValue = await this._safeEvaluate(interpolatedExpression, data);
-        
+
             }
               // Check if parsedValue is JSON and has a template property
             if (typeof parsedValue === 'object' && parsedValue !== null && parsedValue.hasOwnProperty(action.field)) {
@@ -550,12 +550,12 @@ async _safeEvaluate(expression, context) {
         }
       });
     }
-  
+
     // 2) If it's an array, map over its elements recursively.
     if (Array.isArray(obj)) {
       return obj.map(item => this._interpolatePlaceholders(item, dataObj));
     }
-  
+
     // 3) If it's a non-null object, recursively interpolate each value.
     if (obj && typeof obj === 'object') {
       const newObj = {};
@@ -606,7 +606,7 @@ class RuleEngine {
   async processEvent(eventType, entityName, data, context = {}) {
     // Extract direction from context if provided
     const direction = context.direction || null;
-    
+
     const rsp = [];
     const combinedContext = {
       ...context,
@@ -615,9 +615,9 @@ class RuleEngine {
         ...(context.actions || {})
       }
     };
-  
+
     console.log(`Processing event: ${eventType} on entity: ${entityName}${direction ? ` (direction: ${direction})` : ''}`);
-  
+
     // If data is an array, handle each record
     if (Array.isArray(data)) {
       // Sequentially handle each item in the array
@@ -630,19 +630,19 @@ class RuleEngine {
       // Single record
       await this._runMatchingRules(eventType, entityName, data, combinedContext, direction);
     }
-    
+
     return this.response;
   }
 
   async _runMatchingRules(eventType, entityName, record, combinedContext, direction) {
     var buffer = "";
     var message = "";
-    consolelog.log(`Checking rules for entity: ${entityName} with data:`, record); 
+    consolelog.log(`Checking rules for entity: ${entityName} with data:`, record);
     for (const rule of this.rules) {
       if (rule.match(eventType, entityName, record, direction)) {
-        consolelog.log(`Rule MATCHED, executing THEN actions:`, rule);        
-        await rule.execute(combinedContext, { rule, data : record });        
-        if (rule.response.status == 400){           
+        consolelog.log(`Rule MATCHED, executing THEN actions:`, rule);
+        await rule.execute(combinedContext, { rule, data : record });
+        if (rule.response.status == 400){
           this.response = rule.response;
           break;
         }
@@ -650,7 +650,7 @@ class RuleEngine {
       // elseIf blocks & elseActions are handled inside rule.execute()
       // if top-level conditions fail, rule.execute() checks elseIf & else
     }
-    
+
   }
 
   /**
@@ -659,7 +659,7 @@ class RuleEngine {
   hasRulesForEntity(entityName) {
     console.log(`Checking if we have rules for entity: ${entityName}`);
     console.log(`Available rules:`, this.rules.map(r => ({ entity: r.entity, eventType: r.eventType, direction: r.direction })));
-    
+
     // Case-insensitive comparison
     const normalizedEntityName = entityName.toLowerCase();
     return this.rules.some((r) => r.entity.toLowerCase() === normalizedEntityName);
@@ -668,22 +668,22 @@ class RuleEngine {
   /**
    * Create a RuleEngine from DSL text.
    * Matches the updated DSLParser which returns:
-   *   { 
-   *     event, 
-   *     entity, 
-   *     conditions, 
-   *     thenActions, 
-   *     elseIfs, 
-   *     elseActions, 
+   *   {
+   *     event,
+   *     entity,
+   *     conditions,
+   *     thenActions,
+   *     elseIfs,
+   *     elseActions,
    *     dbConfig
    *   }
    */
   static fromDSL(dslText, globalContext) {
     consolelog.log('Parsing rules from DSL text...');
-    const parser = new DSLParser(globalContext); 
+    const parser = new DSLParser(globalContext);
     const parsedRules = parser.parse(dslText);
     consolelog.log('Parsed rules:', parsedRules);
-  
+
     // Convert parser objects into Rule instances
     const rules = parsedRules.map(ruleData => {
       return new Rule(
@@ -697,7 +697,7 @@ class RuleEngine {
         ruleData.direction         // Pass the direction if available
       );
     });
-  
+
     consolelog.log(
       'Initialized rules:',
       rules.map((rule) => ({
@@ -707,7 +707,7 @@ class RuleEngine {
         direction: rule.direction
       }))
     );
-  
+
     return new RuleEngine(rules, globalContext);
   }
 }
