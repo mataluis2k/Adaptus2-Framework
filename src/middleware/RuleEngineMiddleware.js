@@ -42,11 +42,18 @@ class RuleEngineMiddleware {
             // --- RETAIN ORIGINAL LOGIC FOR NON-GET REQUESTS ---
             // This logic correctly handles inbound processing and allows plugins to short-circuit the response.
             if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(eventType)) {
-                if (!req.body) return next();
+                if (!req.body && !req.query) return next();
 
                 try {
+                    let requestData = {};
+                    if (['POST', 'PUT', 'PATCH'].includes(eventType)) {
+                        requestData = req.body;
+                    } else if (eventType === 'DELETE') {
+                        requestData = req.query;
+                    }
+
                     const data = {
-                        ...req.body,
+                        ...requestData,
                         user_agent: req.headers['user-agent'],
                         user_ip: req.ip || req.connection.remoteAddress,
                         method: req.method,
