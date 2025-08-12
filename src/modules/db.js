@@ -12,26 +12,26 @@ let isContextExtended = false;
  * IMPORTANT NOTES AND EXCEPTIONS:
  *
  * 1. CONNECTION POOLING: The original db.js manages MySQL pools manually,
- *    but adaptus2-orm handles pooling internally. The mysqlPools object
- *    is maintained for backward compatibility but is not actively used.
+ * but adaptus2-orm handles pooling internally. The mysqlPools object
+ * is maintained for backward compatibility but is not actively used.
  *
  * 2. CONNECTION RELEASE: The original db.js has 'db.release()' calls everywhere,
- *    but adaptus2-orm manages connections internally. These calls are
- *    converted to no-ops (empty functions) to maintain interface compatibility.
+ * but adaptus2-orm manages connections internally. These calls are
+ * converted to no-ops (empty functions) to maintain interface compatibility.
  *
  * 3. TRANSACTION HANDLING: The original db.js uses manual transactions in initDatabase,
- *    but adaptus2-orm handles transactions differently. We simulate the behavior
- *    using adaptus2-orm's transaction methods where possible.
+ * but adaptus2-orm handles transactions differently. We simulate the behavior
+ * using adaptus2-orm's transaction methods where possible.
  *
  * 4. SNOWFLAKE CALLBACKS: The original db.js uses callback-style snowflake SDK,
- *    but adaptus2-orm uses promises. We convert between these patterns.
+ * but adaptus2-orm uses promises. We convert between these patterns.
  *
  * 5. ERROR HANDLING: The original db.js has specific error codes (ER_DUP_FIELDNAME),
- *    but adaptus2-orm normalizes errors. We preserve the interface but may not
- *    have exact error code matching.
+ * but adaptus2-orm normalizes errors. We preserve the interface but may not
+ * have exact error code matching.
  *
  * 6. CONFIG NORMALIZATION: The original db.js normalizes database connection
- *    names (replacing hyphens with underscores). We maintain this for compatibility.
+ * names (replacing hyphens with underscores). We maintain this for compatibility.
  */
 
 /**
@@ -564,18 +564,12 @@ function findDefUsersRoute(table) {
 async function create(config, entity, data, options = {}) {
     console.log('create', config, entity, data);
 
-    // Set default options
-    options.skipResponse = options.skipResponse || false;
-
     if (config.dbConnection === 'default') {
         config.dbType = process.env.DEFAULT_DBTYPE || 'mysql';
         config.dbConnection = process.env.DEFAULT_DBCONNECTION || 'MYSQL_1';
     }
 
-    // Get connection (maintained for compatibility)
     const db = await getDbConnection(config);
-
-    // Find model configuration
     const modelConfig = findDefUsersRoute(entity);
     if (!modelConfig) {
         throw new Error(`Entity ${entity} not defined in apiConfig.`);
@@ -614,27 +608,47 @@ async function create(config, entity, data, options = {}) {
         // Use adaptus2-orm's create method
         const result = await ORM.create(ormConfig, dbTable, validData);
 
-        // Only set response if skipResponse is not true
-        if (!options.skipResponse) {
-            if (result.data) {
-                response.setResponse(200, 'Record created successfully', '', result.data, 'create_record');
-            } else {
-                response.setResponse(500, 'Error creating record', result.error, {}, 'create_record');
-            }
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return result.data || { error: result.error };
         }
 
-        // Return raw result if skipResponse is true
-        return result.data || { error: result.error };
+        // Create a new response object
+        const newResponse = {
+            success: true,
+            status: 200,
+            message: 'Record created successfully',
+            data: result.data || {},
+            error: null,
+            action: 'create_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(200, 'Record created successfully', '', result.data, 'create_record');
+
+        return newResponse;
     } catch (error) {
         console.error(`Error creating record in ${entity}:`, error.message);
-        if (!options.skipResponse) {
-            response.setResponse(500, `Error creating record in ${entity}`, error.message, {}, 'create_record');
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return { error: error.message };
         }
-        return { error: error.message };
+
+        // Create a new error response object
+        const errorResponse = {
+            success: false,
+            status: 500,
+            message: `Error creating record in ${entity}`,
+            data: {},
+            error: error.message,
+            action: 'create_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(500, `Error creating record in ${entity}`, error.message, {}, 'create_record');
+
+        return errorResponse;
     } finally {
-        // Compatibility: release is a no-op
         if (db && db.release) db.release();
     }
 }
@@ -652,9 +666,6 @@ async function create(config, entity, data, options = {}) {
  * @param {boolean} [options.skipResponse=false] - If true, skips automatic response handling
  */
 async function update(config, entity, query, data, options = {}) {
-    // Set default options
-    options.skipResponse = options.skipResponse || false;
-
     const db = await getDbConnection(config);
     const modelConfig = findDefUsersRoute(entity);
 
@@ -700,24 +711,46 @@ async function update(config, entity, query, data, options = {}) {
             data: validData
         });
 
-        if (!options.skipResponse) {
-            if (result.data) {
-                response.setResponse(200, 'Record updated successfully', '', result.data, 'update_record');
-            } else {
-                response.setResponse(500, 'Error updating record', result.error, {}, 'update_record');
-            }
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return result.data || { error: result.error };
         }
 
-        // Return raw result if skipResponse is true
-        return result.data || { error: result.error };
+        // Create a new response object
+        const newResponse = {
+            success: true,
+            status: 200,
+            message: 'Record updated successfully',
+            data: result.data || {},
+            error: null,
+            action: 'update_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(200, 'Record updated successfully', '', result.data, 'update_record');
+
+        return newResponse;
     } catch (error) {
         console.error(`Error updating record in ${entity}:`, error.message);
-        if (!options.skipResponse) {
-            response.setResponse(500, `Error updating record in ${entity}`, error.message, {}, 'update_record');
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return { error: error.message };
         }
-        return { error: error.message };
+
+        // Create a new error response object
+        const errorResponse = {
+            success: false,
+            status: 500,
+            message: `Error updating record in ${entity}`,
+            data: {},
+            error: error.message,
+            action: 'update_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(500, `Error updating record in ${entity}`, error.message, {}, 'update_record');
+
+        return errorResponse;
     } finally {
         if (db && db.release) db.release();
     }
@@ -735,9 +768,6 @@ async function update(config, entity, query, data, options = {}) {
  * @param {boolean} [options.skipResponse=false] - If true, skips automatic response handling
  */
 async function read(config, entity, query, options = {}) {
-    // Set default options
-    options.skipResponse = options.skipResponse || false;
-
     const db = await getDbConnection(config);
     const modelConfig = findDefUsersRoute(entity);
 
@@ -769,23 +799,27 @@ async function read(config, entity, query, options = {}) {
         // Call adaptus2-orm's read method
         const result = await ORM.read(ormConfig, dbTable, readParams);
 
-        if (!options.skipResponse) {
-            if (result.data) {
-                response.setResponse(200, 'Records retrieved successfully', '', result.data, 'read_records');
-            } else {
-                response.setResponse(500, 'Error retrieving records', result.error, {}, 'read_records');
-            }
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return result.data || [];
         }
 
-        // Return raw result if skipResponse is true
+        // Set the singleton response for backward compatibility
+        response.setResponse(200, 'Records retrieved successfully', '', result.data, 'read_records');
+
+        // Return just the data, not a new response object
         return result.data || [];
     } catch (error) {
         console.error(`Error reading records from ${entity}:`, error.message);
-        if (!options.skipResponse) {
-            response.setResponse(500, `Error reading records from ${entity}`, error.message, {}, 'read_records');
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return { error: error.message };
         }
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(500, `Error reading records from ${entity}`, error.message, {}, 'read_records');
+
+        // Return error data
         return { error: error.message };
     } finally {
         if (db && db.release) db.release();
@@ -804,9 +838,6 @@ async function read(config, entity, query, options = {}) {
  * @param {boolean} [options.skipResponse=false] - If true, skips automatic response handling
  */
 async function deleteRecord(config, entity, query, options = {}) {
-    // Set default options
-    options.skipResponse = options.skipResponse || false;
-
     const db = await getDbConnection(config);
     const modelConfig = findDefUsersRoute(entity);
 
@@ -835,24 +866,46 @@ async function deleteRecord(config, entity, query, options = {}) {
         // Use adaptus2-orm's deleteRecord method
         const result = await ORM.deleteRecord(ormConfig, dbTable, { where: query });
 
-        if (!options.skipResponse) {
-            if (result.data) {
-                response.setResponse(200, 'Record deleted successfully', '', result.data, 'delete_record');
-            } else {
-                response.setResponse(500, 'Error deleting record', result.error, {}, 'delete_record');
-            }
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return result.data || { error: result.error };
         }
 
-        // Return raw result if skipResponse is true
-        return result.data || { error: result.error };
+        // Create a new response object
+        const newResponse = {
+            success: true,
+            status: 200,
+            message: 'Record deleted successfully',
+            data: result.data || {},
+            error: null,
+            action: 'delete_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(200, 'Record deleted successfully', '', result.data, 'delete_record');
+
+        return newResponse;
     } catch (error) {
         console.error(`Error deleting record from ${entity}:`, error.message);
-        if (!options.skipResponse) {
-            response.setResponse(500, `Error deleting record from ${entity}`, error.message, {}, 'delete_record');
-            return response;
+        // Only skip response if options.skipResponse is explicitly true
+        if (options && options.skipResponse === true) {
+            return { error: error.message };
         }
-        return { error: error.message };
+
+        // Create a new error response object
+        const errorResponse = {
+            success: false,
+            status: 500,
+            message: `Error deleting record from ${entity}`,
+            data: {},
+            error: error.message,
+            action: 'delete_record'
+        };
+
+        // Set the singleton response for backward compatibility
+        response.setResponse(500, `Error deleting record from ${entity}`, error.message, {}, 'delete_record');
+
+        return errorResponse;
     } finally {
         if (db && db.release) db.release();
     }
