@@ -157,7 +157,7 @@ class DynamicRouteHandler {
         try {
             // --- START: NEW CONDITIONAL BYPASS LOGIC ---
             // Before resetting the bus, check if a plugin has already populated it.
-            if (responseBus.module) {
+            if (responseBus.data && Object.keys(responseBus.data).length > 0) {
                 // A rule-based plugin has already run and prepared the response.
                 // Send the response from the bus and terminate the request here.
                 return res.status(responseBus.status).json({
@@ -172,8 +172,16 @@ class DynamicRouteHandler {
             // If the bypass was not triggered, proceed with the handler's normal logic.
             responseBus.Reset();
 
-            // Data from query parameters (GET) or request body (others)
-            const data = method.toLowerCase() === 'get' ? { ...req.query, ...req.params } : req.body;
+            // Data from query parameters (GET), URL query (DELETE), or request body (others)
+            const lowerCaseMethod = method.toLowerCase();
+            let data;
+            if (lowerCaseMethod === 'get') {
+              data = { ...req.query, ...req.params };
+            } else if (lowerCaseMethod === 'delete') {
+              data = req.query;
+            } else {
+              data = req.body;
+            }
 
 
           // Process business logic if defined (if any business logic is set, ignore SQL)
@@ -298,3 +306,4 @@ class DynamicRouteHandler {
 }
 
 module.exports = DynamicRouteHandler;
+
